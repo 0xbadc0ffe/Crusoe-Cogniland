@@ -60,14 +60,43 @@ This project implements a complex navigation game where an agent must navigate f
   - Rocky: 6 tiles
   - Mountains: 10 tiles
 
+## Project Structure
+
+```
+Crusoe-Cogniland/
+├── src/                    # Python source code
+│   ├── __init__.py        # Package initialization
+│   ├── environment.py     # Core environment implementation  
+│   ├── game_demo.py       # Interactive pygame demo
+│   ├── map.py            # Map generation utilities
+│   ├── trajectory_visualizer.py  # Visualization tools
+│   └── utils.py          # Utility functions
+├── assets/                # Project assets
+│   └── images/           # Generated island visualizations
+├── lib/                   # External dependencies
+│   └── simplexnoise/     # Perlin noise generation library
+├── logs/                  # Training/execution logs
+├── models/               # Saved models and checkpoints
+├── run_demo.py           # Easy launcher script
+├── run_demo.bat          # Windows batch launcher
+├── requirements.txt      # Python dependencies
+└── README.md            # This file
+```
+
 ## Installation
 
-1. Install required dependencies:
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd Crusoe-Cogniland
+```
+
+2. Install required dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-2. For the interactive demo, ensure pygame is installed:
+3. For the interactive demo, ensure pygame is installed:
 ```bash
 pip install pygame>=2.0.0
 ```
@@ -75,22 +104,36 @@ pip install pygame>=2.0.0
 ## Usage
 
 ### Interactive Demo
-Run the pygame-based interactive demo:
+
+**Easy way (recommended):**
 ```bash
+# From project root
+python run_demo.py          # Interactive difficulty selection
+python run_demo.py easy     # Easy mode directly
+python run_demo.py hard     # Hard mode directly
+```
+
+**Or on Windows:**
+```batch
+run_demo.bat                # Double-click or run from command line
+```
+
+**Direct way:**
+```bash
+# From src/ directory
+cd src
 python game_demo.py
 ```
 
-Controls:
+**Game Modes:**
+- **Easy Mode**: Standard gameplay with passive healing
+- **Hard Mode**: Resource management required - lose 0.5 HP/turn without resources!
+
+**Controls:**
 - Arrow keys or WASD: Move
-- Space: Stay (useful for resource gathering)
+- Space: Stay (useful for resource gathering in forests)
 - R: Reset game
 - ESC: Quit
-
-### Command-Line Testing
-Test the environment with keyboard input:
-```bash
-python test_new.py
-```
 
 ### RL Environment
 Use the Gym-compatible environment for training:
@@ -110,6 +153,12 @@ for step in range(1000):
 
 ### Basic Environment Usage
 ```python
+import sys
+import os
+
+# Add src directory to path
+sys.path.append('src')
+
 from environment import Islands, ACTIONS
 import torch
 
@@ -125,16 +174,6 @@ print(f"HP: {state['hp']}")
 print(f"Resources: {state['resources']}")
 print(f"Cost: {state['cost']}")
 ```
-
-## File Structure
-
-- `environment.py`: Core environment implementation
-- `game_demo.py`: Interactive pygame-based demo
-- `rl_env.py`: OpenAI Gym wrapper for RL training
-- `test_new.py`: Command-line testing interface
-- `map.py`: Original map generation utilities
-- `utils.py`: Utility functions for reproducibility and training
-- `SimplexNoise/`: Perlin noise generation library
 
 ## Environment State
 
