@@ -1,0 +1,16 @@
+name: crusoe
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - numpy==2.4.2
+      - matplotlib==3.10.8
+      - pygame==2.6.1
+      - torch==2.10.0
+      - torchvision==0.25.0
+      - gym==0.26.2
+      - noise==1.2.2
+      - Pillow==12.1.1
