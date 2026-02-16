@@ -91,15 +91,16 @@ git clone <repository-url>
 cd Crusoe-Cogniland
 ```
 
-2. Install required dependencies:
+2. Create the conda environment from the environment file:
 ```bash
-pip install -r requirements.txt
+conda env create -f environment.yml
 ```
 
-3. For the interactive demo, ensure pygame is installed:
+3. Activate the environment:
 ```bash
-pip install pygame>=2.0.0
+conda activate crusoe
 ```
+
 
 ## Usage
 
