@@ -1,20 +1,116 @@
-# Island Navigation RL Environment
+# Crusoe-Cogniland
 
-A reinforcement learning environment for training agents on navigation and decision-making tasks in a 2D procedurally generated island world.
+Batched reinforcement learning environment for island navigation. An agent navigates procedurally generated islands (250x250 tiles, 9 terrain types) from spawn to target while managing health, resources, and movement costs. Built with PyTorch for batched tensor operations, with PPO training and WandB logging.
 
-## Overview
+## Installation
 
-This project implements a complex navigation game where an agent must navigate from a randomly spawned position to a target location while managing resources, health, and movement costs across different terrain types.
+### 1. Clone the repository
 
-## Features
+```bash
+git clone https://github.com/your-org/Crusoe-Cogniland.git
+cd Crusoe-Cogniland
+```
 
-- **Procedural Island Generation**: Uses Perlin noise to generate realistic island landscapes
-- **Complex Terrain System**: 9 different terrain types with unique movement costs and effects
-- **Resource Management**: Wood/resource gathering and consumption mechanics
-- **Health System**: HP management with passive healing and environmental damage
-- **Dynamic Visibility**: Terrain-based visibility ranges for exploration
-- **Interactive Demo**: Pygame-based visual interface for testing and gameplay
-- **RL Environment**: OpenAI Gym-compatible interface for training RL agents
+### 2. Create the conda environment
+
+```bash
+conda env create -f environment.yml
+conda activate crusoe
+```
+
+This creates a `crusoe` environment with all dependencies (PyTorch, Gymnasium, Hydra, WandB, etc.) and installs the `cogniland` package in editable mode.
+
+### 3. Verify the installation
+
+```bash
+pytest tests/ -v
+```
+
+### 4. Set up WandB (for experiment tracking)
+
+```bash
+wandb login
+```
+
+Paste your API key from [wandb.ai/authorize](https://wandb.ai/authorize). Runs will log to the `cogniland` project (configured in `configs/logging/default.yaml`). To skip WandB, pass `logging.wandb.mode=disabled` to any training command.
+
+## Usage
+
+### Training
+
+```bash
+python scripts/train.py [overrides]
+```
+
+All config lives in `configs/` and any value can be overridden from CLI. Key parameters:
+
+| Override | Values | Default |
+|----------|--------|---------|
+| `model` | `ppo`, `compass` | `ppo` |
+| `env` | `default`, `easy`, `hard` | `default` |
+| `device` | `auto`, `cuda`, `cpu` | `auto` |
+| `training.total_timesteps` | int | `1000000` |
+| `training.num_envs` | int | `32` |
+| `training.learning_rate` | float | `0.0003` |
+| `logging.wandb.mode` | `online`, `offline`, `disabled` | `online` |
+
+See `configs/training/default.yaml` for all PPO hyperparams and `configs/env/default.yaml` for all reward coefficients.
+
+### Evaluation
+
+```bash
+python scripts/evaluate.py model_path=checkpoints/ckpt_50.pt
+```
+
+### Interactive Demo
+
+```bash
+python scripts/demo.py [easy|hard]
+```
+
+**Controls:** Arrow keys / WASD to move, Space to stay, R to reset, ESC to quit.
+
+## Project Structure
+
+```
+Crusoe-Cogniland/
+├── configs/                    # Hydra config groups
+│   ├── config.yaml             # Top-level defaults
+│   ├── env/                    # Environment configs (default, easy, hard)
+│   ├── model/                  # Model configs (ppo, compass)
+│   ├── training/               # PPO hyperparameters
+│   └── logging/                # WandB + trajectory settings
+├── cogniland/                  # Main Python package
+│   ├── env/                    # Environment engine
+│   │   ├── constants.py        # TERRAIN_LEVELS, ACTIONS, etc.
+│   │   ├── types.py            # EnvState, StepResult, EnvConfig (NamedTuples)
+│   │   ├── core.py             # Pure-function step logic
+│   │   ├── reward.py           # Reward function
+│   │   ├── islands.py          # Islands class + terrain generation
+│   │   └── wrappers.py         # BatchedIslandEnv + Gymnasium wrapper
+│   ├── models/                 # Agent architectures
+│   │   ├── compass_agent.py    # Compass baseline (greedy Manhattan)
+│   │   └── ppo.py              # ActorCritic (CNN + MLP)
+│   ├── training/               # Training infrastructure
+│   │   ├── rollout.py          # RolloutBuffer, GAE
+│   │   └── trainer.py          # PPO training loop
+│   ├── logging/                # Logging
+│   │   ├── wandb_logger.py     # WandB integration
+│   │   └── metrics.py          # Behavioral metrics
+│   └── utils/                  # Utilities
+│       ├── checkpoint.py       # Save/load checkpoints
+│       └── reproducibility.py  # Seed management
+├── scripts/
+│   ├── train.py                # Hydra training entry point
+│   ├── evaluate.py             # Model evaluation
+│   └── demo.py                 # PyGame demo launcher
+├── game_demo.py                # Interactive PyGame demo
+├── tests/                      # Test suite
+├── lib/simplexnoise/           # Bundled noise library
+├── environment.yml             # Conda environment (reproducible)
+├── setup.py                    # Package definition
+└── requirements.txt            # Pip-only fallback
+```
 
 ## Terrain Types
 
@@ -30,205 +126,24 @@ This project implements a complex navigation game where an agent must navigate f
 | 7     | Rocky      | 4.0  | Consumes 0.25 resources per turn |
 | 8     | Mountains  | 8.0  | Consumes 0.75 resources per turn |
 
-## Game Rules
+## WandB Metrics
 
-### Navigation
-- 5 actions: Up, Down, Left, Right, Stay
-- Movement costs vary by terrain type
-- Land-to-water transition costs additional 3 time units
+Training runs log the following to WandB:
 
-### Sea Navigation
-- Max 7 sea movements without resources
-- After limit exceeded:
-  - Ocean (0): 0.75 resources per move, 25 HP damage if no resources
-  - Deep Water (1): 0.5 resources per move, 25 HP damage if no resources  
-  - Water (2): 0.25 resources per move, 10 HP damage if no resources
+- **Training:** policy_loss, value_loss, entropy, clipfrac, approx_kl, mean_reward, episode_length, SPS
+- **Evaluation:** success_rate, mean_reward, mean_steps, final_hp, path_efficiency
+- **Behavioral:** terrain distribution (water/forest/mountain %), resource management, HP score, directness ratio
 
-### Resource System
-- Start with 75 HP and 0 resources
-- Passive healing: +1 HP per turn (max 100)
-- Forest gathering: +1 resource and +4 HP per turn
-- Mountain crossing consumes resources (0.25 for rocky, 0.75 for mountains)
-- HP loss if resources unavailable in mountains (5 HP for rocky, 20 HP for mountains)
+## Reproducibility
 
-### Visibility System
-- Terrain-based visibility ranges:
-  - Water levels: 6 tiles
-  - Beach/Sandy: 4 tiles  
-  - Grassland: 5 tiles
-  - Forest: 2 tiles
-  - Rocky: 6 tiles
-  - Mountains: 10 tiles
+- All seeds are controlled via `configs/env/default.yaml` → `seed: 42`
+- `set_reproducibility()` pins PyTorch, NumPy, and Python RNG seeds + CuDNN deterministic mode
+- Checkpoints save full RNG state for exact resume
+- `tests/test_roundtrip.py` verifies deterministic trajectories (reference data for JAX migration)
+- The conda `environment.yml` pins all dependency channels for environment reproducibility
 
-## Project Structure
+## Architecture Notes
 
-```
-Crusoe-Cogniland/
-├── src/                    # Python source code
-│   ├── __init__.py        # Package initialization
-│   ├── environment.py     # Core environment implementation  
-│   ├── game_demo.py       # Interactive pygame demo
-│   ├── map.py            # Map generation utilities
-│   ├── trajectory_visualizer.py  # Visualization tools
-│   └── utils.py          # Utility functions
-├── assets/                # Project assets
-│   └── images/           # Generated island visualizations
-├── lib/                   # External dependencies
-│   └── simplexnoise/     # Perlin noise generation library
-├── logs/                  # Training/execution logs
-├── models/               # Saved models and checkpoints
-├── run_demo.py           # Easy launcher script
-├── run_demo.bat          # Windows batch launcher
-├── requirements.txt      # Python dependencies
-└── README.md            # This file
-```
-
-## Installation
-
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd Crusoe-Cogniland
-```
-
-2. Install required dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-3. For the interactive demo, ensure pygame is installed:
-```bash
-pip install pygame>=2.0.0
-```
-
-## Usage
-
-### Interactive Demo
-
-**Easy way (recommended):**
-```bash
-# From project root
-python run_demo.py          # Interactive difficulty selection
-python run_demo.py easy     # Easy mode directly
-python run_demo.py hard     # Hard mode directly
-```
-
-**Or on Windows:**
-```batch
-run_demo.bat                # Double-click or run from command line
-```
-
-**Direct way:**
-```bash
-# From src/ directory
-cd src
-python game_demo.py
-```
-
-**Game Modes:**
-- **Easy Mode**: Standard gameplay with passive healing
-- **Hard Mode**: Resource management required - lose 0.5 HP/turn without resources!
-
-**Controls:**
-- Arrow keys or WASD: Move
-- Space: Stay (useful for resource gathering in forests)
-- R: Reset game
-- ESC: Quit
-
-### RL Environment
-Use the Gym-compatible environment for training:
-```python
-from rl_env import IslandNavigationEnv
-
-env = IslandNavigationEnv()
-obs, info = env.reset()
-
-for step in range(1000):
-    action = env.action_space.sample()  # Random action
-    obs, reward, terminated, truncated, info = env.step(action)
-    
-    if terminated or truncated:
-        obs, info = env.reset()
-```
-
-### Basic Environment Usage
-```python
-import sys
-import os
-
-# Add src directory to path
-sys.path.append('src')
-
-from environment import Islands, ACTIONS
-import torch
-
-# Create environment
-env = Islands(batch_dim=1)
-
-# Take actions
-action = torch.tensor([ACTIONS["up"]])
-state, alive, reached_target = env.act(action)
-
-print(f"Position: {state['position']}")
-print(f"HP: {state['hp']}")
-print(f"Resources: {state['resources']}")
-print(f"Cost: {state['cost']}")
-```
-
-## Environment State
-
-The environment provides the following observation space:
-
-- **position**: Current (x, y) coordinates
-- **compass**: Distance vector (dx, dy) to target
-- **terrain_lev**: Current terrain level (0-8)
-- **terrain_clock**: Turns spent in current terrain type
-- **hp**: Current health points (0-100)
-- **resources**: Current resources available
-- **cost**: Accumulated time cost
-- **minimap**: Visibility-limited terrain map around player
-
-## Objective
-
-The goal is to navigate from the spawn position to the target location while:
-- Minimizing total time cost
-- Maximizing remaining health points
-- Managing resources efficiently
-- Surviving environmental hazards
-
-## Training RL Agents
-
-The environment is designed to challenge RL agents with:
-- **Long-term planning**: Resource management across different terrains
-- **Risk assessment**: Choosing between safe but slow vs. fast but dangerous routes
-- **Exploration vs. exploitation**: Balancing efficient movement with resource gathering
-- **Multi-objective optimization**: Time cost vs. health preservation
-
-## Customization
-
-Environment parameters can be customized:
-
-```python
-island_options = {
-    "size": 250,           # Map size
-    "scale": 0.33,         # Terrain scale
-    "octaves": 6,          # Noise complexity
-    "seed": 42,            # Random seed
-    "filtering": "square"  # Island shape
-}
-
-agent_opts = {
-    "init_hp": 75,                              # Starting HP
-    "max_hp": 100,                             # Maximum HP
-    "init_resources": 0,                       # Starting resources
-    "max_sea_movement_without_resources": 7    # Free sea moves
-}
-```
-
-## Contributing
-
-Feel free to submit issues, feature requests, or pull requests to improve the environment.
-
-## License
-
-This project is available for academic and research purposes.
+- **JAX-ready**: Environment state is a NamedTuple (JAX pytree), step logic is pure functions
+- **Batched**: All operations are vectorized over batch dimension
+- **GPU-friendly**: All tensors on device, only island generation runs on CPU

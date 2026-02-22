@@ -1,0 +1,33 @@
+# Island generation
+size: 250
+scale: 0.33
+octaves: 6
+persistence: 0.5
+lacunarity: 2.0
+seed: 42
+detailed_ocean: true
+filtering: "square"
+sink_mode: 1
+
+# Agent parameters
+init_hp: 75.0
+max_hp: 100.0
+init_resources: 0.0
+max_sea_movement_without_resources: 7
+hard_mode: false
+
+# Minimap
+minimap_ray: 25
+minimap_occlude: false
+minimap_min_clear_lv: 0.25
+
+# Episode limits
+max_steps: 1000
+
+# Reward coefficients
+reward_dist_coef: 1.0
+reward_reach_bonus: 10.0
+reward_death_penalty: -5.0
+reward_time_penalty: -0.01
+reward_hp_coef: 0.01
+reward_hp_thresh: 30.0

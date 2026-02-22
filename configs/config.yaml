@@ -1,0 +1,19 @@
+defaults:
+  - env: default
+  - model: ppo
+  - training: default
+  - logging: default
+  - _self_
+
+# Global device setting — "auto" picks CUDA if available
+device: auto
+
+# Path to checkpoint for evaluation (used by scripts/evaluate.py)
+model_path: null
+
+# Hydra output directory (logs, .hydra/ config snapshots)
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: outputs/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}

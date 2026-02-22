@@ -1,0 +1,14 @@
+wandb:
+  project: "cogniland"
+  entity: crusoe
+  mode: "online"    # "online", "offline", or "disabled"
+
+# Trajectory visualization
+trajectory:
+  save_frequency: 5     # Save trajectory every N eval episodes
+  max_saved_per_eval: 4 # Cap images per evaluation round
+  save_on_success: true
+  save_on_death: true
+
+# Behavioral metrics
+behavioral_metrics: true
