@@ -210,7 +210,8 @@ def apply_terrain_effects(
 
     # --- Hard mode ---
     if config.hard_mode:
-        has_res = resources > 0
+        # Only spend 0.25 when agent has at least 0.25; else treat as no resources
+        has_res = resources >= 0.25
         resources = torch.where(has_res, resources - 0.25, resources)
         hp = torch.where(has_res, hp + 1.0, hp - 0.5)
 
