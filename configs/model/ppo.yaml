@@ -1,0 +1,5 @@
+name: ppo
+scalar_dim: 6
+minimap_channels: 1
+hidden_dim: 128
+action_dim: 5
