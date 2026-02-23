@@ -96,22 +96,11 @@ def colorize(world_map: torch.Tensor, config: EnvConfig) -> torch.Tensor:
     from cogniland.env.constants import palette, TERRAIN_LEVELS
 
     threshold = 0.02 if config.sink_mode == 1 else (0.1 if config.sink_mode == 2 else 0.2)
-    if config.sink_mode == 0:
-        threshold = 0.2
+
+    # Derive color order from canonical TERRAIN_LEVELS
+    color_order = [(TERRAIN_LEVELS[i]["color"], TERRAIN_LEVELS[i]["threshold"]) for i in range(9)]
 
     color_world = torch.zeros(*world_map.shape, 3)
-    color_order = [
-        ("deepocean", 0.007),
-        ("ocean", 0.025),
-        ("blue", 0.05),
-        ("sandy", 0.06),
-        ("beach", 0.1),
-        ("green", 0.25),
-        ("darkgreen", 0.6),
-        ("mountain", 0.7),
-        ("snow", 1.0),
-    ]
-
     for i in range(world_map.shape[0]):
         for j in range(world_map.shape[1]):
             val = world_map[i, j].item()
