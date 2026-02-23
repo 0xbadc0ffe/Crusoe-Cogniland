@@ -322,7 +322,7 @@ def _run_eval(
     if logger is not None:
         # Trajectory gallery
         max_images = cfg.logging.get("trajectory", {}).get("max_saved_per_eval", 4)
-        figures, captions, outcomes, steps_counts = [], [], [], []
+        figures, captions, env_indices = [], [], []
         for i in range(n_eps):
             if len(figures) >= max_images:
                 break
@@ -335,12 +335,12 @@ def _run_eval(
             outcome = "success" if reached[i].item() else "fail"
             n_moves = int(total_moves[i].item())
             figures.append(fig)
-            captions.append(f"ep{i} {outcome} {n_moves} moves")
-            outcomes.append(outcome)
-            steps_counts.append(n_moves)
+            captions.append(f"env{i} {outcome} {n_moves} moves")
+            env_indices.append(i)
 
         if figures:
-            logger.log_trajectory_images(figures, captions, outcomes, steps_counts, step=global_step)
+            eval_episode = global_step // cfg.training.eval_interval
+            logger.log_trajectory_images(figures, captions, env_indices, step=eval_episode)
             for fig in figures:
                 plt.close(fig)
 
