@@ -1,8 +1,9 @@
-"""Checkpoint save/load utilities."""
+"""Checkpoint and reproducibility utilities."""
 
 from __future__ import annotations
 
 import os
+import random
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +11,27 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+
+# ---------------------------------------------------------------------------
+# Reproducibility
+# ---------------------------------------------------------------------------
+
+def set_reproducibility(seed: int = 42, deterministic: bool = True) -> None:
+    """Set all random seeds and (optionally) enable deterministic mode."""
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    if deterministic:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+
+# ---------------------------------------------------------------------------
+# Checkpointing
+# ---------------------------------------------------------------------------
 
 def save_checkpoint(
     model: nn.Module,
@@ -42,10 +64,7 @@ def load_checkpoint(
     optimizer: optim.Optimizer | None = None,
     device: str = "cpu",
 ) -> dict:
-    """Load checkpoint and restore model/optimizer/RNG state.
-
-    Returns the full checkpoint dict (for accessing step, etc.).
-    """
+    """Load checkpoint and restore model/optimizer/RNG state."""
     ckpt = torch.load(path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model_state_dict"])
     if optimizer is not None and "optimizer_state_dict" in ckpt:
