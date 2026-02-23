@@ -101,6 +101,36 @@ class WandBLogger:
             data[f"trajectories/env_{env_idx}"] = wandb.Image(fig, caption=caption)
         self._run.log(data, step=step)
 
+    def log_eval_table(
+        self,
+        reached: torch.Tensor,
+        total_rewards: torch.Tensor,
+        total_moves: torch.Tensor,
+        final_hp: torch.Tensor,
+        trajectories: list[list[tuple[int, int]]],
+        step: int,
+    ) -> None:
+        """Log a structured WandB Table with per-episode evaluation data."""
+        if not self.enabled or self._run is None:
+            return
+        import wandb
+
+        columns = ["episode", "outcome", "reward", "moves", "final_hp", "trajectory"]
+        rows = []
+        for i in range(len(reached)):
+            outcome = "success" if reached[i].item() else "fail"
+            traj_str = " → ".join(f"({r},{c})" for r, c in trajectories[i])
+            rows.append([
+                i,
+                outcome,
+                round(total_rewards[i].item(), 2),
+                int(total_moves[i].item()),
+                round(final_hp[i].item(), 2),
+                traj_str,
+            ])
+        table = wandb.Table(columns=columns, data=rows)
+        self._run.log({"eval/episode_table": table}, step=step)
+
     def log_behavioral_profile(self, metrics: dict[str, float], step: int | None = None) -> None:
         if not self.enabled or self._run is None:
             return
