@@ -2,9 +2,8 @@
 """Interactive Pygame Demo for Island Navigation Game
 
 Usage:
-    python scripts/demo.py              # Interactive difficulty selection
-    python scripts/demo.py easy         # Easy mode
-    python scripts/demo.py hard         # Hard mode
+    python demo.py              # Interactive difficulty selection
+    python demo.py hard         # Hard mode
 
 Controls:
     Arrow keys or WASD: Move
@@ -138,19 +137,11 @@ class IslandGameDemo:
             self.won = True
 
     def terrain_level_to_color(self, level):
-        """Convert terrain level to color"""
-        color_map = {
-            0: COLORS['deepocean'],
-            1: COLORS['ocean'],
-            2: COLORS['blue'],
-            3: COLORS['beach'],
-            4: COLORS['sandy'],
-            5: COLORS['green'],
-            6: COLORS['darkgreen'],
-            7: COLORS['mountain'],
-            8: COLORS['snow']
-        }
-        return color_map.get(int(level), COLORS['white'])
+        """Convert terrain level to color using canonical TERRAIN_LEVELS + palette."""
+        info = TERRAIN_LEVELS.get(int(level))
+        if info is None:
+            return COLORS['white']
+        return COLORS.get(info['color'], COLORS['white'])
 
     def world_map_to_surface(self, world_map, size):
         """Convert world map to pygame surface"""
@@ -306,15 +297,8 @@ class IslandGameDemo:
         y_offset += 25
 
         terrain_names = [
-            (0, "Ocean (0.5)"),
-            (1, "Deep Water (0.75)"),
-            (2, "Water (1.0)"),
-            (3, "Beach (2.5)"),
-            (4, "Sandy (2.5)"),
-            (5, "Grassland (1.8)"),
-            (6, "Forest (3.0)"),
-            (7, "Rocky (4.0)"),
-            (8, "Mountains (8.0)")
+            (i, f"{info['name'].capitalize()} ({info['cost']})")
+            for i, info in TERRAIN_LEVELS.items()
         ]
 
         for level, name in terrain_names:

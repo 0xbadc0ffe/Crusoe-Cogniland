@@ -1,45 +1,36 @@
 # Architecture Guide
 
-How the codebase is organised, what each folder does, and how the pieces connect.
+How the codebase is organised, what each module does, and how the pieces connect.
 
 ## Overview
 
 ```
-scripts/train.py  ──Hydra──>  configs/  ──builds──>  cogniland/training/trainer.py
-                                                          │
-                                    ┌─────────────────────┤
-                                    ▼                     ▼
-                          cogniland/env/          cogniland/models/
-                          (environment)           (agents)
-                                    │                     │
-                                    ▼                     │
-                          cogniland/training/rollout.py <──┘
-                                    │
-                                    ▼
-                          cogniland/logging/
-                          (WandB + metrics)
+train.py  ──Hydra──>  configs/config.yaml  ──builds──>  cogniland/models/
+                                                                      │
+                                                    ┌─────────────────┤
+                                                    ▼                 ▼
+                                          cogniland/env/     cogniland/logging.py
+                                          (environment)      (WandB + metrics)
 ```
 
-A training run starts in `scripts/train.py`, which uses Hydra to load YAML configs and calls `trainer.train(cfg)`. The trainer builds an environment, a model, and a logger, then runs the PPO loop: collect rollouts, compute GAE, update the model, periodically evaluate and log.
+A training run starts in `train.py`, which uses Hydra to load config and calls `build_model(cfg).train(cfg)`. Each model is self-contained: it builds its own environment, optimizer, and logger, then runs its training loop.
 
 ---
 
-## Folders
+## Modules
 
 ### `configs/`
 
-Hydra YAML configuration, split into groups:
+Hydra YAML configuration. Training and logging params are inlined in `config.yaml`; only env and models have separate config groups:
 
 | Group | Files | What it controls |
 |-------|-------|-----------------|
-| `env/` | `default.yaml`, `easy.yaml`, `hard.yaml` | Island generation, agent params, minimap, reward coefficients, episode limits |
-| `model/` | `ppo.yaml`, `compass.yaml` | Model architecture (hidden dim, CNN params, action dim) |
-| `training/` | `default.yaml` | PPO hyperparams (LR, gamma, clip, epochs, batch sizes), eval/checkpoint intervals |
-| `logging/` | `default.yaml` | WandB project/entity/mode, trajectory image settings |
+| `env/` | `default.yaml`, `hard.yaml` | Island generation, agent params, minimap, reward coefficients, episode limits |
+| `models/` | `ppo.yaml`, `compass.yaml` | Model architecture (hidden dim, CNN params, action dim) |
+| *inlined* | `config.yaml` → `training:` | PPO hyperparams (LR, gamma, clip, epochs, batch sizes), eval/checkpoint intervals |
+| *inlined* | `config.yaml` → `logging:` | WandB project/entity/mode, trajectory image settings |
 
-`config.yaml` is the top-level file that sets defaults for each group and the global `device` setting.
-
-Any value can be overridden from CLI: `python scripts/train.py training.learning_rate=1e-4 env=hard`.
+Any value can be overridden from CLI: `python train.py models.training.learning_rate=1e-4 env=hard`.
 
 ### `cogniland/env/` — Environment
 
@@ -48,11 +39,11 @@ The core simulation. Generates an island, manages batched agent state, and steps
 | File | Purpose | Depends on |
 |------|---------|-----------|
 | `constants.py` | All game constants: terrain levels, actions, visibility ranges. Also pre-computed tensor versions (`TERRAIN_THRESHOLDS`, `ACTION_DELTAS`) for vectorised lookups. | nothing |
-| `types.py` | `EnvState` (NamedTuple), `StepResult` (NamedTuple), `EnvConfig` (frozen dataclass). These are the data structures everything else passes around. | `torch` |
-| `core.py` | **Pure functions** that implement one environment step. `env_step()` is the main entry — it calls `apply_movement`, `compute_terrain_levels`, `apply_terrain_effects`, etc. No classes, no `self`, no mutation. | `constants`, `types`, `reward` |
-| `reward.py` | `compute_reward()` — a single pure function. Takes state + terminal flags + distances, returns per-env reward tensor. All coefficients come from `EnvConfig`. | `types` |
-| `islands.py` | `Islands` class — thin wrapper that owns the `world_map` tensor (generated once at init) and delegates to `core.env_step()`. Provides `reset()`, `step()`, `reset_done()`. Also contains `generate_island()` which runs the SimplexNoise terrain generator. | `core`, `types`, `constants`, `lib/simplexnoise` |
-| `wrappers.py` | `BatchedIslandEnv` — training-oriented wrapper that auto-resets done environments and provides observations as `{"scalars": [B,6], "minimap": [B,1,H,W]}`. `IslandNavEnv` — single-instance Gymnasium wrapper for compatibility with standard RL libraries. | `islands`, `types`, `constants` |
+| `types.py` | `EnvState` (NamedTuple), `StepResult` (NamedTuple), `EnvConfig` (frozen dataclass with `.from_hydra()` classmethod). | `torch` |
+| `core.py` | **Pure functions** that implement one environment step. No classes, no `self`, no mutation. | `constants`, `types`, `reward` |
+| `reward.py` | `compute_reward()` — a single pure function. All coefficients come from `EnvConfig`. | `types` |
+| `islands.py` | `Islands` class — wraps `world_map` + delegates to `core.env_step()`. Also contains `generate_island()` using SimplexNoise. | `core`, `types`, `constants`, `simplexnoise` |
+| `wrappers.py` | `BatchedIslandEnv` — auto-resets done envs, provides obs as `{"scalars": [B,6], "minimap": [B,1,H,W]}`. `IslandNavEnv` — Gymnasium wrapper. | `islands`, `types`, `constants` |
 
 **Data flow for one step:**
 
@@ -69,100 +60,67 @@ BatchedIslandEnv.step(action)
               => StepResult(state, reward, done, info)
 ```
 
-### `cogniland/models/` — Agents
+### `cogniland/models/` — Self-Contained Agents
+
+Each model file defines its **architecture + full training loop**. To add a new model, create a file here with a class that has `.train(cfg)`.
 
 | File | Purpose |
 |------|---------|
-| `ppo.py` | `ActorCritic` — CNN processes the minimap, MLP processes scalar observations, features are concatenated into a shared trunk, then split into actor (action logits) and critic (value) heads. Orthogonal init (CleanRL pattern). |
-| `compass_agent.py` | `CompassAgent` — greedy Manhattan-distance follower. Reads the compass observation and always picks the action that minimises Manhattan distance to the target. Same interface as `ActorCritic` (`get_action_and_value`, `get_value`) so the trainer doesn't need to special-case it. |
+| `__init__.py` | `build_model(cfg)` factory — returns a PPOAgent or CompassModel based on config. |
+| `ppo.py` | `PPOAgent` — full PPO agent: `ActorCritic` (CNN + MLP), `RolloutBuffer`, GAE computation, PPO clipped update, training loop with periodic eval + checkpointing. |
+| `compass.py` | `CompassModel` — greedy Manhattan-distance follower. Deterministic baseline. `.train()` runs evaluation only. |
 
-Both models take `obs = {"scalars": [B,6], "minimap": [B,1,H,W]}` and return `(action, log_prob, entropy, value)`.
+Both models expose` .get_action_and_value(obs)` and `.train(cfg)`.
 
-### `cogniland/training/` — PPO Training Loop
-
-| File | Purpose | Depends on |
-|------|---------|-----------|
-| `rollout.py` | `RolloutBuffer` (dataclass storing one rollout), `collect_rollout()` (runs N steps in the batched env, stores transitions), `compute_gae()` (GAE advantage estimation). | `env/wrappers` (via the env passed in) |
-| `trainer.py` | `train(cfg)` — the main loop. Builds env + model + optimizer + logger from config. Outer loop: collect rollout → compute GAE → PPO update (clipped objective + value loss + entropy bonus) → periodic eval → periodic checkpoint. Also contains `_run_eval()` which runs evaluation episodes and renders trajectory images for WandB. | everything |
-
-**Training loop structure:**
+**PPO training loop structure:**
 
 ```
-train(cfg)
-  ├─ build env, model, optimizer, logger
+PPOAgent.train(cfg)
+  ├─ build env, optimizer, logger
   └─ for update in 1..num_updates:
        ├─ LR annealing
-       ├─ collect_rollout(env, model, obs, rollout_steps)
-       ├─ compute_gae(buffer, next_value)
-       ├─ ppo_update(model, optimizer, data, advantages, returns)
+       ├─ _collect_rollout(env, model, obs, rollout_steps)
+       ├─ _compute_gae(buffer, next_value)
+       ├─ _ppo_update(optimizer, data, advantages, returns)
        ├─ logger.log(train_metrics)
-       ├─ if eval_interval: _run_eval() → logger.log(eval_metrics + trajectory images)
+       ├─ if eval_interval: _run_eval() → trajectory images + behavioral profile
        └─ if checkpoint_interval: save_checkpoint()
 ```
 
-### `cogniland/logging/` — Experiment Tracking
+### `cogniland/logging.py` — Experiment Tracking
 
-| File | Purpose |
-|------|---------|
-| `wandb_logger.py` | `WandBLogger` — wraps `wandb.init/log/finish`. When `mode="disabled"`, everything is a no-op. Supports `log()` for scalars and `log_image()` for trajectory figures. |
-| `metrics.py` | `compute_behavioral_metrics()` — computes terrain distribution, resource management, HP score, and directness ratio from evaluation data. Used for policy identification (conservative vs greedy). |
+`WandBLogger` — wraps `wandb.init/log/finish`. When `mode="disabled"`, everything is a no-op. Supports scalar logging and trajectory image panels.
 
-### `cogniland/utils/` — Utilities
+`compute_behavioral_metrics()` — computes terrain distribution, resource management, HP score, and directness ratio from evaluation data.
 
-| File | Purpose |
-|------|---------|
-| `checkpoint.py` | `save_checkpoint()` / `load_checkpoint()` — saves model weights, optimizer state, and full RNG state (torch + numpy) for exact resume. |
-| `reproducibility.py` | `set_reproducibility(seed)` — pins torch, numpy, and Python random seeds + CuDNN deterministic mode. |
+### `cogniland/utils.py` — Utilities
 
-### `scripts/` — Entry Points
+| Function | Purpose |
+|----------|---------|
+| `save_checkpoint()` / `load_checkpoint()` | Model weights, optimizer state, and full RNG state for exact resume. |
+| `set_reproducibility(seed)` | Pins torch, numpy, and Python random seeds + CuDNN deterministic mode. |
+
+### `cogniland/simplexnoise/` — Noise Library
+
+Bundled Simplex/Perlin noise library. Used only by `islands.generate_island()` to create the heightmap. Uses Python's `random` module internally.
+
+### Entry Points
 
 | File | What it does |
 |------|-------------|
-| `train.py` | `@hydra.main` entry point. Loads config from `configs/`, calls `trainer.train(cfg)`. |
-| `evaluate.py` | Loads a checkpoint, runs eval episodes, prints results. Also uses Hydra for config. |
-| `demo.py` | Launches the interactive PyGame demo (delegates to `game_demo.py`). |
-
-### `game_demo.py`
-
-Interactive PyGame visualisation. Uses `cogniland.env.Islands` directly — creates an env, renders the world map and minimap as surfaces, handles keyboard input. Not used during training; purely for human play-testing.
-
-### `lib/simplexnoise/`
-
-Bundled third-party Simplex/Perlin noise library. Used only by `islands.generate_island()` to create the heightmap. Uses Python's `random` module internally for permutation tables (which is why we seed all RNGs before island generation).
-
-### `outputs/` (git-ignored, auto-generated)
-
-Created by Hydra at runtime. Each training or eval run gets a timestamped subfolder (e.g. `outputs/2026-02-22/16-43-15/`) containing:
-- `.hydra/config.yaml` — the fully resolved config snapshot for that run
-- `.hydra/overrides.yaml` — which CLI overrides were used
-- `train.log` — Hydra's log output
-
-This is useful for reproducing a run: look at the config snapshot to see exactly what params were used. The folder is git-ignored and safe to delete.
-
-### `wandb/` (git-ignored, auto-generated)
-
-Local WandB run cache. Contains offline copies of logged data, synced to the WandB server. Git-ignored and safe to delete.
-
-### `checkpoints/` (git-ignored, auto-generated)
-
-Model checkpoints saved during training (e.g. `ckpt_50.pt`). Contains model weights, optimizer state, and RNG state for exact resume.
-
-### `tests/`
-
-| File | What it tests |
-|------|--------------|
-| `test_env_step.py` | Reset produces valid state, step returns correct types, stay doesn't move, bounds clamping, vectorised terrain levels, batch consistency. |
-| `test_reward.py` | Reach bonus is positive, death penalty is negative, closer = higher reward, low HP reduces reward. |
-| `test_roundtrip.py` | Two runs with same seed produce identical trajectories (determinism). Trajectory positions and HP stay within bounds. Reference data for future JAX migration. |
+| `train.py` | `@hydra.main` entry point. Calls `build_model(cfg).train(cfg)`. |
+| `demo.py` | Interactive PyGame demo — full game visualization with keyboard controls. |
 
 ---
 
 ## Key Design Decisions
 
-**Immutable state**: `EnvState` is a `NamedTuple`. Updates create new tuples via `state._replace(field=new_value)`. No in-place mutation, no `copy.deepcopy`.
+**Self-contained models**: Each model defines architecture + training loop + eval in a single file. To swap models, change `models=ppo` to `models=compass`. To add a new model, add one file + one config.
 
-**Pure functions**: All step logic lives in `core.py` as standalone functions. This makes the code testable, readable, and directly portable to JAX (`torch.where` → `jnp.where`).
+**Immutable state**: `EnvState` is a `NamedTuple`. Updates create new tuples via `state._replace(field=new_value)`. No in-place mutation.
 
-**Batched everything**: Every tensor has a batch dimension at index 0. The environment processes N agents simultaneously in a single call.
+**Pure functions**: All step logic lives in `core.py` as standalone functions. Directly portable to JAX.
 
-**Config as code boundary**: `EnvConfig` is a frozen dataclass. All magic numbers (reward coefficients, terrain costs, etc.) flow from the Hydra YAML through `EnvConfig` into the pure functions. Nothing is hardcoded in the step logic.
+**Batched everything**: Every tensor has a batch dimension at index 0. N agents processed simultaneously.
+
+**Config as code boundary**: All magic numbers flow from Hydra YAML → `EnvConfig` → pure functions. Nothing is hardcoded.

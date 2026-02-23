@@ -7,8 +7,7 @@ from __future__ import annotations
 
 import math
 import random
-import sys
-import os
+
 
 import numpy as np
 import torch
@@ -25,12 +24,7 @@ def generate_island(config: EnvConfig) -> torch.Tensor:
     pipeline that runs nested Python loops — but it only happens once at init,
     so it is not a training bottleneck.
     """
-    # Make sure lib/ is importable
-    lib_dir = os.path.join(os.path.dirname(__file__), "..", "..", "lib")
-    if lib_dir not in sys.path:
-        sys.path.insert(0, os.path.abspath(lib_dir))
-
-    from simplexnoise.noise import SimplexNoise, normalize
+    from cogniland.simplexnoise.noise import SimplexNoise, normalize
 
     size = config.size
     scale = size * config.scale

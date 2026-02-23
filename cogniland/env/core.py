@@ -59,7 +59,7 @@ def env_step(
 
     # 6. Passive healing (easy mode only)
     if not config.hard_mode:
-        new_state = new_state._replace(hp=new_state.hp + 1.0)
+        new_state = new_state._replace(hp=new_state.hp + config.passive_heal_rate)
 
     # 7. Movement costs & terrain effects
     new_state = apply_movement_costs(new_state, old_terrain, action, config)
@@ -155,7 +155,7 @@ def apply_movement_costs(
 
     # Land-to-water transition penalty
     land_to_water = (old_terrain > 2) & (state.terrain_lev <= 2) & moving
-    step_cost = step_cost + land_to_water.float() * 3.0
+    step_cost = step_cost + land_to_water.float() * config.land_to_water_penalty
 
     return state._replace(cost=state.cost + step_cost)
 
@@ -174,8 +174,8 @@ def apply_terrain_effects(
 
     # --- Forest: +1 resource, +4 HP ---
     forest = terrain == 6
-    resources = resources + forest.float()
-    hp = hp + forest.float() * 4.0
+    resources = resources + forest.float() * config.forest_resource_gain
+    hp = hp + forest.float() * config.forest_hp_gain
 
     # --- Sea effects ---
     water = terrain <= 2
@@ -183,37 +183,37 @@ def apply_terrain_effects(
 
     # Resource cost by water level
     sea_res_cost = torch.zeros_like(resources)
-    sea_res_cost = torch.where((terrain == 0) & exceeds_free, torch.full_like(sea_res_cost, 0.75), sea_res_cost)
-    sea_res_cost = torch.where((terrain == 1) & exceeds_free, torch.full_like(sea_res_cost, 0.50), sea_res_cost)
-    sea_res_cost = torch.where((terrain == 2) & exceeds_free, torch.full_like(sea_res_cost, 0.25), sea_res_cost)
+    sea_res_cost = torch.where((terrain == 0) & exceeds_free, torch.full_like(sea_res_cost, config.sea_resource_costs[0]), sea_res_cost)
+    sea_res_cost = torch.where((terrain == 1) & exceeds_free, torch.full_like(sea_res_cost, config.sea_resource_costs[1]), sea_res_cost)
+    sea_res_cost = torch.where((terrain == 2) & exceeds_free, torch.full_like(sea_res_cost, config.sea_resource_costs[2]), sea_res_cost)
     resources = resources - sea_res_cost
 
     # HP loss when out of resources at sea
     no_res_at_sea = (resources <= 0) & exceeds_free
     sea_hp_cost = torch.zeros_like(hp)
-    sea_hp_cost = torch.where((terrain == 0) & no_res_at_sea, torch.full_like(sea_hp_cost, 25.0), sea_hp_cost)
-    sea_hp_cost = torch.where((terrain == 1) & no_res_at_sea, torch.full_like(sea_hp_cost, 25.0), sea_hp_cost)
-    sea_hp_cost = torch.where((terrain == 2) & no_res_at_sea, torch.full_like(sea_hp_cost, 10.0), sea_hp_cost)
+    sea_hp_cost = torch.where((terrain == 0) & no_res_at_sea, torch.full_like(sea_hp_cost, config.sea_hp_costs[0]), sea_hp_cost)
+    sea_hp_cost = torch.where((terrain == 1) & no_res_at_sea, torch.full_like(sea_hp_cost, config.sea_hp_costs[1]), sea_hp_cost)
+    sea_hp_cost = torch.where((terrain == 2) & no_res_at_sea, torch.full_like(sea_hp_cost, config.sea_hp_costs[2]), sea_hp_cost)
     hp = hp - sea_hp_cost
 
     # --- Mountain effects ---
     mtn_res_cost = torch.zeros_like(resources)
-    mtn_res_cost = torch.where(terrain == 7, torch.full_like(mtn_res_cost, 0.25), mtn_res_cost)
-    mtn_res_cost = torch.where(terrain == 8, torch.full_like(mtn_res_cost, 0.75), mtn_res_cost)
+    mtn_res_cost = torch.where(terrain == 7, torch.full_like(mtn_res_cost, config.mountain_resource_costs[0]), mtn_res_cost)
+    mtn_res_cost = torch.where(terrain == 8, torch.full_like(mtn_res_cost, config.mountain_resource_costs[1]), mtn_res_cost)
     resources = resources - mtn_res_cost
 
     no_res_mtn = (resources <= 0) & (terrain >= 7)
     mtn_hp_cost = torch.zeros_like(hp)
-    mtn_hp_cost = torch.where((terrain == 7) & no_res_mtn, torch.full_like(mtn_hp_cost, 5.0), mtn_hp_cost)
-    mtn_hp_cost = torch.where((terrain == 8) & no_res_mtn, torch.full_like(mtn_hp_cost, 20.0), mtn_hp_cost)
+    mtn_hp_cost = torch.where((terrain == 7) & no_res_mtn, torch.full_like(mtn_hp_cost, config.mountain_hp_costs[0]), mtn_hp_cost)
+    mtn_hp_cost = torch.where((terrain == 8) & no_res_mtn, torch.full_like(mtn_hp_cost, config.mountain_hp_costs[1]), mtn_hp_cost)
     hp = hp - mtn_hp_cost
 
     # --- Hard mode ---
     if config.hard_mode:
         # Only spend 0.25 when agent has at least 0.25; else treat as no resources
-        has_res = resources >= 0.25
-        resources = torch.where(has_res, resources - 0.25, resources)
-        hp = torch.where(has_res, hp + 1.0, hp - 0.5)
+        has_res = resources >= config.hard_mode_resource_drain
+        resources = torch.where(has_res, resources - config.hard_mode_resource_drain, resources)
+        hp = torch.where(has_res, hp + config.hard_mode_hp_gain, hp - config.hard_mode_hp_loss)
 
     return state._replace(hp=hp, resources=resources)
 

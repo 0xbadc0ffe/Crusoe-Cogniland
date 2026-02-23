@@ -3,3 +3,23 @@ scalar_dim: 6
 minimap_channels: 1
 hidden_dim: 128
 action_dim: 5
+
+# PPO training hyperparameters
+training:
+  num_envs: 32
+  total_timesteps: 1000000
+  rollout_steps: 128
+  num_epochs: 4
+  minibatch_size: 256
+  learning_rate: 0.0003
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_coef: 0.2
+  vf_coef: 0.5
+  ent_coef: 0.01
+  max_grad_norm: 0.5
+  anneal_lr: true
+  # Evaluation & checkpointing
+  eval_interval: 10
+  eval_episodes: 16
+  checkpoint_interval: 50

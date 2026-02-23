@@ -12,10 +12,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+from cogniland.env.constants import NUM_ACTIONS
 from cogniland.env.types import EnvConfig
 from cogniland.env.wrappers import BatchedIslandEnv
 from cogniland.logging import WandBLogger, compute_behavioral_metrics
-from cogniland.utils import save_checkpoint, set_reproducibility
+from cogniland.utils import render_trajectory, save_checkpoint, set_reproducibility
 
 
 # ---------------------------------------------------------------------------
@@ -179,12 +180,14 @@ class PPOAgent:
         self.device = device
 
         minimap_size = 2 * cfg.env.minimap_ray + 1
+        scalar_dim = cfg.models.get("scalar_dim", 6)
+        action_dim = cfg.models.get("action_dim", NUM_ACTIONS)
         self.model = ActorCritic(
-            scalar_dim=cfg.models.scalar_dim,
+            scalar_dim=scalar_dim,
             minimap_channels=cfg.models.minimap_channels,
             minimap_size=minimap_size,
             hidden_dim=cfg.models.hidden_dim,
-            action_dim=cfg.models.action_dim,
+            action_dim=action_dim,
         ).to(device)
 
     def get_action_and_value(self, obs, action=None):
@@ -212,15 +215,15 @@ class PPOAgent:
         print(f"Device: {device}")
         print(f"Model: ppo")
 
-        env = BatchedIslandEnv(self.env_config, num_envs=cfg.training.num_envs)
-        optimizer = optim.Adam(model.parameters(), lr=cfg.training.learning_rate, eps=1e-5)
+        env = BatchedIslandEnv(self.env_config, num_envs=cfg.models.training.num_envs)
+        optimizer = optim.Adam(model.parameters(), lr=cfg.models.training.learning_rate, eps=1e-5)
 
         param_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"Parameters: {param_count:,}")
 
-        num_envs = cfg.training.num_envs
-        rollout_steps = cfg.training.rollout_steps
-        total_timesteps = cfg.training.total_timesteps
+        num_envs = cfg.models.training.num_envs
+        rollout_steps = cfg.models.training.rollout_steps
+        total_timesteps = cfg.models.training.total_timesteps
         num_updates = total_timesteps // (num_envs * rollout_steps)
         print(f"Total updates: {num_updates}, Moves per update: {num_envs * rollout_steps}")
 
@@ -230,9 +233,9 @@ class PPOAgent:
 
         for update in range(1, num_updates + 1):
             # LR annealing
-            if cfg.training.anneal_lr:
+            if cfg.models.training.anneal_lr:
                 frac = 1.0 - (update - 1) / num_updates
-                lr = frac * cfg.training.learning_rate
+                lr = frac * cfg.models.training.learning_rate
                 for pg in optimizer.param_groups:
                     pg["lr"] = lr
 
@@ -255,8 +258,8 @@ class PPOAgent:
                 next_value = model.get_value(obs)
             advantages, returns = _compute_gae(
                 buffer, next_value,
-                gamma=cfg.training.gamma,
-                gae_lambda=cfg.training.gae_lambda,
+                gamma=cfg.models.training.gamma,
+                gae_lambda=cfg.models.training.gae_lambda,
             )
 
             # PPO update
@@ -271,7 +274,7 @@ class PPOAgent:
             logger.log(train_metrics, step=update)
 
             # Periodic eval
-            if update % cfg.training.eval_interval == 0:
+            if update % cfg.models.training.eval_interval == 0:
                 print(f"[Update {update}/{num_updates}] Running evaluation...")
                 model.eval()
                 eval_metrics = self._run_eval(cfg, logger=logger, global_step=update)
@@ -281,7 +284,7 @@ class PPOAgent:
                       f"eval/mean_reward: {eval_metrics['eval/mean_reward']:.2f}")
 
             # Periodic checkpoint
-            if update % cfg.training.checkpoint_interval == 0:
+            if update % cfg.models.training.checkpoint_interval == 0:
                 save_checkpoint(model, optimizer, global_step, path=f"checkpoints/ckpt_{update}.pt")
                 print(f"  Checkpoint saved at step {global_step}")
 
@@ -291,11 +294,11 @@ class PPOAgent:
     def _ppo_update(self, optimizer, flat_data, advantages, returns, cfg):
         model = self.model
         N = flat_data["actions"].shape[0]
-        minibatch_size = cfg.training.minibatch_size
-        clip_coef = cfg.training.clip_coef
-        vf_coef = cfg.training.vf_coef
-        ent_coef = cfg.training.ent_coef
-        max_grad_norm = cfg.training.max_grad_norm
+        minibatch_size = cfg.models.training.minibatch_size
+        clip_coef = cfg.models.training.clip_coef
+        vf_coef = cfg.models.training.vf_coef
+        ent_coef = cfg.models.training.ent_coef
+        max_grad_norm = cfg.models.training.max_grad_norm
 
         adv = advantages
         if adv.std() > 0:
@@ -305,7 +308,7 @@ class PPOAgent:
         total_clipfrac = total_approx_kl = 0.0
         n_updates = 0
 
-        for _epoch in range(cfg.training.num_epochs):
+        for _epoch in range(cfg.models.training.num_epochs):
             indices = torch.randperm(N, device=flat_data["actions"].device)
             for start in range(0, N, minibatch_size):
                 end = start + minibatch_size
@@ -371,7 +374,7 @@ class PPOAgent:
         device = self.device
         env_config = self.env_config
 
-        n_eps = cfg.training.eval_episodes
+        n_eps = cfg.models.training.eval_episodes
         eval_env = BatchedIslandEnv(env_config, num_envs=n_eps)
         obs = eval_env.reset(seed=cfg.env.seed + 1000)
 
@@ -462,7 +465,7 @@ class PPOAgent:
                     break
                 if len(trajectories[i]) < 2:
                     continue
-                fig = self._render_trajectory(
+                fig = render_trajectory(
                     eval_env.env.world_map, trajectories[i],
                     initial_targets[i], reached[i].item(), i,
                     TERRAIN_LEVELS, palette,
@@ -474,7 +477,7 @@ class PPOAgent:
                 env_indices.append(i)
 
             if figures:
-                eval_episode = global_step // cfg.training.eval_interval
+                eval_episode = global_step // cfg.models.training.eval_interval
                 logger.log_trajectory_images(figures, captions, env_indices, step=eval_episode)
                 for fig in figures:
                     plt.close(fig)
@@ -483,36 +486,4 @@ class PPOAgent:
 
         return eval_metrics
 
-    @staticmethod
-    def _render_trajectory(world_map, positions, target, reached_target, env_idx,
-                           TERRAIN_LEVELS, palette):
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        import numpy as np
 
-        wm = world_map.cpu().numpy()
-        thresholds = np.array([TERRAIN_LEVELS[i]["threshold"] for i in range(9)])
-        terrain_map = np.searchsorted(thresholds, wm).clip(0, 8)
-
-        color_lut = np.array([palette[TERRAIN_LEVELS[i]["color"]] for i in range(9)], dtype=np.float32) / 255.0
-        rgb = color_lut[terrain_map]
-
-        fig, ax = plt.subplots(figsize=(14, 14), dpi=150)
-        ax.imshow(rgb, origin="upper", interpolation="nearest")
-
-        pos = np.array(positions)
-        ax.plot(pos[:, 1], pos[:, 0], "white", linewidth=3, alpha=0.6)
-        ax.plot(pos[:, 1], pos[:, 0], "r-", linewidth=1.5, alpha=0.9)
-
-        ax.scatter(pos[0, 1], pos[0, 0], c="lime", s=120, marker="o", edgecolors="k", linewidth=1.5, zorder=5, label="Start")
-        ax.scatter(pos[-1, 1], pos[-1, 0], c="red", s=120, marker="X", edgecolors="k", linewidth=1.5, zorder=5, label="End")
-        tgt = target.cpu().numpy()
-        ax.scatter(tgt[1], tgt[0], c="gold", s=160, marker="*", edgecolors="k", linewidth=1.5, zorder=5, label="Target")
-
-        status = "SUCCESS" if reached_target else "FAILED"
-        ax.set_title(f"Episode {env_idx} — {status} ({len(positions)} moves)", fontsize=14, fontweight="bold")
-        ax.legend(fontsize=10, loc="upper right")
-        ax.set_axis_off()
-        fig.tight_layout()
-        return fig
