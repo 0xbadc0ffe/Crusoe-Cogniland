@@ -484,6 +484,12 @@ class PPOAgent:
 
             logger.log_behavioral_profile(behavioral, step=global_step)
 
+            # Structured per-episode eval table for final report
+            logger.log_eval_table(
+                reached, total_rewards, total_moves, final_hp,
+                trajectories, step=global_step,
+            )
+
         return eval_metrics
 
 

@@ -151,6 +151,10 @@ class CompassModel:
 
         logger.log(eval_metrics, step=0)
         logger.log_behavioral_profile(behavioral, step=0)
+        logger.log_eval_table(
+            reached, total_rewards, total_moves,
+            eval_env.state.hp, trajectories, step=0,
+        )
 
         # Log trajectory images
         if logger.enabled:
