@@ -48,26 +48,23 @@ class WandBLogger:
         self,
         figures: list,
         captions: list[str],
-        outcomes: list[str],
-        steps_list: list[int],
-        step: int | None = None,
+        env_indices: list[int],
+        step: int,
     ) -> None:
-        """Log trajectory images as individual full-size WandB images.
+        """Log trajectory images keyed by environment index.
 
-        Each image is logged under trajectories/<label> so they appear in
-        their own 'trajectories' section in the WandB dashboard, separate
-        from eval/ metrics.  Individual keys display as large panels.
+        Each image is logged under ``trajectories/env_<i>`` so the WandB
+        slider (``step``) lets you scrub across evaluation rounds while
+        each panel shows one parallel environment.
         """
         if not self.enabled or self._run is None:
             return
         import wandb
 
         data = {}
-        for i, (fig, caption, outcome, n_steps) in enumerate(
-            zip(figures, captions, outcomes, steps_list)
-        ):
-            key = f"trajectories/ep_{i}"
-            data[key] = wandb.Image(fig, caption=f"{outcome} | {n_steps} moves")
+        for fig, caption, env_idx in zip(figures, captions, env_indices):
+            key = f"trajectories/env_{env_idx}"
+            data[key] = wandb.Image(fig, caption=caption)
         self._run.log(data, step=step)
 
     def log_behavioral_profile(
