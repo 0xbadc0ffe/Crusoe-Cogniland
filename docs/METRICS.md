@@ -80,7 +80,7 @@ Logged as individual `wandb.Image` panels under `trajectories/ep_0`, `trajectori
 
 ## Reward function breakdown
 
-The per-move reward is the sum of five components, all configurable via `configs/env/*.yaml`:
+The per-move reward is the sum of five components, all configurable via `configs/env/default.yaml` or CLI overrides:
 
 | Component | Formula | Default coef | Purpose |
 |-----------|---------|-------------|---------|

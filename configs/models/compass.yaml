@@ -1,2 +1,3 @@
 name: compass
 action_dim: 5
+eval_episodes: 16

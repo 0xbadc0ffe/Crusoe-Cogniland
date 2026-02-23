@@ -16,6 +16,19 @@ init_resources: 0.0
 max_sea_movement_without_resources: 7
 hard_mode: false
 
+# Terrain effects
+passive_heal_rate: 1.0
+land_to_water_penalty: 3.0
+forest_hp_gain: 4.0
+forest_resource_gain: 1.0
+sea_resource_costs: [0.75, 0.50, 0.25]     # ocean, deep_water, water
+sea_hp_costs: [25.0, 25.0, 10.0]            # ocean, deep_water, water
+mountain_resource_costs: [0.25, 0.75]        # rocky, mountains
+mountain_hp_costs: [5.0, 20.0]              # rocky, mountains
+hard_mode_resource_drain: 0.25
+hard_mode_hp_gain: 1.0
+hard_mode_hp_loss: 0.5
+
 # Minimap
 minimap_ray: 25
 minimap_occlude: false

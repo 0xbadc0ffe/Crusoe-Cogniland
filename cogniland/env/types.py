@@ -56,6 +56,19 @@ class EnvConfig:
     max_sea_movement_without_resources: int = 7
     hard_mode: bool = False
 
+    # Terrain effects (previously hardcoded in core.py)
+    passive_heal_rate: float = 1.0
+    land_to_water_penalty: float = 3.0
+    forest_hp_gain: float = 4.0
+    forest_resource_gain: float = 1.0
+    sea_resource_costs: tuple = (0.75, 0.50, 0.25)   # ocean, deep_water, water
+    sea_hp_costs: tuple = (25.0, 25.0, 10.0)          # ocean, deep_water, water
+    mountain_resource_costs: tuple = (0.25, 0.75)      # rocky, mountains
+    mountain_hp_costs: tuple = (5.0, 20.0)             # rocky, mountains
+    hard_mode_resource_drain: float = 0.25
+    hard_mode_hp_gain: float = 1.0
+    hard_mode_hp_loss: float = 0.5
+
     # Minimap
     minimap_ray: int = 25
     minimap_occlude: bool = False
@@ -93,6 +106,18 @@ class EnvConfig:
             init_resources=env.init_resources,
             max_sea_movement_without_resources=env.max_sea_movement_without_resources,
             hard_mode=env.hard_mode,
+            # Terrain effects — .get() so older config files still work
+            passive_heal_rate=env.get("passive_heal_rate", 1.0),
+            land_to_water_penalty=env.get("land_to_water_penalty", 3.0),
+            forest_hp_gain=env.get("forest_hp_gain", 4.0),
+            forest_resource_gain=env.get("forest_resource_gain", 1.0),
+            sea_resource_costs=tuple(env.get("sea_resource_costs", [0.75, 0.50, 0.25])),
+            sea_hp_costs=tuple(env.get("sea_hp_costs", [25.0, 25.0, 10.0])),
+            mountain_resource_costs=tuple(env.get("mountain_resource_costs", [0.25, 0.75])),
+            mountain_hp_costs=tuple(env.get("mountain_hp_costs", [5.0, 20.0])),
+            hard_mode_resource_drain=env.get("hard_mode_resource_drain", 0.25),
+            hard_mode_hp_gain=env.get("hard_mode_hp_gain", 1.0),
+            hard_mode_hp_loss=env.get("hard_mode_hp_loss", 0.5),
             minimap_ray=env.minimap_ray, minimap_occlude=env.minimap_occlude,
             minimap_min_clear_lv=env.minimap_min_clear_lv,
             max_steps=env.max_steps,
