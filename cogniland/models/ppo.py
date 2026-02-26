@@ -497,10 +497,10 @@ class PPOAgent:
 
             alive = alive & ~truncated
 
-            for i in torch.where(still_running)[0].tolist():
-                t = int(pre_move_terrain[i].item())
-                if 0 <= t <= 8:
-                    terrain_visits[i, t] += 1
+            # Count terrain visit for every still-running episode (including stay actions).
+            # terrain_lev is always in [0, 8] (clamped by compute_terrain_levels).
+            running_idx = torch.where(still_running)[0]
+            terrain_visits[running_idx, pre_move_terrain[running_idx].long()] += 1
 
             if (~alive | reached).all():
                 break
