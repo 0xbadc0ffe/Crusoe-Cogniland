@@ -12,7 +12,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-from cogniland.env.constants import NUM_ACTIONS
+from cogniland.env.constants import NUM_ACTIONS, TERRAIN_VISIBILITY
 from cogniland.env.islands import Islands
 from cogniland.env.types import EnvConfig, EnvState
 
@@ -80,10 +80,12 @@ class BatchedIslandEnv:
         """Build observation dict from current state.
 
         Returns:
-            ``"scalars"``: [B, 6] — compass(2), terrain_lev, terrain_clock, resources, hp
-            ``"minimap"``: [B, 1, H, W]
+            ``"scalars"``: [B, 7] — compass(2), terrain_lev, terrain_clock, resources, hp, visibility_range
+            ``"minimap"``: [B, 2, H, W]
         """
         s = self.state
+        vis_range = TERRAIN_VISIBILITY.to(s.terrain_lev.device)[s.terrain_lev.long()].float()
+        vis_norm = vis_range / self.config.minimap_max_ray  # normalize to [0, 1]
         scalars = torch.stack([
             s.compass[:, 0],
             s.compass[:, 1],
@@ -91,7 +93,8 @@ class BatchedIslandEnv:
             s.terrain_clock,
             s.resources,
             s.hp,
-        ], dim=1)  # [B, 6]
+            vis_norm,
+        ], dim=1)  # [B, 7]
         return {"scalars": scalars, "minimap": s.minimap}
 
 
@@ -108,12 +111,12 @@ class IslandNavEnv(gym.Env):
         self.env = Islands(config)
         self.render_mode = render_mode
 
-        ray = config.minimap_ray
+        ray = config.minimap_max_ray
         diameter = 2 * ray + 1
 
         self.observation_space = gym.spaces.Dict({
-            "scalars": gym.spaces.Box(-np.inf, np.inf, shape=(6,), dtype=np.float32),
-            "minimap": gym.spaces.Box(0.0, 1.0, shape=(1, diameter, diameter), dtype=np.float32),
+            "scalars": gym.spaces.Box(-np.inf, np.inf, shape=(7,), dtype=np.float32),
+            "minimap": gym.spaces.Box(0.0, 1.0, shape=(2, diameter, diameter), dtype=np.float32),
         })
         self.action_space = gym.spaces.Discrete(NUM_ACTIONS)
 
@@ -142,10 +145,13 @@ class IslandNavEnv(gym.Env):
 
     def _obs(self) -> dict[str, np.ndarray]:
         s = self._state
+        vis_range = TERRAIN_VISIBILITY[s.terrain_lev[0].long().item()].float()
+        vis_norm = vis_range / self.config.minimap_max_ray
         scalars = torch.stack([
             s.compass[0, 0], s.compass[0, 1],
             s.terrain_lev[0], s.terrain_clock[0],
             s.resources[0], s.hp[0],
+            vis_norm,
         ]).cpu().numpy().astype(np.float32)
         minimap = s.minimap[0].cpu().numpy().astype(np.float32)
         return {"scalars": scalars, "minimap": minimap}

@@ -15,6 +15,7 @@ from cogniland.env.constants import (
     ACTION_DELTAS,
     TERRAIN_COSTS,
     TERRAIN_THRESHOLDS,
+    TERRAIN_VISIBILITY,
 )
 from cogniland.env.types import EnvConfig, EnvState, StepResult
 
@@ -43,16 +44,16 @@ def env_step(
     compass = (new_state.position - target_pos).float()
     new_state = new_state._replace(compass=compass)
 
-    # 3. Minimap update
-    minimap = compute_minimap_batch(
-        world_map, new_state.position, config.minimap_ray,
-        config.minimap_occlude, config.minimap_min_clear_lv,
-    )
-    new_state = new_state._replace(minimap=minimap)
-
-    # 4. Terrain level
+    # 3. Terrain level (needed by minimap visibility)
     terrain_lev = compute_terrain_levels(world_map, new_state.position)
     new_state = new_state._replace(terrain_lev=terrain_lev)
+
+    # 4. Minimap update
+    minimap = compute_minimap_batch(
+        world_map, new_state.position, config.minimap_max_ray,
+        terrain_lev, config.minimap_occlude, config.minimap_min_clear_lv,
+    )
+    new_state = new_state._replace(minimap=minimap)
 
     # 5. Terrain clock
     new_state = update_terrain_clock(new_state, old_terrain)
@@ -222,40 +223,187 @@ def apply_terrain_effects(
 # Minimap (batched)
 # ---------------------------------------------------------------------------
 
+import functools
+
+
+@functools.lru_cache(maxsize=None)
+def _bresenham_rays(max_ray: int) -> torch.Tensor:
+    """Pre-compute Bresenham rays from center to all perimeter cells.
+    
+    Returns:
+        rays: [num_rays, max_len, 2] tensor of (dy, dx) offsets from center.
+        lengths: [num_rays] tensor of valid lengths for each ray.
+    """
+    diameter = 2 * max_ray + 1
+    center = max_ray
+    
+    # Get all perimeter coordinates
+    perimeter = []
+    for i in range(diameter):
+        perimeter.append((0, i))
+        perimeter.append((diameter - 1, i))
+    for i in range(1, diameter - 1):
+        perimeter.append((i, 0))
+        perimeter.append((i, diameter - 1))
+        
+    rays = []
+    for (y1, x1) in perimeter:
+        # Bresenham from center to (y1, x1)
+        y0, x0 = center, center
+        dy = abs(y1 - y0)
+        dx = abs(x1 - x0)
+        sx = 1 if x0 < x1 else -1
+        sy = 1 if y0 < y1 else -1
+        err = dx - dy
+        
+        ray = []
+        while True:
+            ray.append((y0 - center, x0 - center))
+            if x0 == x1 and y0 == y1:
+                break
+            e2 = 2 * err
+            if e2 > -dy:
+                err -= dy
+                x0 += sx
+            if e2 < dx:
+                err += dx
+                y0 += sy
+        rays.append(ray)
+        
+    # Pad rays to same length for tensor
+    max_len = max(len(r) for r in rays)
+    ray_tensor = torch.zeros(len(rays), max_len, 2, dtype=torch.long)
+    lengths = torch.tensor([len(r) for r in rays], dtype=torch.long)
+    
+    for i, r in enumerate(rays):
+        for j, (dy, dx) in enumerate(r):
+            ray_tensor[i, j, 0] = dy
+            ray_tensor[i, j, 1] = dx
+            
+    return ray_tensor, lengths
+
+
+def compute_occlusion_mask_batch(patches: torch.Tensor, max_ray: int, min_clear_lv: float) -> torch.Tensor:
+    """Compute binary visibility mask in batch using raycasting from the center.
+    
+    Args:
+        patches: [B, D, D] heightmap patches centered on the agents.
+        max_ray: radius of the patches.
+        min_clear_lv: height threshold that blocks vision.
+        
+    Returns:
+        masks: [B, D, D] float tensor (1.0 = visible, 0.0 = occluded).
+    """
+    B, D, _ = patches.shape
+    device = patches.device
+    
+    rays, lengths = _bresenham_rays(max_ray)
+    rays = rays.to(device)
+    lengths = lengths.to(device)
+    
+    num_rays, max_len, _ = rays.shape
+    
+    # Global indices for rays relative to patch top-left
+    ray_y = max_ray + rays[..., 0]  # [num_rays, max_len]
+    ray_x = max_ray + rays[..., 1]  # [num_rays, max_len]
+    
+    # Gather heights for all patches along all rays
+    ray_heights = patches[:, ray_y, ray_x]  # [B, num_rays, max_len]
+    
+    # Find blocking cells
+    blocks = (ray_heights >= min_clear_lv).float()
+    
+    # Cells *after* the first block are occluded.
+    # cummax creates a mask of 1s starting from the first block.
+    # By shifting right, the blocking cell itself remains 0 (visible).
+    is_blocked = blocks.cummax(dim=2)[0]
+    occluded = torch.cat([torch.zeros(B, num_rays, 1, device=device), is_blocked[:, :, :-1]], dim=2)
+    
+    # Mask to ignore padding in the ray sequences
+    valid_mask = torch.arange(max_len, device=device).unsqueeze(0) < lengths.unsqueeze(1)
+    
+    # We want final mask to be 1.0 (visible) by default, and set to 0.0 if occluded
+    # We take the minimum visibility over all rays that visit a cell
+    visible = 1.0 - occluded
+    
+    # Flatten the ray coordinates for scatter_reduce
+    flat_y = ray_y.flatten()
+    flat_x = ray_x.flatten()
+    flat_indices = flat_y * D + flat_x # [num_rays * max_len]
+    flat_indices = flat_indices.unsqueeze(0).expand(B, -1) # [B, num_rays * max_len]
+    
+    flat_visible = visible.reshape(B, -1) # [B, num_rays * max_len]
+    flat_valid = valid_mask.reshape(1, -1).expand(B, -1)
+    
+    # Set invalid elements to 1.0 so min reduction ignores them
+    flat_visible = torch.where(flat_valid, flat_visible, torch.ones_like(flat_visible))
+    
+    final_masks = torch.ones(B, D * D, device=device)
+    final_masks.scatter_reduce_(1, flat_indices, flat_visible, reduce="amin", include_self=False)
+    
+    return final_masks.view(B, D, D)
+
+
 def compute_minimap_batch(
     world_map: torch.Tensor,
     positions: torch.Tensor,
-    ray: int,
+    max_ray: int,
+    terrain_levels: torch.Tensor,
     occlude: bool,
     min_clear_lv: float,
 ) -> torch.Tensor:
-    """Compute minimap for a batch of positions.
+    """Compute minimap with terrain-dependent visibility for a batch of positions.
 
-    Returns: [B, 1, 2*ray+1, 2*ray+1] channel-first float tensor.
+    Returns: [B, 2, 2*max_ray+1, 2*max_ray+1] channel-first float tensor.
+        Channel 0 = heightmap values (zero outside visibility circle)
+        Channel 1 = binary visibility mask (1.0 inside, 0.0 outside)
     """
     B = positions.shape[0]
     size = world_map.shape[0]
-    diameter = 2 * ray + 1
-    maps = torch.zeros(B, 1, diameter, diameter, device=positions.device)
+    diameter = 2 * max_ray + 1
+    device = positions.device
 
+    maps = torch.zeros(B, 2, diameter, diameter, device=device)
+    patches = torch.zeros(B, diameter, diameter, device=device)
+
+    # 1. Slice out patches sequentially (fast because slice logic contains clamp bounds)
     for b in range(B):
         cy, cx = positions[b, 0].item(), positions[b, 1].item()
-        # Compute slice bounds (may be out-of-bounds — we'll pad)
-        y0, y1 = cy - ray, cy + ray + 1
-        x0, x1 = cx - ray, cx + ray + 1
+        
+        y0, y1 = cy - max_ray, cy + max_ray + 1
+        x0, x1 = cx - max_ray, cx + max_ray + 1
 
-        # Source region (clamped)
         sy0 = max(y0, 0)
         sy1 = min(y1, size)
         sx0 = max(x0, 0)
         sx1 = min(x1, size)
 
-        # Dest offsets in the output patch
         dy0 = sy0 - y0
         dy1 = dy0 + (sy1 - sy0)
         dx0 = sx0 - x0
         dx1 = dx0 + (sx1 - sx0)
 
-        maps[b, 0, dy0:dy1, dx0:dx1] = world_map[sy0:sy1, sx0:sx1]
+        if sy0 < sy1 and sx0 < sx1:
+            patches[b, dy0:dy1, dx0:dx1] = world_map[sy0:sy1, sx0:sx1]
+
+    # Pre-compute distance grid from center
+    coords = torch.arange(diameter, device=device).float() - max_ray
+    dy_grid, dx_grid = torch.meshgrid(coords, coords, indexing="ij")
+    dist_grid = torch.sqrt(dy_grid ** 2 + dx_grid ** 2)  # [D, D]
+
+    # Batch distance visibility mask
+    vis_radii = TERRAIN_VISIBILITY.to(device)[terrain_levels.long()]  # [B]
+    dist_masks = (dist_grid.unsqueeze(0) <= vis_radii.view(B, 1, 1)).float()  # [B, D, D]
+
+    # Batch occlusion mask
+    if occlude:
+        occ_masks = compute_occlusion_mask_batch(patches, max_ray, min_clear_lv)
+        final_masks = dist_masks * occ_masks
+    else:
+        final_masks = dist_masks
+
+    # Combine
+    maps[:, 0] = patches * final_masks
+    maps[:, 1] = final_masks
 
     return maps
