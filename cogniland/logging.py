@@ -191,7 +191,7 @@ class WandBLogger:
             x=steps_list,
             y=bin_centers,
             z=z_matrix,
-            colorscale=[[0, "blue"], [1, "red"]],
+            colorscale="rdbu_r",
             showscale=True,
         ))
         fig.update_layout(
