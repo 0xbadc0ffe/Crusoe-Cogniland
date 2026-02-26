@@ -37,8 +37,10 @@ def compute_behavioral_metrics(
         (scalars, distributions) — scalars dict of behavioral/ prefixed means,
         distributions dict of per-episode tensors for violin plots.
     """
-    moves_safe = total_moves.clamp(min=1).unsqueeze(1)  # [N, 1]
-    visit_pct = terrain_visits / moves_safe  # [N, 9]
+    # Divide each episode's visits by that episode's total visits (not total_moves)
+    # so each row sums to 1.0 exactly; the mean across episodes also sums to 1.0.
+    visit_totals = terrain_visits.sum(dim=1, keepdim=True).clamp(min=1)  # [N, 1]
+    visit_pct = terrain_visits / visit_totals  # [N, 9]
 
     scalars: dict[str, float] = {}
     for i, name in enumerate(TERRAIN_NAMES):
@@ -220,10 +222,17 @@ class WandBLogger:
         step: int,
         mode_prefix: str = "deterministic",
     ) -> None:
-        """Log an interactive plotly stacked area chart of terrain visit distribution."""
+        """Log a stacked area chart of terrain visit distribution as a wandb.Image.
+
+        Uses matplotlib instead of Plotly to avoid WandB's embedded Plotly.js
+        not supporting the fillpattern property needed for correct fill colors.
+        """
         if not self.enabled or self._run is None:
             return
         import wandb
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
 
         entry = {"step": step}
         entry.update(terrain_pcts)
@@ -232,38 +241,33 @@ class WandBLogger:
             self._terrain_history[mode_prefix] = []
         self._terrain_history[mode_prefix].append(entry)
 
-        try:
-            import plotly.graph_objects as go
-        except ImportError:
-            return
-
         history = self._terrain_history[mode_prefix]
         steps = [h["step"] for h in history]
 
-        fig = go.Figure()
-        for name in TERRAIN_NAMES:
-            fig.add_trace(go.Scatter(
-                x=steps,
-                y=[h[name] for h in history],
-                name=name,
-                mode="lines",
-                stackgroup="one",
-                groupnorm="percent",
-                line=dict(width=0.5, color=self._TERRAIN_COLORS[name]),
-                fill="tonexty",
-                fillcolor=self._TERRAIN_COLORS[name],
-            ))
-        fig.update_layout(
-            xaxis_title="Update",
-            xaxis=dict(showgrid=False),
-            yaxis=dict(showgrid=False, ticksuffix="%", range=[0, 100]),
-            showlegend=True,
-        )
+        # Build [n_terrains, n_steps] array of fractions
+        fracs = np.array([[h[name] for h in history] for name in TERRAIN_NAMES])
+        # Normalise each column to sum to 1 (guard against float drift)
+        col_sums = fracs.sum(axis=0, keepdims=True)
+        col_sums = np.where(col_sums == 0, 1.0, col_sums)
+        fracs = fracs / col_sums
+
+        fig, ax = plt.subplots(figsize=(7, 3.5))
+        colors = [self._TERRAIN_COLORS[n] for n in TERRAIN_NAMES]
+        ax.stackplot(steps, fracs * 100, labels=TERRAIN_NAMES, colors=colors)
+        ax.set_xlim(steps[0], steps[-1])
+        ax.set_ylim(0, 100)
+        ax.set_xlabel("Update")
+        ax.set_ylabel("Visit %")
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f}%"))
+        ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), fontsize=7, frameon=False)
+        ax.grid(False)
+        fig.tight_layout()
 
         self._run.log(
-            {f"behavioral-{mode_prefix}/terrain_distribution": wandb.Plotly(fig)},
+            {f"behavioral-{mode_prefix}/terrain_distribution": wandb.Image(fig)},
             step=step,
         )
+        plt.close(fig)
 
     def finish(self) -> None:
         if self.enabled and self._run is not None:
