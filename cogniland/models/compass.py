@@ -140,23 +140,16 @@ class CompassModel:
                 break
 
         eval_metrics = {
-            "eval/success_rate": reached.float().mean().item(),
-            "eval/mean_reward": total_rewards.mean().item(),
-            "eval/mean_moves": total_moves.mean().item(),
-            "eval/mean_final_hp": eval_env.state.hp.mean().item(),
+            "eval-deterministic/success_rate_mean": reached.float().mean().item(),
         }
 
-        behavioral = compute_behavioral_metrics(terrain_visits, total_moves, eval_env.state)
-        eval_metrics.update(behavioral)
-
-        logger.log(eval_metrics, step=0)
-        logger.log_behavioral_profile(behavioral, step=0)
-        logger.log_eval_table(
-            reached, total_rewards, total_moves,
-            eval_env.state.hp, trajectories, step=0,
+        beh_scalars, beh_dists = compute_behavioral_metrics(
+            terrain_visits, total_moves, eval_env.state,
         )
 
-        # Log trajectory images
+        logger.log(eval_metrics, step=0)
+
+        # Trajectory images first
         if logger.enabled:
             import matplotlib
             matplotlib.use("Agg")
@@ -187,9 +180,72 @@ class CompassModel:
                 for fig in figures:
                     plt.close(fig)
 
+        from cogniland.logging import TERRAIN_NAMES
+        terrain_pcts = {
+            name: beh_scalars[f"behavioral/terrain_{name}_pct"]
+            for name in TERRAIN_NAMES
+        }
+        logger.log_terrain_distribution(terrain_pcts, step=0, mode_prefix="deterministic")
+
+        # Behavioral heatmaps — HP group
+        logger.log_density_heatmap(
+            "behavioral-deterministic/mean_hp",
+            beh_dists["hp_score"].numpy(), step=0,
+            y_label="HP",
+        )
+        logger.log_density_heatmap(
+            "behavioral-deterministic/final_hp",
+            eval_env.state.hp.cpu().numpy(), step=0,
+            y_label="HP",
+        )
+        logger.log_density_heatmap(
+            "behavioral-deterministic/danger_fraction",
+            torch.zeros(n_eps).numpy(), step=0,
+            y_label="Fraction",
+        )
+
+        # Behavioral heatmaps — resource group
+        logger.log_density_heatmap(
+            "behavioral-deterministic/mean_resource",
+            beh_dists["resource_held"].numpy(), step=0,
+            y_label="Resources",
+        )
+        logger.log_density_heatmap(
+            "behavioral-deterministic/final_resources",
+            eval_env.state.resources.cpu().numpy(), step=0,
+            y_label="Resources",
+        )
+
+        # Eval heatmaps — ordered: return, length, HP group, resource group
+        logger.log_density_heatmap(
+            "eval-deterministic/return",
+            total_rewards.cpu().numpy(), step=0,
+            y_label="Return",
+        )
+        logger.log_density_heatmap(
+            "eval-deterministic/episode_length",
+            total_moves.cpu().numpy(), step=0,
+            y_label="Moves",
+        )
+        logger.log_density_heatmap(
+            "eval-deterministic/final_hp",
+            eval_env.state.hp.cpu().numpy(), step=0,
+            y_label="HP",
+        )
+        logger.log_density_heatmap(
+            "eval-deterministic/final_resources",
+            eval_env.state.resources.cpu().numpy(), step=0,
+            y_label="Resources",
+        )
+
+        logger.log_eval_table(
+            reached, total_rewards, total_moves,
+            eval_env.state.hp, trajectories, step=0,
+        )
+
         print(f"\nCompass Baseline Results ({n_eps} episodes):")
-        print(f"  Success rate: {eval_metrics['eval/success_rate']:.1%}")
-        print(f"  Mean reward:  {eval_metrics['eval/mean_reward']:.2f}")
-        print(f"  Mean moves:   {eval_metrics['eval/mean_moves']:.0f}")
+        print(f"  Success rate: {eval_metrics['eval-deterministic/success_rate_mean']:.1%}")
+        print(f"  Mean reward:  {total_rewards.mean().item():.2f}")
+        print(f"  Mean moves:   {total_moves.mean().item():.0f}")
 
         logger.finish()
