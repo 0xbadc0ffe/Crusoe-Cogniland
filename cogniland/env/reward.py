@@ -25,12 +25,16 @@ def compute_reward(
         r_reach — sparse: large bonus for reaching target
         r_death — sparse: penalty for dying
         r_time  — dense: small per-step penalty to encourage efficiency
-        r_hp    — mild: penalise dangerously low HP
+        r_hp       — mild: penalise dangerously low HP
+        r_resource — mild: penalise dangerously low resources
     """
     r_dist = (prev_dist - dist_to_target) * config.reward_dist_coef
     r_reach = torch.where(reached, torch.tensor(config.reward_reach_bonus, device=state.hp.device), torch.tensor(0.0, device=state.hp.device))
     r_death = torch.where(~alive, torch.tensor(config.reward_death_penalty, device=state.hp.device), torch.tensor(0.0, device=state.hp.device))
     r_time = config.reward_time_penalty
     r_hp = config.reward_hp_coef * torch.clamp(config.reward_hp_thresh - state.hp, min=0.0)
+    r_resource = config.reward_resource_coef * torch.clamp(
+        config.reward_resource_thresh - state.resources, min=0.0
+    )
 
-    return r_dist + r_reach + r_death + r_time - r_hp
+    return r_dist + r_reach + r_death + r_time - r_hp - r_resource

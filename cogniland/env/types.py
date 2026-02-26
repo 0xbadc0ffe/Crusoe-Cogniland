@@ -53,6 +53,7 @@ class EnvConfig:
     init_hp: float = 75.0
     max_hp: float = 100.0
     init_resources: float = 0.0
+    max_resources: float = 100.0
     max_sea_movement_without_resources: int = 7
     hard_mode: bool = False
 
@@ -78,12 +79,21 @@ class EnvConfig:
     max_steps: int = 1000
 
     # Reward coefficients
-    reward_dist_coef: float = 1.0
-    reward_reach_bonus: float = 10.0
-    reward_death_penalty: float = -5.0
-    reward_time_penalty: float = -0.01
-    reward_hp_coef: float = 0.01
-    reward_hp_thresh: float = 30.0
+    reward_dist_coef: float = 0.03
+    reward_reach_bonus: float = 12.0
+    reward_death_penalty: float = -8.0
+    reward_time_penalty: float = -0.1
+    reward_hp_coef: float = 0.05
+    reward_hp_thresh: float = 35.0
+    reward_resource_coef: float = 0.02
+    reward_resource_thresh: float = 25.0
+
+    # Custom map support
+    map_name: str = ""
+    spawn_r: int = -1
+    spawn_c: int = -1
+    target_r: int = -1
+    target_c: int = -1
 
     # Device
     device: str = "auto"
@@ -104,6 +114,7 @@ class EnvConfig:
             filtering=env.filtering, sink_mode=env.sink_mode,
             init_hp=env.init_hp, max_hp=env.max_hp,
             init_resources=env.init_resources,
+            max_resources=env.get("max_resources", 100.0),
             max_sea_movement_without_resources=env.max_sea_movement_without_resources,
             hard_mode=env.hard_mode,
             # Terrain effects — .get() so older config files still work
@@ -127,5 +138,12 @@ class EnvConfig:
             reward_time_penalty=env.reward_time_penalty,
             reward_hp_coef=env.reward_hp_coef,
             reward_hp_thresh=env.reward_hp_thresh,
+            reward_resource_coef=env.get("reward_resource_coef", 0.02),
+            reward_resource_thresh=env.get("reward_resource_thresh", 25.0),
+            map_name=env.get("map_name", ""),
+            spawn_r=env.get("spawn_r", -1),
+            spawn_c=env.get("spawn_c", -1),
+            target_r=env.get("target_r", -1),
+            target_c=env.get("target_c", -1),
             device=cfg.device,
         )
