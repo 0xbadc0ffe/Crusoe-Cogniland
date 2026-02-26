@@ -118,12 +118,27 @@ class Islands:
         self.config = config
         self._device = config.resolved_device()
 
-        # Generate island (CPU) then move to device
+        # Generate or load island (CPU) then move to device
         # Seed all RNGs — SimplexNoise uses Python's random module internally
         torch.manual_seed(config.seed)
         random.seed(config.seed)
         np.random.seed(config.seed)
-        self.world_map = generate_island(config).to(self._device)
+
+        if config.map_name:
+            from cogniland.env import custom_maps as cm
+            self.world_map = cm.get_map(config.map_name).to(self._device)
+            self._fixed_spawn: tuple[int, int] | None = cm.get_spawn(config.map_name)
+            self._fixed_target: tuple[int, int] | None = cm.get_target(config.map_name)
+        else:
+            self.world_map = generate_island(config).to(self._device)
+            self._fixed_spawn = None
+            self._fixed_target = None
+
+        # Per-run position overrides (config.spawn_r/c, target_r/c)
+        if config.spawn_r >= 0:
+            self._fixed_spawn = (config.spawn_r, config.spawn_c)
+        if config.target_r >= 0:
+            self._fixed_target = (config.target_r, config.target_c)
 
     # ------------------------------------------------------------------
     # Reset
@@ -139,9 +154,18 @@ class Islands:
         land_threshold = TERRAIN_THRESHOLDS[2].item()  # must be above water
         size = self.config.size
 
-        # Sample valid land positions for spawns and targets
-        spawn_pos = self._sample_land_positions(batch_size, land_threshold)
-        target_pos = self._sample_land_positions(batch_size, land_threshold)
+        # Sample or use fixed spawn/target positions
+        if self._fixed_spawn is not None:
+            r, c = self._fixed_spawn
+            spawn_pos = torch.tensor([[r, c]], device=self._device).expand(batch_size, 2).clone()
+        else:
+            spawn_pos = self._sample_land_positions(batch_size, land_threshold)
+
+        if self._fixed_target is not None:
+            r, c = self._fixed_target
+            target_pos = torch.tensor([[r, c]], device=self._device).expand(batch_size, 2).clone()
+        else:
+            target_pos = self._sample_land_positions(batch_size, land_threshold)
 
         minimap = compute_minimap_batch(
             self.world_map, spawn_pos,
@@ -192,11 +216,20 @@ class Islands:
         if not done.any():
             return state, target_pos
 
-        n_done = done.sum().item()
+        n_done = int(done.sum().item())
         land_threshold = TERRAIN_THRESHOLDS[2].item()
 
-        new_spawn = self._sample_land_positions(n_done, land_threshold)
-        new_target = self._sample_land_positions(n_done, land_threshold)
+        if self._fixed_spawn is not None:
+            r, c = self._fixed_spawn
+            new_spawn = torch.tensor([[r, c]], device=self._device).expand(n_done, 2).clone()
+        else:
+            new_spawn = self._sample_land_positions(n_done, land_threshold)
+
+        if self._fixed_target is not None:
+            r, c = self._fixed_target
+            new_target = torch.tensor([[r, c]], device=self._device).expand(n_done, 2).clone()
+        else:
+            new_target = self._sample_land_positions(n_done, land_threshold)
 
         # Build replacement state fields
         new_minimap = compute_minimap_batch(
