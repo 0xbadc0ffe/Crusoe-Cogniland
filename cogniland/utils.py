@@ -113,6 +113,20 @@ def render_trajectory(world_map, positions, target, reached_target, env_idx,
     fig, ax = plt.subplots(figsize=(14, 14), dpi=150)
     ax.imshow(rgb, origin="upper", interpolation="nearest")
 
+    # Visit-frequency heatmap overlay
+    visit_counts = np.zeros(wm.shape, dtype=np.float32)
+    for r, c in positions:
+        visit_counts[r, c] += 1
+
+    if visit_counts.max() > 0:
+        norm_visits = visit_counts / visit_counts.max()
+        overlay = np.zeros((*wm.shape, 4), dtype=np.float32)
+        overlay[..., 0] = 1.0                    # R: full red
+        overlay[..., 1] = 1.0 - norm_visits      # G: yellow (high) → red (low)
+        overlay[..., 2] = 0.0                    # B: 0
+        overlay[..., 3] = norm_visits * 0.75     # A: transparent where unvisited
+        ax.imshow(overlay, origin="upper", interpolation="nearest")
+
     pos = np.array(positions)
     ax.plot(pos[:, 1], pos[:, 0], "white", linewidth=3, alpha=0.6)
     ax.plot(pos[:, 1], pos[:, 0], "r-", linewidth=1.5, alpha=0.9)
@@ -126,7 +140,7 @@ def render_trajectory(world_map, positions, target, reached_target, env_idx,
                edgecolors="k", linewidth=1.5, zorder=5, label="Target")
 
     status = "SUCCESS" if reached_target else "FAILED"
-    ax.set_title(f"Episode {env_idx} — {status} ({len(positions)} moves)",
+    ax.set_title(f"{status} ({len(positions)} moves)",
                  fontsize=14, fontweight="bold")
     ax.legend(fontsize=10, loc="upper right")
     ax.set_axis_off()
