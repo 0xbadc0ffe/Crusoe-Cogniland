@@ -25,9 +25,8 @@ Hydra YAML configuration. Training and logging params are inlined in `config.yam
 
 | Group | Files | What it controls |
 |-------|-------|-----------------|
-| `env/` | `default.yaml`, `hard.yaml` | Island generation, agent params, minimap, reward coefficients, episode limits |
-| `models/` | `ppo.yaml`, `compass.yaml` | Model architecture (hidden dim, CNN params, action dim) |
-| *inlined* | `config.yaml` → `training:` | PPO hyperparams (LR, gamma, clip, epochs, batch sizes), eval/checkpoint intervals |
+| `env/` | `default.yaml`, `hard.yaml`, `map_strait.yaml`, `map_forest_belt.yaml`, `map_twin_peaks.yaml`, `map_river_delta.yaml`, `map_archipelago.yaml` | Island generation, agent params, minimap, reward coefficients, episode limits, custom map selection |
+| `models/` | `ppo.yaml`, `compass.yaml` | Model architecture (hidden dim, CNN params, action dim) + PPO hyperparams (LR, gamma, clip, epochs, batch sizes, eval/checkpoint intervals) |
 | *inlined* | `config.yaml` → `logging:` | WandB project/entity/mode, trajectory image settings |
 
 Any value can be overridden from CLI: `python train.py models.training.learning_rate=1e-4 env=hard`.
