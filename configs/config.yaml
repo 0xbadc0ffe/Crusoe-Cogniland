@@ -13,11 +13,15 @@ logging:
     entity: crusoe
     mode: "online"    # "online", "offline", or "disabled"
   trajectory:
-    save_frequency: 5
-    max_saved_per_eval: 4
+    save_frequency: 500
+    max_saved_per_eval: 3
     save_on_success: true
     save_on_death: true
   behavioral_metrics: true
+  eval:
+    hp_danger_threshold: 30.0
+    deterministic_episodes: 16
+    stochastic_episodes: 16
 
 # Hydra output directory
 hydra:
