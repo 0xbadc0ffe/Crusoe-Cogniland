@@ -143,13 +143,14 @@ class Islands:
         spawn_pos = self._sample_land_positions(batch_size, land_threshold)
         target_pos = self._sample_land_positions(batch_size, land_threshold)
 
+        terrain_lev = compute_terrain_levels(self.world_map, spawn_pos)
         minimap = compute_minimap_batch(
             self.world_map, spawn_pos,
-            self.config.minimap_ray, self.config.minimap_occlude,
+            self.config.minimap_max_ray, terrain_lev,
+            self.config.minimap_occlude,
             self.config.minimap_min_clear_lv,
         )
         compass = (spawn_pos - target_pos).float()
-        terrain_lev = compute_terrain_levels(self.world_map, spawn_pos)
 
         state = EnvState(
             position=spawn_pos,
@@ -199,13 +200,14 @@ class Islands:
         new_target = self._sample_land_positions(n_done, land_threshold)
 
         # Build replacement state fields
+        new_terrain = compute_terrain_levels(self.world_map, new_spawn)
         new_minimap = compute_minimap_batch(
             self.world_map, new_spawn,
-            self.config.minimap_ray, self.config.minimap_occlude,
+            self.config.minimap_max_ray, new_terrain,
+            self.config.minimap_occlude,
             self.config.minimap_min_clear_lv,
         )
         new_compass = (new_spawn - new_target).float()
-        new_terrain = compute_terrain_levels(self.world_map, new_spawn)
 
         # Replace done environments in each tensor
         position = state.position.clone()

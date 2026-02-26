@@ -16,7 +16,7 @@ class EnvState(NamedTuple):
     """Full batched environment state."""
 
     position: torch.Tensor        # [B, 2] long
-    minimap: torch.Tensor         # [B, 1, 2*ray+1, 2*ray+1] float (channel-first for CNN)
+    minimap: torch.Tensor         # [B, 2, 2*max_ray+1, 2*max_ray+1] float (ch0=heightmap, ch1=visibility mask)
     compass: torch.Tensor         # [B, 2] float
     terrain_lev: torch.Tensor     # [B] float
     terrain_clock: torch.Tensor   # [B] float
@@ -71,6 +71,7 @@ class EnvConfig:
 
     # Minimap
     minimap_ray: int = 25
+    minimap_max_ray: int = 10       # fixed CNN spatial dim = 2*max_ray+1
     minimap_occlude: bool = False
     minimap_min_clear_lv: float = 0.25
 
@@ -118,7 +119,9 @@ class EnvConfig:
             hard_mode_resource_drain=env.get("hard_mode_resource_drain", 0.25),
             hard_mode_hp_gain=env.get("hard_mode_hp_gain", 1.0),
             hard_mode_hp_loss=env.get("hard_mode_hp_loss", 0.5),
-            minimap_ray=env.minimap_ray, minimap_occlude=env.minimap_occlude,
+            minimap_ray=env.minimap_ray,
+            minimap_max_ray=env.get("minimap_max_ray", 10),
+            minimap_occlude=env.minimap_occlude,
             minimap_min_clear_lv=env.minimap_min_clear_lv,
             max_steps=env.max_steps,
             reward_dist_coef=env.reward_dist_coef,

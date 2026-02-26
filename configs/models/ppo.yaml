@@ -1,8 +1,8 @@
 name: ppo
 
 # ── Network architecture ──
-scalar_dim: 6            # Number of scalar inputs (compass_x, compass_y, terrain, terrain_clock, resources, hp)
-minimap_channels: 1      # Minimap input channels (1 = heightmap only)
+scalar_dim: 7            # Number of scalar inputs (compass_x, compass_y, terrain, terrain_clock, resources, hp, visibility_range)
+minimap_channels: 2      # Minimap input channels (ch0 = heightmap, ch1 = visibility mask)
 hidden_dim: 128          # Trunk hidden layer width
 action_dim: 5            # Output actions (up, down, right, left, stay)
 

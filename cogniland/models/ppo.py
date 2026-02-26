@@ -34,7 +34,7 @@ class ActorCritic(nn.Module):
 
     def __init__(
         self,
-        scalar_dim: int = 6,
+        scalar_dim: int = 7,
         minimap_channels: int = 1,
         minimap_size: int = 51,
         hidden_dim: int = 128,
@@ -179,7 +179,7 @@ class PPOAgent:
         self.env_config = env_config
         self.device = device
 
-        minimap_size = 2 * cfg.env.minimap_ray + 1
+        minimap_size = 2 * cfg.env.minimap_max_ray + 1
         scalar_dim = cfg.models.get("scalar_dim", 6)
         action_dim = cfg.models.get("action_dim", NUM_ACTIONS)
         self.model = ActorCritic(
