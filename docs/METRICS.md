@@ -26,40 +26,62 @@ Logged every update. Computed from the rollout buffer collected from `num_envs` 
 | `train/clipfrac` | Fraction of minibatch samples where `|r - 1| > clip_coef` | How often PPO's clipping activates. High = policy changing too fast. Healthy range: 0.05–0.2. |
 | `train/approx_kl` | `mean((r - 1) - log(r))` — second-order KL approximation | Divergence between old and new policy. If consistently > 0.03, learning rate may be too high. |
 | `train/learning_rate` | Current LR (with optional linear annealing) | Tracks the LR schedule. |
-| `train/sps` | `global_step / wall_time` | Moves per second — throughput. |
+| `train/steps_per_second` | `global_step / wall_time` | Moves per second — throughput. |
 | `train/mean_reward` | Mean episodic return across episodes completed during rollout | Online training performance. Noisy because it only includes episodes that happened to finish during the rollout window. |
 | `train/mean_episode_length` | Mean episode length (moves) of completed episodes | How long episodes last during training. |
 | `train/global_step` | `update × num_envs × rollout_steps` | Raw move count for reference. |
 
 ---
 
-## Evaluation metrics (`eval/`)
+## Evaluation metrics (`eval-deterministic/`, `eval-stochastic/`)
 
-Logged every `eval_interval` updates. Computed from `eval_episodes` parallel episodes run to completion (success, death, or truncation at `max_steps`).
+Logged every `eval_interval` updates. Two modes run in parallel: **deterministic** (greedy argmax) and **stochastic** (sampled from policy). Each mode gets its own WandB section.
+
+### Scalar metric
 
 | Metric | Formula | What it tells you |
 |--------|---------|-------------------|
-| `eval/success_rate` | `mean(reached)` — fraction of episodes where agent reached the target | Primary performance metric. |
-| `eval/mean_reward` | `mean(Σ rewards)` over all eval episodes | Total episodic return, comparable across evals since all episodes run to termination. |
-| `eval/mean_moves` | `mean(episode_length)` | Average moves per episode. Lower with higher success rate = agent is getting efficient. |
-| `eval/mean_final_hp` | `mean(HP at episode end)` | Agent's health management. Low = risky strategy, high = conservative. |
-| `eval/path_efficiency` | `mean(initial_distance_to_target / moves)` | How directly the agent moves toward the target. Higher = more efficient pathfinding. |
+| `eval-{mode}/success_rate_mean` | `mean(reached)` | Primary performance metric (scalar line). |
+
+### Density heatmaps (per mode)
+
+All per-episode distributions are logged as **Plotly density heatmaps** (2D histogram with blue→red colorscale). Each eval appends a new column; the chart rebuilds with the full history. The Y-axis shows metric value bins, the X-axis shows training updates, and color intensity indicates the density of episodes in each bin.
+
+| Panel key | What it tells you |
+|-----------|-------------------|
+| `eval-{mode}/return` | Per-episode return distribution. |
+| `eval-{mode}/episode_length` | Per-episode length distribution. |
+| `eval-{mode}/min_hp` | Worst-case HP during episode. |
+| `eval-{mode}/final_hp` | HP at episode end. |
+| `eval-{mode}/danger_fraction` | Fraction of steps in danger zone. |
+| `eval-{mode}/final_resources` | Resources at episode end. |
+| `eval-{mode}/max_resources` | Peak resources during episode (capped at `max_resources`). |
+| `eval-{mode}/path_efficiency` | Bounded [0, 1]. `clamp(A* cost / agent cost, 0, 1)`. 1 = optimal path. 0 if A* finds no path. |
+| `eval-{mode}/mean_resource` | Running mean of resources across trajectory. |
+| `eval-{mode}/mean_hp` | Running mean of HP across trajectory. |
 
 ---
 
-## Behavioral metrics (`behavioral/`)
+## Behavioral metrics (`behavioral-deterministic/`, `behavioral-stochastic/`)
 
-Logged alongside eval metrics. Computed from terrain visit counts and final agent state across eval episodes. Also visualised as a bar chart in `behavior/profile`.
+Logged alongside eval metrics, computed **per mode**. Each mode gets its own WandB section. Derived from terrain visit counts and final agent state.
 
-| Metric | Formula | What it tells you |
-|--------|---------|-------------------|
-| `behavioral/water_pct` | `mean(water_moves / total_moves)` — terrains 0–2 (ocean, deep water, water) | How much time the agent spends at sea. High = risky, costs HP without resources. |
-| `behavioral/land_pct` | `mean(land_moves / total_moves)` — terrains 3–5 (beach, sandy, grassland) | Time on safe traversable land. |
-| `behavioral/forest_pct` | `mean(forest_moves / total_moves)` — terrain 6 | Forest has high movement cost but provides resources. High = conservative resource-gathering policy. |
-| `behavioral/mountain_pct` | `mean(mountain_moves / total_moves)` — terrains 7–8 (rocky, mountains) | Very costly to traverse. High = agent taking bad routes. |
-| `behavioral/resource_held` | `mean(resources at episode end)` | End-of-episode resource level. High = hoarding, low = spending efficiently (or never collecting). |
-| `behavioral/hp_score` | `mean(final_HP / 100)` | Normalised final health. 0 = dead, 1 = full health. Tracks survival strategy. |
-| `behavioral/directness` | `mean(remaining_distance / moves)` | Remaining compass distance divided by moves taken. Lower = agent moved toward target efficiently. High = wandering or stuck. |
+### Terrain distribution chart (`behavioral-{mode}/terrain_distribution`)
+
+An interactive **Plotly stacked normalized area chart** (`groupnorm="percent"`) showing the fraction of moves spent on each of the 9 terrain types over training. Terrains are stacked bottom→top: ocean, deep_water, water, beach, sandy, grassland, forest, rocky, mountains — with palette-matched colors from `constants.py`.
+
+**Aggregation**: Per-environment terrain visit fractions are averaged across all envs. `groupnorm="percent"` re-normalizes to sum to 100% at each X-point. Y-axis is fixed to [0, 100]%.
+
+### Density heatmaps (per mode)
+
+| Panel key | Source | What it tells you |
+|-----------|--------|-------------------|
+| `behavioral-{mode}/mean_resource` | Per-episode Welford running mean of resources | Average resource level across the trajectory. |
+| `behavioral-{mode}/mean_hp` | Per-episode Welford running mean of HP | Average health across the trajectory. |
+| `behavioral-{mode}/final_hp` | HP at episode end | End-of-episode health snapshot. |
+| `behavioral-{mode}/final_resources` | Resources at episode end | End-of-episode resource snapshot. |
+| `behavioral-{mode}/max_resources` | Peak resources during episode | Highest resource level reached (capped at `max_resources`). |
+| `behavioral-{mode}/danger_fraction` | Steps with HP < threshold / total moves | Fraction of the episode spent in danger zone. |
 
 ---
 
@@ -80,14 +102,15 @@ Logged as individual `wandb.Image` panels under `trajectories/ep_0`, `trajectori
 
 ## Reward function breakdown
 
-The per-move reward is the sum of five components, all configurable via `configs/env/default.yaml` or CLI overrides:
+The per-move reward is the sum of six components, all configurable via `configs/env/default.yaml` or CLI overrides:
 
 | Component | Formula | Default coef | Purpose |
 |-----------|---------|-------------|---------|
-| `r_dist` | `(prev_distance - current_distance) × coef` | 1.0 | Dense signal: move toward target |
-| `r_reach` | `+bonus` if agent reaches target | +10.0 | Sparse: reward success |
-| `r_death` | `+penalty` if HP ≤ 0 | -5.0 | Sparse: penalise dying |
-| `r_time` | `penalty` (constant per move) | -0.01 | Dense: discourage dawdling |
-| `r_hp` | `-coef × max(threshold - HP, 0)` | coef=0.01, thresh=30 | Mild: penalise dangerously low HP |
+| `r_dist` | `(prev_distance - current_distance) × coef` | 0.03 | Dense signal: move toward target |
+| `r_reach` | `+bonus` if agent reaches target | +12.0 | Sparse: reward success |
+| `r_death` | `+penalty` if HP ≤ 0 | -8.0 | Sparse: penalise dying |
+| `r_time` | `penalty` (constant per move) | -0.1 | Dense: discourage dawdling |
+| `r_hp` | `-coef × max(threshold - HP, 0)` | coef=0.05, thresh=35 | Penalise dangerously low HP |
+| `r_resource` | `-coef × max(threshold - resources, 0)` | coef=0.02, thresh=25 | Penalise dangerously low resources |
 
-**Total**: `r_dist + r_reach + r_death + r_time - r_hp`
+**Total**: `r_dist + r_reach + r_death + r_time - r_hp - r_resource`

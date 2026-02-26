@@ -47,11 +47,11 @@ All config lives in `configs/config.yaml` and any value can be overridden from C
 | Override | Values | Default |
 |----------|--------|---------|
 | `models` | `ppo`, `compass` | `ppo` |
-| `env` | `default`, `hard` | `default` |
+| `env` | `default`, `hard`, `map_strait`, `map_forest_belt`, `map_twin_peaks`, `map_river_delta`, `map_archipelago` | `default` |
 | `device` | `auto`, `cuda`, `cpu` | `auto` |
-| `training.total_timesteps` | int | `1000000` |
-| `training.num_envs` | int | `32` |
-| `training.learning_rate` | float | `0.0003` |
+| `models.training.total_timesteps` | int | `10000000` |
+| `models.training.num_envs` | int | `32` |
+| `models.training.learning_rate` | float | `0.0003` |
 | `logging.wandb.mode` | `online`, `offline`, `disabled` | `online` |
 
 See `configs/config.yaml` for all PPO hyperparams and `configs/env/default.yaml` for all reward coefficients.
@@ -105,15 +105,15 @@ Crusoe-Cogniland/
 
 | Level | Name       | Cost | Special Effects |
 |-------|------------|------|-----------------|
-| 0     | Ocean      | 0.5  | Requires resources after 7 moves |
-| 1     | Deep Water | 0.75 | Requires resources after 7 moves |
-| 2     | Water      | 1.0  | Requires resources after 7 moves |
+| 0     | Ocean      | 0.5  | Drains 3.0 resources/turn; 30 HP damage; requires resources after 7 moves |
+| 1     | Deep Water | 0.75 | Drains 2.0 resources/turn; 25 HP damage; requires resources after 7 moves |
+| 2     | Water      | 1.0  | Drains 1.0 resource/turn; 15 HP damage; requires resources after 7 moves |
 | 3     | Beach      | 2.5  | - |
 | 4     | Sandy      | 2.5  | - |
 | 5     | Grassland  | 1.8  | - |
-| 6     | Forest     | 3.0  | Gain 1 resource + 4 HP per turn |
-| 7     | Rocky      | 4.0  | Consumes 0.25 resources per turn |
-| 8     | Mountains  | 8.0  | Consumes 0.75 resources per turn |
+| 6     | Forest     | 3.0  | Gain 3 resources + 2 HP per turn |
+| 7     | Rocky      | 4.0  | Consumes 1.0 resource/turn |
+| 8     | Mountains  | 8.0  | Consumes 2.5 resources/turn |
 
 ## WandB Metrics
 
