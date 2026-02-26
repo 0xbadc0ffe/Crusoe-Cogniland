@@ -67,7 +67,7 @@ def env_step(
 
     # 8. Clamp
     hp = torch.clamp(new_state.hp, 0.0, config.max_hp)
-    resources = torch.clamp(new_state.resources, min=0.0)
+    resources = torch.clamp(new_state.resources, 0.0, config.max_resources)
     new_state = new_state._replace(hp=hp, resources=resources)
 
     # 9. Terminal conditions

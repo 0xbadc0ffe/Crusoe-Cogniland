@@ -2,3 +2,22 @@ defaults:
   - default
 
 hard_mode: true
+
+# Tighter starting conditions
+init_hp: 60.0
+max_sea_movement_without_resources: 3   # was 7
+
+# Harsher terrain effects
+sea_resource_costs: [5.0, 3.5, 2.0]
+sea_hp_costs: [40.0, 35.0, 20.0]
+mountain_resource_costs: [2.0, 4.0]
+mountain_hp_costs: [12.0, 35.0]
+
+# Reward: survival is critical, distance barely helps
+reward_dist_coef: 0.02
+reward_reach_bonus: 20.0
+reward_death_penalty: -15.0
+reward_hp_coef: 0.10
+reward_resource_coef: 0.05
+reward_hp_thresh: 40.0
+reward_resource_thresh: 30.0
