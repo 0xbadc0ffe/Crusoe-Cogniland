@@ -35,7 +35,7 @@ class ActorCritic(nn.Module):
 
     def __init__(
         self,
-        scalar_dim: int = 6,
+        scalar_dim: int = 7,
         minimap_channels: int = 1,
         minimap_size: int = 51,
         hidden_dim: int = 128,
@@ -185,7 +185,7 @@ class PPOAgent:
         self.env_config = env_config
         self.device = device
 
-        minimap_size = 2 * cfg.env.minimap_ray + 1
+        minimap_size = 2 * cfg.env.minimap_max_ray + 1
         scalar_dim = cfg.models.get("scalar_dim", 6)
         action_dim = cfg.models.get("action_dim", NUM_ACTIONS)
         self.model = ActorCritic(
@@ -224,15 +224,15 @@ class PPOAgent:
         print(f"Device: {device}")
         print(f"Model: ppo")
 
-        env = BatchedIslandEnv(self.env_config, num_envs=cfg.models.training.num_envs)
+        env = BatchedIslandEnv(self.env_config, num_envs=cfg.models.training.parallel_envs)
         optimizer = optim.Adam(model.parameters(), lr=cfg.models.training.learning_rate, eps=1e-5)
 
         param_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"Parameters: {param_count:,}")
 
-        num_envs = cfg.models.training.num_envs
-        rollout_steps = cfg.models.training.rollout_steps
-        total_timesteps = cfg.models.training.total_timesteps
+        num_envs = cfg.models.training.parallel_envs
+        rollout_steps = cfg.models.training.moves_per_rollout
+        total_timesteps = cfg.models.training.total_env_moves
         num_updates = total_timesteps // (num_envs * rollout_steps)
         print(f"Total updates: {num_updates}, Moves per update: {num_envs * rollout_steps}")
 
@@ -267,7 +267,7 @@ class PPOAgent:
                 next_value = model.get_value(obs)
             advantages, returns = _compute_gae(
                 buffer, next_value,
-                gamma=cfg.models.training.gamma,
+                gamma=cfg.models.training.discount_factor,
                 gae_lambda=cfg.models.training.gae_lambda,
             )
 
@@ -283,7 +283,7 @@ class PPOAgent:
             logger.log(train_metrics, step=update)
 
             # Periodic eval
-            if update % cfg.models.training.eval_interval == 0:
+            if update % cfg.models.training.eval_every_n_updates == 0:
                 print(f"[Update {update}/{num_updates}] Running evaluation...")
                 model.eval()
                 eval_metrics = self._run_eval(cfg, logger=logger, global_step=update)
@@ -295,7 +295,7 @@ class PPOAgent:
                       f"stochastic success: {sto_sr:.3f}")
 
             # Periodic checkpoint
-            if update % cfg.models.training.checkpoint_interval == 0:
+            if update % cfg.models.training.checkpoint_every_n_updates == 0:
                 save_checkpoint(model, optimizer, global_step, path=f"checkpoints/ckpt_{update}.pt")
                 print(f"  Checkpoint saved at step {global_step}")
 
@@ -306,9 +306,9 @@ class PPOAgent:
         model = self.model
         N = flat_data["actions"].shape[0]
         minibatch_size = cfg.models.training.minibatch_size
-        clip_coef = cfg.models.training.clip_coef
-        vf_coef = cfg.models.training.vf_coef
-        ent_coef = cfg.models.training.ent_coef
+        clip_coef = cfg.models.training.policy_clip_range
+        vf_coef = cfg.models.training.value_loss_weight
+        ent_coef = cfg.models.training.entropy_bonus_weight
         max_grad_norm = cfg.models.training.max_grad_norm
 
         adv = advantages
@@ -319,7 +319,7 @@ class PPOAgent:
         total_clipfrac = total_approx_kl = 0.0
         n_updates = 0
 
-        for _epoch in range(cfg.models.training.num_epochs):
+        for _epoch in range(cfg.models.training.epochs_per_update):
             indices = torch.randperm(N, device=flat_data["actions"].device)
             for start in range(0, N, minibatch_size):
                 end = start + minibatch_size
