@@ -269,6 +269,20 @@ class WandBLogger:
         )
         plt.close(fig)
 
+    def log_model_artifact(self, name: str, path: str, aliases: list[str] = ["latest"]) -> None:
+        """Uploads a model checkpoint to WandB as an artifact."""
+        if not self.enabled or self._run is None:
+            return
+        import wandb
+        artifact_name = f"{name}_{self._run.id}"
+        artifact = wandb.Artifact(
+            name=artifact_name,
+            type="model",
+            description=f"Checkpoint from run {self._run.name}"
+        )
+        artifact.add_file(path)
+        self._run.log_artifact(artifact, aliases=aliases)
+
     def finish(self) -> None:
         if self.enabled and self._run is not None:
             self._run.finish()

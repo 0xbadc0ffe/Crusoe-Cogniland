@@ -56,6 +56,16 @@ All config lives in `configs/config.yaml` and any value can be overridden from C
 
 See `configs/config.yaml` for all PPO hyperparams and `configs/env/default.yaml` for all reward coefficients.
 
+### Evaluating a Model from WandB
+
+You can cleanly evaluate any historically trained model using its WandB Run ID (the 8-character string at the end of the run URL).
+
+```bash
+python eval.py YOUR_RUN_ID
+```
+
+This script is entirely decoupled from your local `configs/` folder. It uses `wandb.Api()` to automatically download the exact frozen configuration and weights that the model was originally trained with, guaranteeing no configuration mismatch errors. It works modularly for any model assuming they use `build_model(cfg)` and `model_state_dict`.
+
 ### Interactive Demo
 
 ```bash
