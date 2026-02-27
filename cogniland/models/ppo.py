@@ -296,8 +296,14 @@ class PPOAgent:
 
             # Periodic checkpoint
             if update % cfg.models.training.checkpoint_every_n_updates == 0:
-                save_checkpoint(model, optimizer, global_step, path=f"checkpoints/ckpt_{update}.pt")
-                print(f"  Checkpoint saved at step {global_step}")
+                ckpt_path = f"checkpoints/ckpt_{update}.pt"
+                save_checkpoint(model, optimizer, global_step, path=ckpt_path)
+                logger.log_model_artifact(
+                    name=f"{cfg.models.name}_agent",
+                    path=ckpt_path,
+                    aliases=["latest", f"update_{update}"]
+                )
+                print(f"  Checkpoint saved as WandB artifact at step {global_step}")
 
         logger.finish()
         print(f"Training complete. Total timesteps: {global_step}")
