@@ -98,9 +98,26 @@ def main():
     print(f"Model ID: {run_id}")
     print(f"Model Architecture: {cfg.models.name}")
     print(f"Parameters: {param_count:,}")
-    print("Weights loaded successfully. You can now run evaluation metrics.")
+    print("Weights loaded successfully.")
 
-    # (Optional) metrics = model._run_eval(cfg, logger=None, global_step=0)
+    # --- EVALUATION ---
+    # By default, evaluating the model uses the same validation map it saw during
+    # training (cfg.env.seed + 1000). To evaluate on fully unseen procedural maps
+    # and test true zero-shot generalization, simply override the seed here:
+    # cfg.env.seed = 9999
+    
+    print("Running evaluation metrics...")
+    metrics = model._run_eval(cfg, logger=None, global_step=0)
+    
+    print("\n" + "="*40)
+    print("EVALUATION RESULTS")
+    print("="*40)
+    for k, v in sorted(metrics.items()):
+        if isinstance(v, float):
+            print(f"{k}: {v:.4f}")
+        else:
+            print(f"{k}: {v}")
+    print("="*40)
     
     run.finish()
 

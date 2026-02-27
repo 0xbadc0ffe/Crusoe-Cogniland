@@ -422,7 +422,7 @@ class PPOAgent:
         terrain_visits = torch.zeros(n_eps, 9, device=device)
 
         # Distribution-aware tracking
-        min_hp = torch.full((n_eps,), env_config.init_hp, device=device)
+        min_hp = torch.full((n_eps,), float(env_config.init_hp), dtype=torch.float32, device=device)
         danger_steps = torch.zeros(n_eps, device=device)
         # Welford online accumulators for resource mean
         resource_mean = torch.zeros(n_eps, device=device)
@@ -443,7 +443,7 @@ class PPOAgent:
         for move in range(env_config.max_steps):
             still_running = alive & ~reached
             pre_move_terrain = eval_env.state.terrain_lev.clone()
-            pre_move_hp = eval_env.state.hp.clone()
+            pre_move_hp = eval_env.state.hp.clone().float()
 
             with torch.no_grad():
                 if deterministic:
@@ -546,6 +546,10 @@ class PPOAgent:
         metrics = {}
         prefix = f"eval-{mode_prefix}"
         metrics[f"{prefix}/success_rate_mean"] = reached.float().mean().item()
+        
+        # Add scalar means for all tracked metrics
+        for name, values in per_episode.items():
+            metrics[f"{prefix}/{name}_mean"] = values.float().mean().item()
 
         # Build histogram data
         hist_data = {}
