@@ -12,6 +12,7 @@ logging:
     project: "cogniland"
     entity: crusoe
     mode: "online"    # "online", "offline", or "disabled"
+    store_last_ckpt: false
   trajectory:
     save_frequency: 500
     max_saved_per_eval: 3

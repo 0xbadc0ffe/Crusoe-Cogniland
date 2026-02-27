@@ -52,26 +52,49 @@ def main():
         job_type="evaluation"
     )
 
-    artifact_name = f"{cfg.models.name}_agent_{run_id}:latest"
-    print(f"Fetching artifact: {artifact_name}...")
+    print(f"Checking for local checkpoints in artifacts/{run_id}...")
+    local_artifact_dir = os.path.join("artifacts", run_id)
+    ckpt_path = None
     
-    try:
-        # Request explicitly from the entity/project namespace
-        artifact = run.use_artifact(f"{entity}/{project}/{artifact_name}")
-    except wandb.errors.CommError as e:
-        print("Error fetching artifact. Make sure the run ID saved a checkpoint.")
-        print(e)
-        return
-
-    artifact_dir = artifact.download()
-    
-    ckpt_files = [f for f in os.listdir(artifact_dir) if f.endswith(".pt")]
-    if not ckpt_files:
-        print("No .pt files found in the downloaded artifact.")
-        return
+    if os.path.isdir(local_artifact_dir):
+        import re
+        ckpt_files = [f for f in os.listdir(local_artifact_dir) if f.endswith(".pt")]
+        if ckpt_files:
+            # Sort by the step number extracted from the filename
+            def get_step(name):
+                match = re.search(r'ckpt_(\d+)\.pt', name)
+                return int(match.group(1)) if match else 0
+            ckpt_files.sort(key=get_step)
+            ckpt_path = os.path.join(local_artifact_dir, ckpt_files[-1])
+            print(f"Found local checkpoint: {ckpt_path}")
+            
+    if not ckpt_path:
+        artifact_name = f"{cfg.models.name}_agent_{run_id}:latest"
+        print(f"Fetching artifact from WandB: {artifact_name}...")
         
-    ckpt_path = os.path.join(artifact_dir, ckpt_files[-1])
-    print(f"Downloaded checkpoint to: {ckpt_path}")
+        try:
+            # Request explicitly from the entity/project namespace
+            artifact = run.use_artifact(f"{entity}/{project}/{artifact_name}")
+            artifact_dir = artifact.download()
+            
+            ckpt_files = [f for f in os.listdir(artifact_dir) if f.endswith(".pt")]
+            if not ckpt_files:
+                print("No .pt files found in the downloaded artifact.")
+                return
+            
+            # Optionally sort wandb ckpts if there are more than 1
+            def get_step(name):
+                import re
+                match = re.search(r'ckpt_(\d+)\.pt', name)
+                return int(match.group(1)) if match else 0
+            ckpt_files.sort(key=get_step)
+            ckpt_path = os.path.join(artifact_dir, ckpt_files[-1])
+            print(f"Downloaded checkpoint to: {ckpt_path}")
+            
+        except wandb.errors.CommError as e:
+            print("Error fetching artifact. Make sure the run ID saved a checkpoint, or it exists locally.")
+            print(e)
+            return
 
     # Build the model using the historically accurate configuration
     print("Building model architecture from historical config...")
@@ -95,10 +118,10 @@ def main():
     
     param_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print("--- Evaluation Ready ---")
-    print(f"Model ID: {run_id}")
+    print(f"Run ID: {run_id}")
     print(f"Model Architecture: {cfg.models.name}")
     print(f"Parameters: {param_count:,}")
-    print("Weights loaded successfully.")
+    print("Weights and config loaded successfully.")
 
     # --- EVALUATION ---
     # By default, evaluating the model uses the same validation map it saw during
