@@ -64,7 +64,7 @@ You can cleanly evaluate any historically trained model using its WandB Run ID (
 python eval.py YOUR_RUN_ID
 ```
 
-This script is entirely decoupled from your local `configs/` folder. It uses `wandb.Api()` to automatically download the exact frozen configuration and weights that the model was originally trained with, guaranteeing no configuration mismatch errors. It works modularly for any model assuming they use `build_model(cfg)` and `model_state_dict`.
+This script is entirely decoupled from the local `configs/` folder. It automatically downloads the exact frozen configuration and weights that the model was originally trained with, guaranteeing no configuration mismatch errors. It works modularly for any model assuming they use `build_model(cfg)` and `model_state_dict`.
 
 ### Interactive Demo
 
