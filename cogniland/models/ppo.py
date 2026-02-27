@@ -296,14 +296,26 @@ class PPOAgent:
 
             # Periodic checkpoint
             if update % cfg.models.training.checkpoint_every_n_updates == 0:
-                ckpt_path = f"checkpoints/ckpt_{update}.pt"
+                import os
+                run_id = logger._run.id if logger.enabled and logger._run else "local"
+                ckpt_dir = f"artifacts/{run_id}"
+                os.makedirs(ckpt_dir, exist_ok=True)
+                
+                ckpt_path = f"{ckpt_dir}/ckpt_{update}.pt"
                 save_checkpoint(model, optimizer, global_step, path=ckpt_path)
-                logger.log_model_artifact(
-                    name=f"{cfg.models.name}_agent",
-                    path=ckpt_path,
-                    aliases=["latest", f"update_{update}"]
-                )
-                print(f"  Checkpoint saved as WandB artifact at step {global_step}")
+                
+                store_wandb = cfg.logging.wandb.get("store_last_ckpt", False)
+                if store_wandb and update == num_updates:
+                    logger.log_model_artifact(
+                        name=f"{cfg.models.name}_agent",
+                        path=ckpt_path,
+                        aliases=["latest", f"update_{update}"]
+                    )
+                    print(f"  Checkpoint saved locally & as WandB artifact at step {global_step}")
+                elif store_wandb:
+                    print(f"  Checkpoint saved locally at {ckpt_path} (WandB upload deferred to last step)")
+                else:
+                    print(f"  Checkpoint saved locally at {ckpt_path}")
 
         logger.finish()
         print(f"Training complete. Total timesteps: {global_step}")
