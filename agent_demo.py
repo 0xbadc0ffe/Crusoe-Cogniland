@@ -54,7 +54,7 @@ DEFAULT_SCALAR_DIM = 7
 DEFAULT_MINIMAP_CHANNELS = 2
 DEFAULT_HIDDEN_DIM = 128
 DEFAULT_ACTION_DIM = NUM_ACTIONS
-DEFAULT_MINIMAP_MAX_RAY = 10
+DEFAULT_MINIMAP_MAX_RAY = 3
 
 # Colors
 COLORS = {k: tuple(v) for k, v in palette.items()}
@@ -114,14 +114,15 @@ def load_actor_critic(ckpt_path, device="cpu"):
     return model
 
 
-def build_obs(state: EnvState, minimap_max_ray: int):
+def build_obs(state: EnvState, minimap_max_ray: int, map_size: int = 20):
     """Replicate BatchedIslandEnv.get_obs() for a single-batch state."""
     s = state
     vis_range = TERRAIN_VISIBILITY.to(s.terrain_lev.device)[s.terrain_lev.long()].float()
     vis_norm = vis_range / minimap_max_ray
+    compass_norm = s.compass / map_size  # normalize to [-1, 1]
     scalars = torch.stack([
-        s.compass[:, 0],
-        s.compass[:, 1],
+        compass_norm[:, 0],
+        compass_norm[:, 1],
         s.terrain_lev,
         s.terrain_clock,
         s.resources,
@@ -329,7 +330,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc):
     # Build env with fixed spawn/target
     env_config = EnvConfig(
         seed=42,
-        minimap_ray=25,
+        minimap_ray=5,
         minimap_max_ray=DEFAULT_MINIMAP_MAX_RAY,
         minimap_occlude=True,
         minimap_min_clear_lv=0.25,
@@ -388,7 +389,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc):
             if frame_counter >= frames_per_step:
                 frame_counter = 0
 
-                obs = build_obs(state, DEFAULT_MINIMAP_MAX_RAY)
+                obs = build_obs(state, DEFAULT_MINIMAP_MAX_RAY, map_size)
                 with torch.no_grad():
                     action = model.get_deterministic_action(obs)
 
