@@ -66,13 +66,25 @@ python eval.py YOUR_RUN_ID
 
 This script is entirely decoupled from the local `configs/` folder. It automatically downloads the exact frozen configuration and weights that the model was originally trained with, guaranteeing no configuration mismatch errors. It works modularly for any model assuming they use `build_model(cfg)` and `model_state_dict`.
 
-### Interactive Demo
+### Interactive Demo (Human)
 
 ```bash
-python demo.py [hard]
+python human_demo.py [hard]
 ```
 
 **Controls:** Arrow keys / WASD to move, Space to stay, R to reset, ESC to quit.
+
+### Agent Demo (AI Playback)
+
+Load a trained checkpoint, visually pick spawn and target on the map, and watch the agent navigate step-by-step with trajectory trail, minimap, and live stats. Supports speed control and pause.
+
+```bash
+python agent_demo.py
+```
+
+**Flow:** Select a checkpoint from `artifacts/` → click on the map to place spawn (red) then target (green) → press Enter to start.
+
+**Controls during playback:** +/− to change speed, P to pause, R to reset positions, ESC to quit.
 
 ## Project Structure
 
@@ -98,7 +110,8 @@ Crusoe-Cogniland/
 │   ├── logging.py              # WandB logger + behavioral metrics
 │   └── utils.py                # Checkpoints + reproducibility
 ├── train.py                    # Hydra entry point → build_model(cfg).train(cfg)
-├── demo.py                     # Interactive PyGame demo
+├── human_demo.py               # Interactive PyGame demo (manual play)
+├── agent_demo.py               # AI playback demo (watch trained agent)
 ├── assets/images/              # Reference island screenshots
 ├── setup.py                    # Package definition (enables pip install -e .)
 ├── environment.yml             # Conda environment (reproducible)
