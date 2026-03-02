@@ -2,7 +2,7 @@ defaults:
   - default
 
 map_name: "twin_peaks"
-spawn_r: 125
-spawn_c: 20
-target_r: 125
-target_c: 230
+spawn_r: 10
+spawn_c: 2
+target_r: 10
+target_c: 18

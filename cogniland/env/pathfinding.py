@@ -24,7 +24,7 @@ def astar_shortest_path(
     start: torch.Tensor,
     goal: torch.Tensor,
 ) -> float:
-    """A* on 250x250 grid using terrain movement costs as edge weights.
+    """A* on the grid using terrain movement costs as edge weights.
 
     Uses 4-connected grid (up/down/left/right) matching the agent's action space.
     Heuristic: L2 distance * min_terrain_cost (admissible).

@@ -10,12 +10,12 @@ training:
 
   # ── Rollout collection ──
   parallel_envs: 32             # How many environments run in parallel during rollout
-  moves_per_rollout: 128        # How many moves each env makes before the model learns
-  total_env_moves: 1_000_000    # Total moves budget across all envs for the entire training
+  moves_per_rollout: 64         # How many moves each env makes before the model learns
+  total_env_moves: 500_000      # Total moves budget across all envs for the entire training
 
   # ── PPO optimisation ──
   epochs_per_update: 4          # How many times the model re-studies each rollout's data
-  minibatch_size: 256           # Transitions per gradient step
+  minibatch_size: 128           # Transitions per gradient step
   learning_rate: 0.0003         # Adam optimiser initial learning rate
   anneal_lr: true               # Linearly decay LR to 0 over training
 

@@ -1,5 +1,5 @@
 # Island generation
-size: 250
+size: 20
 scale: 0.33
 octaves: 6
 persistence: 0.5
@@ -14,7 +14,7 @@ init_hp: 75.0
 max_hp: 100.0
 init_resources: 0.0
 max_resources: 100.0
-max_sea_movement_without_resources: 7
+max_sea_movement_without_resources: 3
 hard_mode: false
 
 # Terrain effects — rebalanced
@@ -31,16 +31,16 @@ hard_mode_hp_gain: 1.0
 hard_mode_hp_loss: 0.5
 
 # Minimap
-minimap_ray: 25
-minimap_max_ray: 10              # Fixed CNN spatial dim = 2*max_ray+1 = 21
+minimap_ray: 5
+minimap_max_ray: 3               # Fixed CNN spatial dim = 2*max_ray+1 = 7
 minimap_occlude: true
 minimap_min_clear_lv: 0.25
 
 # Episode limits
-max_steps: 1500
+max_steps: 150
 
 # Reward coefficients
-reward_dist_coef: 0.03          # was 0.1 — reduce dominance of shortest-path signal
+reward_dist_coef: 0.35           # scaled up for 20×20 map (was 0.03 at 250×250)
 reward_reach_bonus: 12.0        # was 10.0 — slightly more incentive to finish
 reward_death_penalty: -8.0      # was -5.0 — dying should hurt more
 reward_time_penalty: -0.1

@@ -31,12 +31,12 @@ TERRAIN_LEVELS = {
 
 # Visibility ranges for minimap based on terrain
 VISIBILITY_RANGES = {
-    0: 6, 1: 6, 2: 6,   # water levels
-    3: 4, 4: 4,          # beach, sandy
-    5: 5,                # grassland
-    6: 2,                # forest
-    7: 6,                # rocky
-    8: 10,               # mountains
+    0: 3, 1: 3, 2: 3,   # water levels
+    3: 2, 4: 2,          # beach, sandy
+    5: 3,                # grassland
+    6: 1,                # forest
+    7: 3,                # rocky
+    8: 3,                # mountains
 }
 
 # Action mapping

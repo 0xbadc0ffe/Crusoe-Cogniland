@@ -1,6 +1,6 @@
 """Hand-crafted maps with known dual-strategy structure for toy training experiments.
 
-Each map is a 250×250 float32 tensor matching the world_map heightmap format.
+Each map is a 20×20 float32 tensor matching the world_map heightmap format.
 Terrain encoding uses midpoint values from TERRAIN_LEVELS thresholds:
 
   ocean      < 0.007  → use 0.003
@@ -19,7 +19,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-_SIZE = 250
+_SIZE = 20
 
 # Terrain midpoint values
 _OCEAN      = 0.003
@@ -52,7 +52,7 @@ def _fill(arr: np.ndarray, r0: int, r1: int, c0: int, c1: int, val: float) -> No
 def _ellipse(arr: np.ndarray, cr: int, cc: int, ra: int, rb: int, val: float) -> None:
     """Fill an axis-aligned ellipse centred at (cr, cc) with semi-axes ra (rows), rb (cols)."""
     rr, cc_grid = np.ogrid[:_SIZE, :_SIZE]
-    mask = ((rr - cr) ** 2 / ra ** 2 + (cc_grid - cc) ** 2 / rb ** 2) <= 1.0
+    mask = ((rr - cr) ** 2 / max(ra, 1) ** 2 + (cc_grid - cc) ** 2 / max(rb, 1) ** 2) <= 1.0
     arr[mask] = val
 
 
@@ -60,7 +60,7 @@ def _ellipse(arr: np.ndarray, cr: int, cc: int, ra: int, rb: int, val: float) ->
 # Map 1 — "the_strait"
 # ---------------------------------------------------------------------------
 
-@_register("the_strait", spawn=(125, 30), target=(125, 220))
+@_register("the_strait", spawn=(10, 2), target=(10, 18))
 def _build_the_strait() -> np.ndarray:
     """Two land masses separated by a deep channel; shallow northern crossing.
 
@@ -69,21 +69,21 @@ def _build_the_strait() -> np.ndarray:
     """
     arr = np.full((_SIZE, _SIZE), _GRASSLAND, dtype=np.float32)
 
-    # Ocean border
-    _fill(arr, 0, 5, 0, _SIZE, _OCEAN)
-    _fill(arr, _SIZE - 5, _SIZE, 0, _SIZE, _OCEAN)
-    _fill(arr, 0, _SIZE, 0, 5, _OCEAN)
-    _fill(arr, 0, _SIZE, _SIZE - 5, _SIZE, _OCEAN)
+    # Ocean border (1 cell)
+    _fill(arr, 0, 1, 0, _SIZE, _OCEAN)
+    _fill(arr, _SIZE - 1, _SIZE, 0, _SIZE, _OCEAN)
+    _fill(arr, 0, _SIZE, 0, 1, _OCEAN)
+    _fill(arr, 0, _SIZE, _SIZE - 1, _SIZE, _OCEAN)
 
-    # Deep ocean channel
-    _fill(arr, 0, _SIZE, 100, 155, _DEEP_WATER)
+    # Deep ocean channel (cols 8-12)
+    _fill(arr, 0, _SIZE, 8, 13, _DEEP_WATER)
 
-    # Shallow northern crossing
-    _fill(arr, 10, 35, 100, 155, _WATER)
+    # Shallow northern crossing (rows 1-3)
+    _fill(arr, 1, 3, 8, 13, _WATER)
 
     # Forest patches for resources
-    _fill(arr, 60, 190, 10, 80, _FOREST)   # left island
-    _fill(arr, 60, 190, 165, 235, _FOREST)  # right island
+    _fill(arr, 5, 15, 1, 7, _FOREST)    # left island
+    _fill(arr, 5, 15, 13, 19, _FOREST)   # right island
 
     return arr
 
@@ -92,7 +92,7 @@ def _build_the_strait() -> np.ndarray:
 # Map 2 — "forest_belt"
 # ---------------------------------------------------------------------------
 
-@_register("forest_belt", spawn=(210, 125), target=(40, 125))
+@_register("forest_belt", spawn=(17, 10), target=(3, 10))
 def _build_forest_belt() -> np.ndarray:
     """A wide forest belt blocks the direct north-south path.
 
@@ -101,16 +101,14 @@ def _build_forest_belt() -> np.ndarray:
     """
     arr = np.full((_SIZE, _SIZE), _GRASSLAND, dtype=np.float32)
 
-    # Rocky strips at very top and bottom
-    _fill(arr, 0, 15, 0, _SIZE, _ROCKY)
-    _fill(arr, 235, _SIZE, 0, _SIZE, _ROCKY)
+    # Rocky strips at top and bottom
+    _fill(arr, 0, 1, 0, _SIZE, _ROCKY)
+    _fill(arr, 19, _SIZE, 0, _SIZE, _ROCKY)
 
-    # Forest belt across the middle
-    _fill(arr, 80, 170, 20, 230, _FOREST)
+    # Forest belt across the middle (rows 6-14, cols 2-18)
+    _fill(arr, 6, 14, 2, 18, _FOREST)
 
-    # Left and right edge corridors remain grassland (already set by background)
-    # cols 0-19 and 230-249 stay as grassland
-
+    # Left and right edge corridors remain grassland (cols 0-1 and 18-19)
     return arr
 
 
@@ -118,7 +116,7 @@ def _build_forest_belt() -> np.ndarray:
 # Map 3 — "twin_peaks"
 # ---------------------------------------------------------------------------
 
-@_register("twin_peaks", spawn=(125, 20), target=(125, 230))
+@_register("twin_peaks", spawn=(10, 2), target=(10, 18))
 def _build_twin_peaks() -> np.ndarray:
     """Two mountain masses with a rocky gap between them.
 
@@ -127,21 +125,18 @@ def _build_twin_peaks() -> np.ndarray:
     """
     arr = np.full((_SIZE, _SIZE), _GRASSLAND, dtype=np.float32)
 
-    # Left mountain mass
-    _fill(arr, 40, 210, 60, 115, _MOUNTAINS)
+    # Left mountain mass (rows 3-17, cols 5-9)
+    _fill(arr, 3, 17, 5, 9, _MOUNTAINS)
 
-    # Right mountain mass
-    _fill(arr, 40, 210, 135, 190, _MOUNTAINS)
+    # Right mountain mass (rows 3-17, cols 11-15)
+    _fill(arr, 3, 17, 11, 15, _MOUNTAINS)
 
-    # Rocky gap between peaks
-    _fill(arr, 90, 165, 115, 135, _ROCKY)
+    # Rocky gap between peaks (rows 7-13, cols 9-11)
+    _fill(arr, 7, 13, 9, 11, _ROCKY)
 
-    # Forest flanking the rocky gap (resources for mountain crossing)
-    _fill(arr, 100, 155, 40, 60, _FOREST)
-    _fill(arr, 100, 155, 190, 210, _FOREST)
-
-    # Northern and southern corridors are open grassland (already set)
-    # rows 0-35 and 215-250 span full width
+    # Forest flanking the rocky gap
+    _fill(arr, 8, 12, 3, 5, _FOREST)
+    _fill(arr, 8, 12, 15, 17, _FOREST)
 
     return arr
 
@@ -150,46 +145,44 @@ def _build_twin_peaks() -> np.ndarray:
 # Map 4 — "river_delta"
 # ---------------------------------------------------------------------------
 
-@_register("river_delta", spawn=(30, 30), target=(220, 220))
+@_register("river_delta", spawn=(2, 2), target=(18, 18))
 def _build_river_delta() -> np.ndarray:
     """A diagonal river from top-left to bottom-right; two ford crossings.
 
-    Strategy A: Cross at the first ford (~row 70) early — direct path.
-    Strategy B: Follow the river to the second ford (~row 180) — more forest time.
+    Strategy A: Cross at the first ford early — direct path.
+    Strategy B: Follow the river to the second ford — more forest time.
     """
     arr = np.full((_SIZE, _SIZE), _GRASSLAND, dtype=np.float32)
 
-    # Diagonal river: band ~15px wide, slope ≈ 1
+    # Diagonal river: 1px wide, slope ≈ 1
     for r in range(_SIZE):
-        c_center = r  # diagonal from (0,0) to (249,249)
-        c0 = max(0, c_center - 7)
-        c1 = min(_SIZE, c_center + 8)
+        c_center = r
+        c0 = max(0, c_center - 1)
+        c1 = min(_SIZE, c_center + 2)
         arr[r, c0:c1] = _WATER
 
-    # Forest strips along both banks (~8px wide each side)
+    # Forest strips along both banks (1px each side)
     for r in range(_SIZE):
         c_center = r
-        # Left bank
-        c0 = max(0, c_center - 16)
-        c1 = max(0, c_center - 7)
-        arr[r, c0:c1] = _FOREST
-        # Right bank
-        c0 = min(_SIZE, c_center + 8)
-        c1 = min(_SIZE, c_center + 17)
-        arr[r, c0:c1] = _FOREST
+        cl = max(0, c_center - 2)
+        arr[r, cl:max(0, c_center - 1)] = _FOREST
+        cr0 = min(_SIZE, c_center + 2)
+        cr1 = min(_SIZE, c_center + 3)
+        if cr0 < cr1:
+            arr[r, cr0:cr1] = _FOREST
 
-    # Ford 1: rows 60-80 — beach (easier crossing)
-    for r in range(60, 80):
+    # Ford 1: rows 5-6 — beach
+    for r in range(5, 7):
         c_center = r
-        c0 = max(0, c_center - 7)
-        c1 = min(_SIZE, c_center + 8)
+        c0 = max(0, c_center - 1)
+        c1 = min(_SIZE, c_center + 2)
         arr[r, c0:c1] = _BEACH
 
-    # Ford 2: rows 170-190 — beach
-    for r in range(170, 190):
+    # Ford 2: rows 14-15 — beach
+    for r in range(14, 16):
         c_center = r
-        c0 = max(0, c_center - 7)
-        c1 = min(_SIZE, c_center + 8)
+        c0 = max(0, c_center - 1)
+        c1 = min(_SIZE, c_center + 2)
         arr[r, c0:c1] = _BEACH
 
     return arr
@@ -199,7 +192,7 @@ def _build_river_delta() -> np.ndarray:
 # Map 5 — "archipelago"
 # ---------------------------------------------------------------------------
 
-@_register("archipelago", spawn=(60, 60), target=(200, 210))
+@_register("archipelago", spawn=(5, 5), target=(16, 17))
 def _build_archipelago() -> np.ndarray:
     """Four islands connected by land bridges across deep ocean.
 
@@ -208,24 +201,24 @@ def _build_archipelago() -> np.ndarray:
     """
     arr = np.full((_SIZE, _SIZE), _DEEP_WATER, dtype=np.float32)
 
-    # Island A (spawn): centre (60,60), semi-axes 40r×30c
-    _ellipse(arr, 60, 60, 40, 30, _GRASSLAND)
-    _ellipse(arr, 60, 60, 25, 18, _FOREST)
+    # Island A (spawn): centre (5,5), semi-axes 3r×2c
+    _ellipse(arr, 5, 5, 3, 2, _GRASSLAND)
+    _ellipse(arr, 5, 5, 2, 1, _FOREST)
 
-    # Island B: centre (110,130), semi-axes 35r×25c
-    _ellipse(arr, 110, 130, 35, 25, _GRASSLAND)
-    _ellipse(arr, 110, 130, 20, 14, _FOREST)
+    # Island B: centre (9,10), semi-axes 3r×2c
+    _ellipse(arr, 9, 10, 3, 2, _GRASSLAND)
+    _ellipse(arr, 9, 10, 2, 1, _FOREST)
 
-    # Island C: centre (165,175), semi-axes 30r×30c
-    _ellipse(arr, 165, 175, 30, 30, _GRASSLAND)
-    _ellipse(arr, 165, 175, 17, 17, _FOREST)
+    # Island C: centre (13,14), semi-axes 2r×2c
+    _ellipse(arr, 13, 14, 2, 2, _GRASSLAND)
+    _ellipse(arr, 13, 14, 1, 1, _FOREST)
 
-    # Island D (target): centre (200,210), semi-axes 35r×25c
-    _ellipse(arr, 200, 210, 35, 25, _GRASSLAND)
-    _ellipse(arr, 200, 210, 20, 14, _FOREST)
+    # Island D (target): centre (16,17), semi-axes 2r×2c
+    _ellipse(arr, 16, 17, 2, 2, _GRASSLAND)
+    _ellipse(arr, 16, 17, 1, 1, _FOREST)
 
-    # Land bridges (8px wide) via shallow water/beach
-    def _bridge(r0, c0, r1, c1, val=_BEACH, width=8):
+    # Land bridges (1px wide) via beach
+    def _bridge(r0, c0, r1, c1, val=_BEACH, width=1):
         """Draw a rectangular land bridge between two points."""
         steps = max(abs(r1 - r0), abs(c1 - c0))
         if steps == 0:
@@ -238,9 +231,9 @@ def _build_archipelago() -> np.ndarray:
             arr[max(0, r - hw):min(_SIZE, r + hw + 1),
                 max(0, c - hw):min(_SIZE, c + hw + 1)] = val
 
-    _bridge(60, 80, 110, 105)   # A → B
-    _bridge(110, 155, 165, 150)  # B → C
-    _bridge(165, 200, 200, 185)  # C → D
+    _bridge(5, 7, 9, 8)    # A → B
+    _bridge(9, 12, 13, 12)  # B → C
+    _bridge(13, 16, 16, 15) # C → D
 
     return arr
 
@@ -255,7 +248,7 @@ def list_maps() -> list[str]:
 
 
 def get_map(name: str) -> torch.Tensor:
-    """Return the [250×250] world_map tensor for a named map."""
+    """Return the [20×20] world_map tensor for a named map."""
     if name not in _REGISTRY:
         raise ValueError(f"Unknown map '{name}'. Available: {list_maps()}")
     fn, _spawn, _target = _REGISTRY[name]

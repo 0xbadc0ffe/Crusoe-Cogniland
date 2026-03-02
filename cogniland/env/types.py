@@ -39,7 +39,7 @@ class EnvConfig:
     """Immutable environment configuration."""
 
     # Island generation
-    size: int = 250
+    size: int = 20
     scale: float = 0.33
     octaves: int = 6
     persistence: float = 0.5
@@ -54,7 +54,7 @@ class EnvConfig:
     max_hp: float = 100.0
     init_resources: float = 0.0
     max_resources: float = 100.0
-    max_sea_movement_without_resources: int = 7
+    max_sea_movement_without_resources: int = 3
     hard_mode: bool = False
 
     # Terrain effects (previously hardcoded in core.py)
@@ -71,16 +71,16 @@ class EnvConfig:
     hard_mode_hp_loss: float = 0.5
 
     # Minimap
-    minimap_ray: int = 25
-    minimap_max_ray: int = 10       # fixed CNN spatial dim = 2*max_ray+1
+    minimap_ray: int = 5
+    minimap_max_ray: int = 3        # fixed CNN spatial dim = 2*max_ray+1 = 7
     minimap_occlude: bool = False
     minimap_min_clear_lv: float = 0.25
 
     # Episode limits
-    max_steps: int = 1000
+    max_steps: int = 150
 
     # Reward coefficients
-    reward_dist_coef: float = 0.03
+    reward_dist_coef: float = 0.35
     reward_reach_bonus: float = 12.0
     reward_death_penalty: float = -8.0
     reward_time_penalty: float = -0.1

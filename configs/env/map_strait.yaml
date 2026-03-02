@@ -2,7 +2,7 @@ defaults:
   - default
 
 map_name: "the_strait"
-spawn_r: 125
-spawn_c: 30
-target_r: 125
-target_c: 220
+spawn_r: 10
+spawn_c: 2
+target_r: 10
+target_c: 18

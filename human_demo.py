@@ -71,7 +71,7 @@ class IslandGameDemo:
         config = EnvConfig(
             seed=seed,
             hard_mode=self.hard_mode,
-            minimap_ray=25,
+            minimap_ray=5,
             minimap_occlude=True,
             minimap_min_clear_lv=0.25,
         )
@@ -83,7 +83,7 @@ class IslandGameDemo:
             spawn = self.state.position[0]
             target = self.target_pos[0]
             dist = torch.norm((spawn - target).float()).item()
-            if dist >= 50:
+            if dist >= config.size * 0.25:
                 break
             seed += 1
 
