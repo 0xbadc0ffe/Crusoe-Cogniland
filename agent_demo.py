@@ -33,6 +33,7 @@ from cogniland.env.constants import (
     palette,
 )
 from cogniland.env.core import compute_minimap_batch, compute_terrain_levels
+from cogniland.env.custom_maps import list_maps, get_spawn, get_target
 from cogniland.env.islands import Islands
 from cogniland.env.types import EnvConfig, EnvState
 
@@ -206,8 +207,77 @@ def screen_select_checkpoint(screen, clock):
         clock.tick(30)
 
 
-def screen_pick_positions(screen, clock, env_config):
+def screen_select_map(screen, clock):
+    """Phase 1b: choose between a random map or a custom one.
+
+    Returns (map_name, default_spawn, default_target):
+        - ("", None, None)               for a random procedural map
+        - ("the_strait", (r,c), (r,c))   for a custom map with preset positions
+        - None                            on quit / ESC
+    """
+    available = list_maps()
+    font_large = pygame.font.Font(None, 40)
+    font_med   = pygame.font.Font(None, 28)
+    font_small = pygame.font.Font(None, 22)
+
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                return None
+            if ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_ESCAPE:
+                    return None
+                if ev.key == pygame.K_r:
+                    return ("", None, None)
+                idx = ev.key - pygame.K_1  # 0-based
+                if 0 <= idx < len(available):
+                    name = available[idx]
+                    return (name, get_spawn(name), get_target(name))
+
+        screen.fill(COLORS["panel_bg"])
+
+        title = font_large.render("Select Map", True, COLORS["blue_ui"])
+        screen.blit(title, (WINDOW_W // 2 - title.get_width() // 2, 40))
+
+        y = 110
+        # Random option
+        line = font_med.render("  R  —  Random procedural map", True, COLORS["panel_fg"])
+        screen.blit(line, (80, y))
+        y += 42
+
+        # Separator
+        sep = font_small.render("─── Custom Maps ───", True, COLORS["gray"])
+        screen.blit(sep, (80, y))
+        y += 30
+
+        # Custom maps list
+        for i, name in enumerate(available):
+            if i >= 9:
+                break
+            spawn = get_spawn(name)
+            target = get_target(name)
+            label = f"  {i+1}  —  {name}   (spawn {spawn}, target {target})"
+            line = font_med.render(label, True, COLORS["panel_fg"])
+            screen.blit(line, (80, y))
+            y += 36
+
+        hint = font_small.render(
+            "R = random  •  1-9 = custom map  •  ESC = back",
+            True, COLORS["gray"],
+        )
+        screen.blit(hint, (WINDOW_W // 2 - hint.get_width() // 2, WINDOW_H - 60))
+
+        pygame.display.flip()
+        clock.tick(30)
+
+
+def screen_pick_positions(screen, clock, env_config,
+                          default_spawn=None, default_target=None):
     """Phase 2: render map, let user click spawn then target.
+
+    If default_spawn / default_target are provided (from a custom map),
+    they are pre-filled so the user can press Enter immediately or click
+    to override.
 
     Returns (spawn_rc, target_rc) as integer (row, col) tuples, or None on quit.
     """
@@ -222,8 +292,8 @@ def screen_pick_positions(screen, clock, env_config):
 
     MAP_X, MAP_Y = 20, 60
 
-    spawn = None   # (row, col) in world coords
-    target = None
+    spawn = default_spawn    # (row, col) or None
+    target = default_target
 
     def world_to_screen(r, c):
         scale = MAP_DISPLAY_SIZE / map_size
@@ -320,15 +390,22 @@ def screen_pick_positions(screen, clock, env_config):
         clock.tick(30)
 
 
-def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc):
-    """Phase 3: load model, run step-by-step, visualise."""
+def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
+                       env_config_base=None):
+    """Phase 3: load model, run step-by-step, visualise.
 
+    env_config_base carries the map_name (if any) from earlier screens.
+    Spawn/target overrides are always applied on top.
+    """
     device = "cpu"
     model = load_actor_critic(ckpt_path, device)
     print(f"Loaded model from {ckpt_path}")
 
-    # Build env with fixed spawn/target
-    env_config = EnvConfig(
+    # Build env config — start from caller's base (preserves map_name)
+    # then override spawn/target with whatever the user picked.
+    from dataclasses import asdict
+    base = asdict(env_config_base) if env_config_base is not None else {}
+    base.update(
         seed=42,
         minimap_ray=5,
         minimap_max_ray=DEFAULT_MINIMAP_MAX_RAY,
@@ -337,6 +414,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc):
         spawn_r=spawn_rc[0], spawn_c=spawn_rc[1],
         target_r=target_rc[0], target_c=target_rc[1],
     )
+    env_config = EnvConfig(**base)
     env = Islands(env_config)
     state, target_pos = env.reset(batch_size=1, seed=42)
 
@@ -554,27 +632,42 @@ def main():
     clock = pygame.time.Clock()
 
     while True:
-        # Phase 1: checkpoint
+        # Phase 1a: checkpoint
         ckpt_path = screen_select_checkpoint(screen, clock)
         if ckpt_path is None:
             break
 
+        # Phase 1b: map selection
+        map_result = screen_select_map(screen, clock)
+        if map_result is None:
+            continue  # back to checkpoint selection
+        map_name, default_spawn, default_target = map_result
+
+        # Build base env config (carries map_name through the pipeline)
+        env_config = EnvConfig(seed=42, map_name=map_name)
+
         while True:
-            # Phase 2: position picking
-            env_config = EnvConfig(seed=42)
-            result = screen_pick_positions(screen, clock, env_config)
+            # Phase 2: position picking (with optional pre-filled positions)
+            result = screen_pick_positions(
+                screen, clock, env_config,
+                default_spawn=default_spawn,
+                default_target=default_target,
+            )
             if result is None:
                 pygame.quit()
                 sys.exit()
             spawn_rc, target_rc = result
 
-            # Phase 3: playback
-            outcome = screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc)
+            # Phase 3: playback (env_config preserves map_name)
+            outcome = screen_ai_playback(
+                screen, clock, ckpt_path, spawn_rc, target_rc,
+                env_config_base=env_config,
+            )
             if outcome == "quit":
                 pygame.quit()
                 sys.exit()
             elif outcome == "reset":
-                continue  # back to position picking
+                continue  # back to position picking (same map)
             else:
                 break  # back to checkpoint selection
 
