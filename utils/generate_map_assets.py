@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from cogniland.env.custom_maps import _REGISTRY
 from cogniland.env.constants import TERRAIN_LEVELS, palette
 
-OUT_DIR = Path(__file__).parent / "assets" / "maps"
+OUT_DIR = Path(__file__).resolve().parent.parent / "assets" / "maps"
 
 # Map terrain index → color (float RGB)
 _THRESHOLDS = np.array([TERRAIN_LEVELS[i]["threshold"] for i in range(9)])
@@ -75,7 +75,7 @@ def main():
         out_path = OUT_DIR / f"{map_name}.png"
         fig.savefig(out_path, bbox_inches="tight")
         plt.close(fig)
-        print(f"  saved {out_path.relative_to(Path(__file__).parent)}")
+        print(f"  saved {out_path.relative_to(OUT_DIR.parent.parent)}")
 
     print(f"\nDone — {len(_REGISTRY)} map(s) written to {OUT_DIR}/")
 
