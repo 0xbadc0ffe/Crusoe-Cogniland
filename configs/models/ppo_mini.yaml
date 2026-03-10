@@ -3,22 +3,22 @@ defaults:
 
 name: ppo_mini
 
-# ── Tiny architecture for 20×20 toy maps (~3 300 params vs ~96 600 for ppo) ──
+# ── Compact PPO variant for faster runs (~15k params vs ~96k for full ppo) ──
 #
-#   CNN:        Conv(2→4) + Conv(4→8) + AdaptivePool(2) → 8×2×2 = 32 out
-#   Scalar net: Linear(7→16)                            → 16 out
-#   Trunk ×2:   Linear(48→32) + Linear(32→32)
-#   Actor/Critic heads on 32-dim features
+#   CNN:        Conv(2→8) + Conv(8→16) + AdaptivePool(3) → 16×3×3 = 144 out
+#   Scalar net: Linear(7→32)                             → 32 out
+#   Trunk ×2:   Linear(176→64) + Linear(64→64)
+#   Actor/Critic heads on 64-dim features
 #
-cnn_channels: 8          # second conv = 8 ch, first = 4 ch  (vs 32/16)
-cnn_out_spatial: 2       # pool to 2×2 = 4 cells             (vs 4×4 = 16)
-scalar_hidden: 16        # scalar MLP width                   (vs 64)
-hidden_dim: 32           # trunk width                        (vs 128)
+cnn_channels: 16         # second conv = 16 ch, first = 8 ch (vs 32/16)
+cnn_out_spatial: 3       # pool to 3×3 = 9 cells             (vs 4×4 = 16)
+scalar_hidden: 32        # scalar MLP width                   (vs 64)
+hidden_dim: 64           # trunk width                        (vs 128)
 
 training:
-  parallel_envs: 16            # smaller batch — model fits in CPU easily
-  moves_per_rollout: 32        # shorter rollouts for faster iteration
-  total_env_moves: 300_000     # sufficient budget for toy maps
+  parallel_envs: 32             # still lighter than full PPO but less noisy
+  moves_per_rollout: 64         # match main PPO rollout length
+  total_env_moves: 2_500_000     # a bit more budget for larger maps
 
-  minibatch_size: 64           # proportional to smaller rollout
-  learning_rate: 0.0005        # slightly higher — small model can handle it
+  minibatch_size: 128          # proportional to larger rollout
+  learning_rate: 0.0003        # align with main PPO for stability

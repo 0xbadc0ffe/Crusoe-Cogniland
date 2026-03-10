@@ -17,7 +17,7 @@ from cogniland.env.pathfinding import batch_astar
 from cogniland.env.types import EnvConfig
 from cogniland.env.wrappers import BatchedIslandEnv
 from cogniland.logging import WandBLogger, compute_behavioral_metrics
-from cogniland.utils import render_trajectory, save_checkpoint, set_reproducibility
+from cogniland.utils import load_checkpoint, render_trajectory, save_checkpoint, set_reproducibility
 
 
 # ---------------------------------------------------------------------------
@@ -241,10 +241,19 @@ class PPOAgent:
 
         obs = env.reset(seed=cfg.env.seed)
         global_step = 0
+        start_update = 1
+
+        resume_path = cfg.get("resume", None)
+        if resume_path:
+            ckpt = load_checkpoint(resume_path, model, optimizer, device=device)
+            global_step = ckpt["step"]
+            start_update = global_step // (num_envs * rollout_steps) + 1
+            print(f"Resumed from {resume_path} — global_step={global_step}, starting at update {start_update}")
+
         start_time = time.time()
 
-        for update in range(1, num_updates + 1):
-            # LR annealing
+        for update in range(start_update, num_updates + 1):
+            # LR annealing (uses absolute update position so resumed runs decay correctly)
             if cfg.models.training.anneal_lr:
                 frac = 1.0 - (update - 1) / num_updates
                 lr = frac * cfg.models.training.learning_rate
