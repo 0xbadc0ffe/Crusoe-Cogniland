@@ -12,7 +12,7 @@ def build_model(cfg):
     if name == "compass":
         from cogniland.models.compass import CompassModel
         return CompassModel(cfg, env_config, device)
-    elif name == "ppo":
+    elif name in ("ppo", "ppo_mini"):
         from cogniland.models.ppo import PPOAgent
         return PPOAgent(cfg, env_config, device)
     else:

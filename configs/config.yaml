@@ -6,6 +6,9 @@ defaults:
 # Global device setting — "auto" picks CUDA if available
 device: auto
 
+# Resume training from a checkpoint path (null = start fresh)
+resume: null
+
 # Logging
 logging:
   wandb:
