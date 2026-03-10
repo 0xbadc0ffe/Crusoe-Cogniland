@@ -12,7 +12,7 @@ import random
 import numpy as np
 import torch
 
-from cogniland.env.constants import TERRAIN_THRESHOLDS
+from cogniland.env.constants import TERRAIN_THRESHOLDS, TERRAIN_VISIBILITY, SMALL_TERRAIN_VISIBILITY
 from cogniland.env.core import compute_minimap_batch, compute_terrain_levels, env_step
 from cogniland.env.types import EnvConfig, EnvState, StepResult
 
@@ -134,6 +134,8 @@ class Islands:
             self._fixed_spawn = None
             self._fixed_target = None
 
+        self._vis_tensor = SMALL_TERRAIN_VISIBILITY if config.small_map else TERRAIN_VISIBILITY
+
         # Per-run position overrides (config.spawn_r/c, target_r/c)
         if config.spawn_r >= 0:
             self._fixed_spawn = (config.spawn_r, config.spawn_c)
@@ -173,6 +175,7 @@ class Islands:
             self.config.minimap_max_ray, terrain_lev,
             self.config.minimap_occlude,
             self.config.minimap_min_clear_lv,
+            self._vis_tensor,
         )
         compass = (spawn_pos - target_pos).float()
 

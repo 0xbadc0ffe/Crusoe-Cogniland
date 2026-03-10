@@ -95,6 +95,7 @@ class EnvConfig:
     spawn_c: int = -1
     target_r: int = -1
     target_c: int = -1
+    small_map: bool = False   # use small-map visibility radii and 9×9 minimap
 
     # Device
     device: str = "auto"
@@ -148,5 +149,6 @@ class EnvConfig:
             spawn_c=env.get("spawn_c", -1),
             target_r=env.get("target_r", -1),
             target_c=env.get("target_c", -1),
+            small_map=env.get("small_map", False),
             device=cfg.device,
         )

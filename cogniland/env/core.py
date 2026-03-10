@@ -16,6 +16,7 @@ from cogniland.env.constants import (
     TERRAIN_COSTS,
     TERRAIN_THRESHOLDS,
     TERRAIN_VISIBILITY,
+    SMALL_TERRAIN_VISIBILITY,
 )
 from cogniland.env.types import EnvConfig, EnvState, StepResult
 
@@ -49,9 +50,11 @@ def env_step(
     new_state = new_state._replace(terrain_lev=terrain_lev)
 
     # 4. Minimap update
+    _vis = SMALL_TERRAIN_VISIBILITY if config.small_map else TERRAIN_VISIBILITY
     minimap = compute_minimap_batch(
         world_map, new_state.position, config.minimap_max_ray,
         terrain_lev, config.minimap_occlude, config.minimap_min_clear_lv,
+        _vis,
     )
     new_state = new_state._replace(minimap=minimap)
 
@@ -351,6 +354,7 @@ def compute_minimap_batch(
     terrain_levels: torch.Tensor,
     occlude: bool,
     min_clear_lv: float,
+    terrain_visibility: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Compute minimap with terrain-dependent visibility for a batch of positions.
 
@@ -358,6 +362,9 @@ def compute_minimap_batch(
         Channel 0 = heightmap values (zero outside visibility circle)
         Channel 1 = binary visibility mask (1.0 inside, 0.0 outside)
     """
+    if terrain_visibility is None:
+        terrain_visibility = TERRAIN_VISIBILITY
+
     B = positions.shape[0]
     size = world_map.shape[0]
     diameter = 2 * max_ray + 1
@@ -392,7 +399,7 @@ def compute_minimap_batch(
     dist_grid = torch.sqrt(dy_grid ** 2 + dx_grid ** 2)  # [D, D]
 
     # Batch distance visibility mask
-    vis_radii = TERRAIN_VISIBILITY.to(device)[terrain_levels.long()]  # [B]
+    vis_radii = terrain_visibility.to(device)[terrain_levels.long()]  # [B]
     dist_masks = (dist_grid.unsqueeze(0) <= vis_radii.view(B, 1, 1)).float()  # [B, D, D]
 
     # Batch occlusion mask

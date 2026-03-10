@@ -50,6 +50,17 @@ ACTIONS = {
 
 NUM_ACTIONS = len(ACTIONS)
 
+# Visibility ranges for small (20×20) maps — smaller radii matching smaller world scale
+SMALL_VISIBILITY_RANGES = {
+    0: 3, 1: 3,   # ocean, deep_water: 7×7
+    2: 2,          # water: 5×5
+    3: 2, 4: 2,   # beach, sandy: 5×5
+    5: 2,          # grassland: 5×5
+    6: 1,          # forest: 3×3
+    7: 2,          # rocky: 5×5
+    8: 4,          # mountains: 9×9
+}
+
 # Pre-computed tensor versions for fast lookups in batched operations
 TERRAIN_THRESHOLDS = torch.tensor(
     [TERRAIN_LEVELS[i]["threshold"] for i in range(9)], dtype=torch.float32
@@ -61,6 +72,10 @@ TERRAIN_COSTS = torch.tensor(
 
 TERRAIN_VISIBILITY = torch.tensor(
     [VISIBILITY_RANGES[i] for i in range(9)], dtype=torch.long
+)
+
+SMALL_TERRAIN_VISIBILITY = torch.tensor(
+    [SMALL_VISIBILITY_RANGES[i] for i in range(9)], dtype=torch.long
 )
 
 # Movement deltas indexed by action id: [dy, dx]
