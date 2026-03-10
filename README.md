@@ -112,11 +112,25 @@ Crusoe-Cogniland/
 ├── train.py                    # Hydra entry point → build_model(cfg).train(cfg)
 ├── human_demo.py               # Interactive PyGame demo (manual play)
 ├── agent_demo.py               # AI playback demo (watch trained agent)
-├── assets/images/              # Reference island screenshots
+├── assets/
+│   ├── images/                 # Reference island screenshots
+│   └── maps/                   # Auto-generated PNG previews of custom maps
+├── utils/
+│   └── generate_map_assets.py  # Regenerate assets/maps/ from custom_maps.py
 ├── setup.py                    # Package definition (enables pip install -e .)
 ├── environment.yml             # Conda environment (reproducible)
 └── requirements.txt            # Pip-only fallback
 ```
+
+### Show custom maps
+
+After adding or modifying a map in `cogniland/env/custom_maps.py`, regenerate the PNG previews:
+
+```bash
+python utils/generate_map_assets.py
+```
+
+This writes one PNG per map to `assets/maps/`, using the same terrain palette as the game.
 
 ### Adding a new model
 
