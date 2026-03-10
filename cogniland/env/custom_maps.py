@@ -62,54 +62,66 @@ def _ellipse(arr: np.ndarray, cr: int, cc: int, ra: int, rb: int, val: float) ->
 
 @_register("the_strait", spawn=(10, 2), target=(10, 18))
 def _build_the_strait() -> np.ndarray:
-    """Two land masses separated by a deep channel; shallow northern crossing.
+    """3-tile mountain column next to spawn hides a single forest tile behind it.
 
-    Strategy A: Cross the deep channel directly (short swim, needs resources).
-    Strategy B: Detour north through shallow crossing (more walking, less drain).
+    The column at rows 9-11, col 1 is visible from spawn (distance ≤ 1.5) and
+    points directly opposite the target.  It fully occludes (10,0) from every
+    col≥2 vantage point via Bresenham raycasting:
+
+        (10,2) spawn   → ray hits (10,1) = mountain ✓
+        (9,2)  N-path  → ray hits (10,1) = mountain ✓
+        (8,2)  N-path  → ray hits (9,1)  = mountain ✓  ← requires row 9
+        (11,2) S-path  → ray hits (11,1) = mountain ✓
+        (12,2) S-path  → ray hits (11,1) = mountain ✓  ← requires row 11
+        (7,2)+ / (13,2)+ → distance > 3, invisible anyway
+
+    The bypass is placed in the SOUTH (rows 17-19) so the sub-optimal agent
+    goes south and never enters the visibility range of the hidden forest.
+    The optimal agent explores SOUTH-WEST around the mountain base, discovers
+    the forest at (12,0), wades 1 free step through the moat to (10,0), and
+    collects resources before swimming.
+
+    Both paths are exactly 30 steps; only resource management differs:
+
+        Sub-optimal (south beach bypass, 30 steps):
+            resources = 0 throughout → r_resource = −0.02×25×30 = −15.0
+            total reward ≈ 12 − 3.0 − 15.0 = −6.0
+
+        Optimal (forest detour + swim, 30 steps):
+            resources peak at 9, exit swim with 3
+            r_resource ≈ −11.6
+            total reward ≈ 12 − 3.0 − 11.6 = −2.6
+
+    Swimming without resources is fatal: the 6-wide deep-water channel (rows
+    0-16, cols 7-12) deals 25 HP on steps 4-6, exhausting 75 HP exactly.
+
+    Map layout:
+        rows  9-11  col 1        = MOUNTAINS  (3-tile column; full visual wall)
+        (10,0)                   = FOREST     (single tile; visible from (12,0))
+        (9,0), (11,0)            = WATER      (shallow moat; 1 free water step)
+        rows  0-16  cols 7-12   = DEEP_WATER  (fatal without resources)
+        rows 17-19  cols 7-12   = BEACH       (sub-optimal south bypass)
     """
     arr = np.full((_SIZE, _SIZE), _GRASSLAND, dtype=np.float32)
 
-    # Ocean border (1 cell)
-    _fill(arr, 0, 1, 0, _SIZE, _OCEAN)
-    _fill(arr, _SIZE - 1, _SIZE, 0, _SIZE, _OCEAN)
-    _fill(arr, 0, _SIZE, 0, 1, _OCEAN)
-    _fill(arr, 0, _SIZE, _SIZE - 1, _SIZE, _OCEAN)
+    # Mountain column: 3 tiles, directly west of spawn — full visual wall
+    _fill(arr, 9, 12, 1, 2, _MOUNTAINS)
 
-    # Deep ocean channel (cols 8-12)
-    _fill(arr, 0, _SIZE, 8, 13, _DEEP_WATER)
+    # Single forest tile hidden behind the column
+    arr[10, 0] = _FOREST
 
-    # Shallow northern crossing (rows 1-3)
-    _fill(arr, 1, 3, 8, 13, _WATER)
+    # Shallow-water moat surrounding the forest (north + south; east=mountain, west=edge)
+    arr[9, 0]  = _WATER
+    arr[11, 0] = _WATER
 
-    # Forest patches for resources
-    _fill(arr, 5, 15, 1, 7, _FOREST)    # left island
-    _fill(arr, 5, 15, 13, 19, _FOREST)   # right island
+    # Deep-water channel: 6 tiles wide, full height except south bypass — fatal without resources
+    _fill(arr, 0, 17, 7, 13, _DEEP_WATER)
+
+    # Beach south bypass: safe crossing but equally long and resource-barren (sub-optimal)
+    _fill(arr, 17, _SIZE, 7, 13, _BEACH)
 
     return arr
 
-
-# ---------------------------------------------------------------------------
-# Map 2 — "forest_belt"
-# ---------------------------------------------------------------------------
-
-@_register("forest_belt", spawn=(17, 10), target=(3, 10))
-def _build_forest_belt() -> np.ndarray:
-    """A wide forest belt blocks the direct north-south path.
-
-    Strategy A: Go straight through the forest (slow but resource-positive).
-    Strategy B: Go around via left/right grassland edge (faster but no resource gain).
-    """
-    arr = np.full((_SIZE, _SIZE), _GRASSLAND, dtype=np.float32)
-
-    # Rocky strips at top and bottom
-    _fill(arr, 0, 1, 0, _SIZE, _ROCKY)
-    _fill(arr, 19, _SIZE, 0, _SIZE, _ROCKY)
-
-    # Forest belt across the middle (rows 6-14, cols 2-18)
-    _fill(arr, 6, 14, 2, 18, _FOREST)
-
-    # Left and right edge corridors remain grassland (cols 0-1 and 18-19)
-    return arr
 
 
 # ---------------------------------------------------------------------------
@@ -145,45 +157,37 @@ def _build_twin_peaks() -> np.ndarray:
 # Map 4 — "river_delta"
 # ---------------------------------------------------------------------------
 
-@_register("river_delta", spawn=(2, 2), target=(18, 18))
+@_register("river_delta", spawn=(10, 5), target=(18, 5))
 def _build_river_delta() -> np.ndarray:
-    """A diagonal river from top-left to bottom-right; two ford crossings.
+    """Horizontal deep-water river (rows 12-17) divides spawn (N) from target (S).
 
-    Strategy A: Cross at the first ford early — direct path.
-    Strategy B: Follow the river to the second ford — more forest time.
+    Forest patch (rows 6-9, cols 1-4) lies north-west of spawn — the agent must
+    backtrack to collect resources before attempting to swim.
+
+    Sub-optimal strategy (local minima): detour right to the land bridge
+    (cols 18-19) and walk around — reachable but ~34 steps with 0 resources
+    throughout → heavy resource-deficit penalty → reward ≈ −5.6.
+
+    Optimal strategy: walk back to forest (~6 steps), stay 3 turns to gain
+    9 resources (+6 HP), return to spawn column, then swim straight south
+    through the 6-row deep-water channel (3 free + 3 paid at 2 res each,
+    exits with 3 resources remaining) → ~24 steps → reward ≈ +3.1.
+
+    Swimming without resources is fatal: steps 4-6 deal 25 HP each,
+    exhausting the starting 75 HP exactly on the 6th water tile.
+
+    Map layout (cols 18-19 are grassland land-bridge throughout):
+        rows  0-11  grassland (forest patch rows 6-9, cols 1-4)
+        rows 12-17  DEEP_WATER cols 0-17  |  grassland cols 18-19
+        row  18     grassland (target at col 5)
     """
     arr = np.full((_SIZE, _SIZE), _GRASSLAND, dtype=np.float32)
 
-    # Diagonal river: 1px wide, slope ≈ 1
-    for r in range(_SIZE):
-        c_center = r
-        c0 = max(0, c_center - 1)
-        c1 = min(_SIZE, c_center + 2)
-        arr[r, c0:c1] = _WATER
+    # Deep-water river: 6 rows wide — fatal without resources (cols 0-17)
+    _fill(arr, 12, 18, 0, 18, _DEEP_WATER)
 
-    # Forest strips along both banks (1px each side)
-    for r in range(_SIZE):
-        c_center = r
-        cl = max(0, c_center - 2)
-        arr[r, cl:max(0, c_center - 1)] = _FOREST
-        cr0 = min(_SIZE, c_center + 2)
-        cr1 = min(_SIZE, c_center + 3)
-        if cr0 < cr1:
-            arr[r, cr0:cr1] = _FOREST
-
-    # Ford 1: rows 5-6 — beach
-    for r in range(5, 7):
-        c_center = r
-        c0 = max(0, c_center - 1)
-        c1 = min(_SIZE, c_center + 2)
-        arr[r, c0:c1] = _BEACH
-
-    # Ford 2: rows 14-15 — beach
-    for r in range(14, 16):
-        c_center = r
-        c0 = max(0, c_center - 1)
-        c1 = min(_SIZE, c_center + 2)
-        arr[r, c0:c1] = _BEACH
+    # Forest resource patch north-west of spawn (covers ~(7,2))
+    _fill(arr, 6, 10, 1, 5, _FOREST)
 
     return arr
 
