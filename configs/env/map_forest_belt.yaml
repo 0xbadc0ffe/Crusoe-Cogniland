@@ -1,8 +1,0 @@
-defaults:
-  - default
-
-map_name: "forest_belt"
-spawn_r: 17
-spawn_c: 10
-target_r: 3
-target_c: 10

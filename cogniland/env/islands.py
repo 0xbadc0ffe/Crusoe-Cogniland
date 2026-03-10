@@ -174,7 +174,8 @@ class Islands:
             self.config.minimap_occlude,
             self.config.minimap_min_clear_lv,
         )
-        compass = (spawn_pos - target_pos).float()
+        compass_raw = (spawn_pos - target_pos).float()
+        compass = compass_raw / torch.norm(compass_raw, dim=1, keepdim=True).clamp(min=1e-8)
 
         state = EnvState(
             position=spawn_pos,
@@ -240,7 +241,8 @@ class Islands:
             self.config.minimap_occlude,
             self.config.minimap_min_clear_lv,
         )
-        new_compass = (new_spawn - new_target).float()
+        new_compass_raw = (new_spawn - new_target).float()
+        new_compass = new_compass_raw / torch.norm(new_compass_raw, dim=1, keepdim=True).clamp(min=1e-8)
 
         # Replace done environments in each tensor
         position = state.position.clone()

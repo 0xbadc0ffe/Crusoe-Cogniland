@@ -18,12 +18,13 @@ from cogniland.utils import render_trajectory, set_reproducibility
 class CompassAgent(nn.Module):
     """Greedy compass-following baseline.
 
-    Picks the action that minimises Manhattan distance to the target.
+    Picks the action most aligned with moving toward the target.
     No learnable parameters — deterministic policy.
 
-    The compass observation is ``position - target`` (pointing *away* from the
-    target).  We therefore pick the action whose movement delta best cancels
-    out that vector, i.e. ``argmin |compass - delta|``.
+    The compass observation is a unit vector ``(position − target) / dist``
+    pointing *away* from the target.  We pick the action whose delta has the
+    maximum dot product with the direction toward the target (i.e. ``-compass``),
+    which is equivalent to ``argmin dot(compass, delta)``.
     """
 
     def __init__(self, action_dim: int = 5):
@@ -37,14 +38,12 @@ class CompassAgent(nn.Module):
 
     def get_action_and_value(self, obs, action=None):
         scalars = obs["scalars"]
-        compass = scalars[:, 0:2]  # [B, 2] — (position - target) in (row, col)
+        compass = scalars[:, 0:2]  # [B, 2] — unit vector (position - target)
 
-        # new_pos = pos + delta  =>  new_compass = (pos + delta) - target = compass + delta
-        # We want to pick the action that minimises |new_compass|.
-        candidates = compass.unsqueeze(1) + self.deltas.unsqueeze(0)  # [B, 5, 2]
-        distances = candidates.abs().sum(dim=-1)  # [B, 5]
-
-        best_action = distances.argmin(dim=-1)  # [B]
+        # dot(compass, delta): negative when delta opposes compass (i.e. moves toward target)
+        # argmin selects the action most aligned with moving toward target
+        scores = (compass.unsqueeze(1) * self.deltas.unsqueeze(0)).sum(dim=-1)  # [B, 5]
+        best_action = scores.argmin(dim=-1)  # [B]
 
         # Dummy outputs matching PPO interface
         log_prob = torch.zeros_like(best_action, dtype=torch.float32)

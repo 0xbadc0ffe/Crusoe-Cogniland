@@ -36,30 +36,32 @@ class ActorCritic(nn.Module):
     def __init__(
         self,
         scalar_dim: int = 7,
-        minimap_channels: int = 1,
-        minimap_size: int = 51,
+        minimap_channels: int = 2,
         hidden_dim: int = 128,
         action_dim: int = 5,
+        cnn_channels: int = 32,
+        cnn_out_spatial: int = 4,
+        scalar_hidden: int = 64,
     ):
         super().__init__()
         self.cnn = nn.Sequential(
-            _layer_init(nn.Conv2d(minimap_channels, 16, 3, padding=1)),
+            _layer_init(nn.Conv2d(minimap_channels, cnn_channels // 2, 3, padding=1)),
             nn.ReLU(),
             nn.MaxPool2d(2),
-            _layer_init(nn.Conv2d(16, 32, 3, padding=1)),
+            _layer_init(nn.Conv2d(cnn_channels // 2, cnn_channels, 3, padding=1)),
             nn.ReLU(),
-            nn.AdaptiveAvgPool2d(4),
+            nn.AdaptiveAvgPool2d(cnn_out_spatial),
             nn.Flatten(),
         )
-        cnn_out = 32 * 4 * 4
+        cnn_out = cnn_channels * cnn_out_spatial * cnn_out_spatial
 
         self.scalar_net = nn.Sequential(
-            _layer_init(nn.Linear(scalar_dim, 64)),
+            _layer_init(nn.Linear(scalar_dim, scalar_hidden)),
             nn.ReLU(),
         )
 
         self.trunk = nn.Sequential(
-            _layer_init(nn.Linear(cnn_out + 64, hidden_dim)),
+            _layer_init(nn.Linear(cnn_out + scalar_hidden, hidden_dim)),
             nn.ReLU(),
             _layer_init(nn.Linear(hidden_dim, hidden_dim)),
             nn.ReLU(),
@@ -185,15 +187,16 @@ class PPOAgent:
         self.env_config = env_config
         self.device = device
 
-        minimap_size = 2 * cfg.env.minimap_max_ray + 1
-        scalar_dim = cfg.models.get("scalar_dim", 6)
+        scalar_dim = cfg.models.get("scalar_dim", 7)
         action_dim = cfg.models.get("action_dim", NUM_ACTIONS)
         self.model = ActorCritic(
             scalar_dim=scalar_dim,
             minimap_channels=cfg.models.minimap_channels,
-            minimap_size=minimap_size,
             hidden_dim=cfg.models.hidden_dim,
             action_dim=action_dim,
+            cnn_channels=cfg.models.get("cnn_channels", 32),
+            cnn_out_spatial=cfg.models.get("cnn_out_spatial", 4),
+            scalar_hidden=cfg.models.get("scalar_hidden", 64),
         ).to(device)
 
     def get_action_and_value(self, obs, action=None):

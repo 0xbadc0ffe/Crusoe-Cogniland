@@ -40,9 +40,11 @@ def env_step(
     # 1. Movement
     new_state = apply_movement(state, action, config.size)
 
-    # 2. Compass update
-    compass = (new_state.position - target_pos).float()
-    new_state = new_state._replace(compass=compass)
+    # 2. Compass update — unit direction (pos − target), magnitude dropped
+    compass_raw = (new_state.position - target_pos).float()           # [B, 2]
+    compass_dist = torch.norm(compass_raw, dim=1, keepdim=True).clamp(min=1e-8)
+    compass_unit = compass_raw / compass_dist                          # [B, 2]
+    new_state = new_state._replace(compass=compass_unit)
 
     # 3. Terrain level (needed by minimap visibility)
     terrain_lev = compute_terrain_levels(world_map, new_state.position)
@@ -73,7 +75,7 @@ def env_step(
 
     # 9. Terminal conditions
     alive = new_state.hp > 0
-    dist_to_target = torch.norm(compass, dim=1)
+    dist_to_target = compass_dist.squeeze(1)
     reached = dist_to_target < 1.0
     done = ~alive | reached
 

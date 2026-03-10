@@ -225,7 +225,7 @@ class IslandGameDemo:
             f"Terrain: {TERRAIN_LEVELS[int(s.terrain_lev[0])]['name']}",
             f"Terrain Clock: {int(s.terrain_clock[0])}",
             f"",
-            f"Distance to Target: {torch.norm(s.compass[0].float()):.1f}",
+            f"Distance to Target: {torch.norm((s.position[0].float() - self.target_pos[0].float())):.1f}",
             f"Target: ({self.target_pos[0][0]}, {self.target_pos[0][1]})",
             f"",
             f"Visibility Range: {VISIBILITY_RANGES[int(s.terrain_lev[0])]}",

@@ -37,4 +37,4 @@ def compute_reward(
         config.reward_resource_thresh - state.resources, min=0.0
     )
 
-    return r_dist + r_reach + r_death + r_time - r_hp - r_resource
+    return r_reach + r_death + r_time - r_hp - r_resource
