@@ -120,10 +120,9 @@ def build_obs(state: EnvState, minimap_max_ray: int, map_size: int = 20):
     s = state
     vis_range = TERRAIN_VISIBILITY.to(s.terrain_lev.device)[s.terrain_lev.long()].float()
     vis_norm = vis_range / minimap_max_ray
-    compass_norm = s.compass / map_size  # normalize to [-1, 1]
     scalars = torch.stack([
-        compass_norm[:, 0],
-        compass_norm[:, 1],
+        s.compass[:, 0],
+        s.compass[:, 1],
         s.terrain_lev,
         s.terrain_clock,
         s.resources,
@@ -566,7 +565,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
             ("Moves", f"{step_count}", COLORS["panel_fg"]),
             ("Position", f"({int(pr)}, {int(pc)})", COLORS["panel_fg"]),
             ("Terrain", TERRAIN_LEVELS[int(s.terrain_lev[0].item())]["name"].capitalize(), COLORS["panel_fg"]),
-            ("Distance", f"{torch.norm(s.compass[0].float()).item():.1f}", COLORS["panel_fg"]),
+            ("Distance", f"{torch.norm((s.position[0].float() - target_pos[0].float())).item():.1f}", COLORS["panel_fg"]),
         ]
 
         for label, value, color in stats:

@@ -80,16 +80,15 @@ class BatchedIslandEnv:
         """Build observation dict from current state.
 
         Returns:
-            ``"scalars"``: [B, 7] — compass(2), terrain_lev, terrain_clock, resources, hp, visibility_range
+            ``"scalars"``: [B, 7] — compass_dir(2) unit vector, terrain_lev, terrain_clock, resources, hp, visibility_range
             ``"minimap"``: [B, 2, H, W]
         """
         s = self.state
         vis_range = TERRAIN_VISIBILITY.to(s.terrain_lev.device)[s.terrain_lev.long()].float()
         vis_norm = vis_range / self.config.minimap_max_ray  # normalize to [0, 1]
-        compass_norm = s.compass / self.config.size          # normalize to [-1, 1]
         scalars = torch.stack([
-            compass_norm[:, 0],
-            compass_norm[:, 1],
+            s.compass[:, 0],
+            s.compass[:, 1],
             s.terrain_lev,
             s.terrain_clock,
             s.resources,
@@ -148,9 +147,8 @@ class IslandNavEnv(gym.Env):
         s = self._state
         vis_range = TERRAIN_VISIBILITY[s.terrain_lev[0].long().item()].float()
         vis_norm = vis_range / self.config.minimap_max_ray
-        compass_norm = s.compass / self.config.size  # normalize to [-1, 1]
         scalars = torch.stack([
-            compass_norm[0, 0], compass_norm[0, 1],
+            s.compass[0, 0], s.compass[0, 1],
             s.terrain_lev[0], s.terrain_clock[0],
             s.resources[0], s.hp[0],
             vis_norm,

@@ -1,0 +1,24 @@
+defaults:
+  - ppo
+
+name: ppo_mini
+
+# ── Tiny architecture for 20×20 toy maps (~3 300 params vs ~96 600 for ppo) ──
+#
+#   CNN:        Conv(2→4) + Conv(4→8) + AdaptivePool(2) → 8×2×2 = 32 out
+#   Scalar net: Linear(7→16)                            → 16 out
+#   Trunk ×2:   Linear(48→32) + Linear(32→32)
+#   Actor/Critic heads on 32-dim features
+#
+cnn_channels: 8          # second conv = 8 ch, first = 4 ch  (vs 32/16)
+cnn_out_spatial: 2       # pool to 2×2 = 4 cells             (vs 4×4 = 16)
+scalar_hidden: 16        # scalar MLP width                   (vs 64)
+hidden_dim: 32           # trunk width                        (vs 128)
+
+training:
+  parallel_envs: 16            # smaller batch — model fits in CPU easily
+  moves_per_rollout: 32        # shorter rollouts for faster iteration
+  total_env_moves: 300_000     # sufficient budget for toy maps
+
+  minibatch_size: 64           # proportional to smaller rollout
+  learning_rate: 0.0005        # slightly higher — small model can handle it
