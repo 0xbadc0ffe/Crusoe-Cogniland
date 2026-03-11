@@ -50,29 +50,29 @@ class EnvConfig:
     sink_mode: int = 1          # 0=none, 1, 2
 
     # Agent
-    init_hp: float = 75.0
+    init_hp: float = 100.0
     max_hp: float = 100.0
-    init_resources: float = 0.0
+    init_resources: float = 30.0
     max_resources: float = 100.0
-    max_sea_movement_without_resources: int = 3
     hard_mode: bool = False
 
     # Terrain effects (previously hardcoded in core.py)
     passive_heal_rate: float = 1.0
-    land_to_water_penalty: float = 3.0
-    forest_hp_gain: float = 4.0
-    forest_resource_gain: float = 1.0
-    sea_resource_costs: tuple = (0.75, 0.50, 0.25)   # ocean, deep_water, water
-    sea_hp_costs: tuple = (25.0, 25.0, 10.0)          # ocean, deep_water, water
-    mountain_resource_costs: tuple = (0.25, 0.75)      # rocky, mountains
-    mountain_hp_costs: tuple = (5.0, 20.0)             # rocky, mountains
+    land_to_water_resource_cost: float = 10.0  # boat construction cost (resources)
+    land_to_water_hp_per_missing_res: float = 5.0  # HP penalty per missing resource
+    land_resource_drain: float = 1.0            # beach, sandy, grassland — drain per step
+    no_res_hp_multiplier: float = 2.0           # HP lost per missing resource unit
+    forest_hp_gain: float = 5.0
+    forest_resource_gain: float = 2.0
+    sea_resource_costs: tuple = (3.0, 2.0, 1.5)    # ocean, deep_water, water
+    mountain_resource_costs: tuple = (1.5, 3.0)      # rocky, mountains
     hard_mode_resource_drain: float = 0.25
     hard_mode_hp_gain: float = 1.0
     hard_mode_hp_loss: float = 0.5
 
     # Minimap
     minimap_ray: int = 5
-    minimap_max_ray: int = 3        # fixed CNN spatial dim = 2*max_ray+1 = 7
+    minimap_max_ray: int = 7        # CNN spatial dim = 2*max_ray+1 = 15
     minimap_occlude: bool = False
     minimap_min_clear_lv: float = 0.25
 
@@ -116,17 +116,17 @@ class EnvConfig:
             init_hp=env.init_hp, max_hp=env.max_hp,
             init_resources=env.init_resources,
             max_resources=env.get("max_resources", 100.0),
-            max_sea_movement_without_resources=env.max_sea_movement_without_resources,
             hard_mode=env.hard_mode,
             # Terrain effects — .get() so older config files still work
             passive_heal_rate=env.get("passive_heal_rate", 1.0),
-            land_to_water_penalty=env.get("land_to_water_penalty", 3.0),
-            forest_hp_gain=env.get("forest_hp_gain", 4.0),
-            forest_resource_gain=env.get("forest_resource_gain", 1.0),
-            sea_resource_costs=tuple(env.get("sea_resource_costs", [0.75, 0.50, 0.25])),
-            sea_hp_costs=tuple(env.get("sea_hp_costs", [25.0, 25.0, 10.0])),
-            mountain_resource_costs=tuple(env.get("mountain_resource_costs", [0.25, 0.75])),
-            mountain_hp_costs=tuple(env.get("mountain_hp_costs", [5.0, 20.0])),
+            land_to_water_resource_cost=env.get("land_to_water_resource_cost", 10.0),
+            land_to_water_hp_per_missing_res=env.get("land_to_water_hp_per_missing_res", 5.0),
+            land_resource_drain=env.get("land_resource_drain", 1.0),
+            no_res_hp_multiplier=env.get("no_res_hp_multiplier", 8.0),
+            forest_hp_gain=env.get("forest_hp_gain", 10.0),
+            forest_resource_gain=env.get("forest_resource_gain", 2.0),
+            sea_resource_costs=tuple(env.get("sea_resource_costs", [1.0, 0.75, 0.3])),
+            mountain_resource_costs=tuple(env.get("mountain_resource_costs", [0.5, 1.0])),
             hard_mode_resource_drain=env.get("hard_mode_resource_drain", 0.25),
             hard_mode_hp_gain=env.get("hard_mode_hp_gain", 1.0),
             hard_mode_hp_loss=env.get("hard_mode_hp_loss", 0.5),
