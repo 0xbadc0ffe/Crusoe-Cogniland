@@ -101,7 +101,7 @@ Crusoe-Cogniland/
 │   │   ├── core.py             # Pure-function step logic
 │   │   ├── reward.py           # Reward function
 │   │   ├── islands.py          # Islands class + terrain generation
-│   │   └── wrappers.py         # BatchedIslandEnv + Gymnasium wrapper
+│   │   └── wrappers.py         # BatchedIslandEnv (auto-reset, obs dict)
 │   ├── models/                 # Self-contained agents
 │   │   ├── __init__.py         # build_model() factory
 │   │   ├── ppo.py              # PPO: architecture + rollout + GAE + training loop + eval
@@ -140,17 +140,33 @@ This writes one PNG per map to `assets/maps/`, using the same terrain palette as
 
 ## Terrain Types
 
-| Level | Name       | Cost | Special Effects |
-|-------|------------|------|-----------------|
-| 0     | Ocean      | 0.5  | Drains 3.0 resources/turn; 30 HP damage; requires resources after 7 moves |
-| 1     | Deep Water | 0.75 | Drains 2.0 resources/turn; 25 HP damage; requires resources after 7 moves |
-| 2     | Water      | 1.0  | Drains 1.0 resource/turn; 15 HP damage; requires resources after 7 moves |
-| 3     | Beach      | 2.5  | - |
-| 4     | Sandy      | 2.5  | - |
-| 5     | Grassland  | 1.8  | - |
-| 6     | Forest     | 3.0  | Gain 3 resources + 2 HP per turn |
-| 7     | Rocky      | 4.0  | Consumes 1.0 resource/turn |
-| 8     | Mountains  | 8.0  | Consumes 2.5 resources/turn |
+| Level | Name       | Move Cost | Visibility | Resource drain/step | HP/step (no resources) | Notes |
+|-------|------------|-----------|------------|---------------------|------------------------|-------|
+| 0     | Ocean      | 0.5       | 6          | −3.0                | −6.0                   | Fast travel, very expensive |
+| 1     | Deep Water | 0.75      | 5          | −2.0                | −4.0                   | |
+| 2     | Water      | 1.0       | 4          | −1.5                | −3.0                   | Highway if resourced |
+| 3     | Beach      | 1.5       | 3          | −1.0                | −2.0                   | Coastal, but not free |
+| 4     | Sandy      | 2.0       | 3          | −1.0                | −2.0                   | Desert |
+| 5     | Grassland  | 1.5       | 3          | −1.0                | −2.0                   | Open land |
+| 6     | Forest     | 3.5       | 2          | +5 HP/step **or** +2 res/step | —          | HP-first: heals until max HP, then gathers resources |
+| 7     | Rocky      | 3.5       | 5          | −1.5                | −3.0                   | High-ground view advantage |
+| 8     | Mountains  | 6.0       | 7          | −3.0                | −6.0                   | Full 15×15 strategic view |
+
+Resource drain applies **every step** with no free window. HP/step when no resources = `drain × 2`.
+**Visibility** is the radius in tiles; the minimap window is `2×visibility+1` across (max 15×15 at mountains).
+
+### Land → Water transition
+
+Entering any water tile (levels 0–2) from land (levels 3–8) costs **10 resources** as a boat-construction fee.
+Each resource point short of 10 deals **5 HP** damage instead.
+This makes ocean crossings a deliberate, resource-gated decision.
+
+### Forest priority mechanic
+
+- HP below max (100): forest heals **+10 HP/step**, no resource gain.
+- HP at max (100): forest gathers **+2 resources/step**, no further healing.
+
+Forest is the only HP source in the game (no passive regeneration).
 
 ## WandB Metrics
 

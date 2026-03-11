@@ -5,13 +5,11 @@ hard_mode: true
 
 # Tighter starting conditions
 init_hp: 60.0
-max_sea_movement_without_resources: 3   # was 7
 
 # Harsher terrain effects
-sea_resource_costs: [5.0, 3.5, 2.0]
-sea_hp_costs: [40.0, 35.0, 20.0]
-mountain_resource_costs: [2.0, 4.0]
-mountain_hp_costs: [12.0, 35.0]
+land_resource_drain: 1.5
+sea_resource_costs: [5.0, 3.5, 2.5]
+mountain_resource_costs: [2.5, 5.0]
 
 # Reward: survival is critical, distance barely helps
 reward_dist_coef: 0.02

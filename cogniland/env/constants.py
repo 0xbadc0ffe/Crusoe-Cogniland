@@ -21,22 +21,22 @@ TERRAIN_LEVELS = {
     0: {"name": "ocean", "threshold": 0.007, "cost": 0.5, "color": "deepocean"},
     1: {"name": "deep_water", "threshold": 0.025, "cost": 0.75, "color": "ocean"},
     2: {"name": "water", "threshold": 0.05, "cost": 1.0, "color": "blue"},
-    3: {"name": "beach", "threshold": 0.06, "cost": 2.5, "color": "beach"},
-    4: {"name": "sandy", "threshold": 0.1, "cost": 2.5, "color": "sandy"},
-    5: {"name": "grassland", "threshold": 0.25, "cost": 1.8, "color": "green"},
-    6: {"name": "forest", "threshold": 0.6, "cost": 3.0, "color": "darkgreen"},
-    7: {"name": "rocky", "threshold": 0.7, "cost": 4.0, "color": "mountain"},
-    8: {"name": "mountains", "threshold": 1.0, "cost": 8.0, "color": "snow"},
+    3: {"name": "beach", "threshold": 0.06, "cost": 1.5, "color": "beach"},
+    4: {"name": "sandy", "threshold": 0.1, "cost": 2.0, "color": "sandy"},
+    5: {"name": "grassland", "threshold": 0.25, "cost": 1.5, "color": "green"},
+    6: {"name": "forest", "threshold": 0.6, "cost": 3.5, "color": "darkgreen"},
+    7: {"name": "rocky", "threshold": 0.7, "cost": 3.5, "color": "mountain"},
+    8: {"name": "mountains", "threshold": 1.0, "cost": 6.0, "color": "snow"},
 }
 
 # Visibility ranges for minimap based on terrain
 VISIBILITY_RANGES = {
-    0: 3, 1: 3, 2: 3,   # water levels
-    3: 2, 4: 2,          # beach, sandy
+    0: 6, 1: 5, 2: 4,   # water levels — open water gives good horizon
+    3: 3, 4: 3,          # beach, sandy
     5: 3,                # grassland
-    6: 1,                # forest
-    7: 3,                # rocky
-    8: 3,                # mountains
+    6: 2,                # forest — slightly better than pitch black
+    7: 5,                # rocky — high ground advantage
+    8: 7,                # mountains — FULL 15×15 strategic view
 }
 
 # Action mapping

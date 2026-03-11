@@ -65,8 +65,8 @@ def env_step(
         new_state = new_state._replace(hp=new_state.hp + config.passive_heal_rate)
 
     # 7. Movement costs & terrain effects
-    new_state = apply_movement_costs(new_state, old_terrain, action, config)
-    new_state = apply_terrain_effects(new_state, action, config)
+    new_state = apply_movement_costs(new_state, action, config)
+    new_state = apply_terrain_effects(new_state, old_terrain, action, config)
 
     # 8. Clamp
     hp = torch.clamp(new_state.hp, 0.0, config.max_hp)
@@ -146,7 +146,7 @@ def update_terrain_clock(state: EnvState, old_terrain: torch.Tensor) -> EnvState
 # ---------------------------------------------------------------------------
 
 def apply_movement_costs(
-    state: EnvState, old_terrain: torch.Tensor, action: torch.Tensor, config: EnvConfig
+    state: EnvState, action: torch.Tensor, config: EnvConfig
 ) -> EnvState:
     """Apply base movement costs based on terrain (vectorised)."""
     device = state.position.device
@@ -156,10 +156,6 @@ def apply_movement_costs(
     step_cost = costs[terrain_idx]  # [B]
     step_cost = step_cost * moving.float()
 
-    # Land-to-water transition penalty
-    land_to_water = (old_terrain > 2) & (state.terrain_lev <= 2) & moving
-    step_cost = step_cost + land_to_water.float() * config.land_to_water_penalty
-
     return state._replace(cost=state.cost + step_cost)
 
 
@@ -168,48 +164,48 @@ def apply_movement_costs(
 # ---------------------------------------------------------------------------
 
 def apply_terrain_effects(
-    state: EnvState, action: torch.Tensor, config: EnvConfig
+    state: EnvState, old_terrain: torch.Tensor, action: torch.Tensor, config: EnvConfig
 ) -> EnvState:
     """Apply forest, sea, mountain, and hard-mode effects (vectorised)."""
+    device = state.position.device
     terrain = state.terrain_lev
     hp = state.hp.clone()
     resources = state.resources.clone()
 
-    # --- Forest: +1 resource, +4 HP ---
+    # --- Per-terrain resource drain (every step, no free window) ---
+    # 0=ocean, 1=deep_water, 2=water, 3=beach, 4=sandy, 5=grassland,
+    # 6=forest (handled separately), 7=rocky, 8=mountains
+    terrain_res_costs = torch.tensor([
+        config.sea_resource_costs[0],       # ocean
+        config.sea_resource_costs[1],       # deep_water
+        config.sea_resource_costs[2],       # water
+        config.land_resource_drain,         # beach
+        config.land_resource_drain,         # sandy
+        config.land_resource_drain,         # grassland
+        0.0,                               # forest
+        config.mountain_resource_costs[0], # rocky
+        config.mountain_resource_costs[1], # mountains
+    ], device=device)
+    res_drain = terrain_res_costs[terrain.long()]       # [B]
+    actual_drain = torch.min(resources, res_drain)
+    resources = resources - actual_drain
+    hp = hp - (res_drain - actual_drain) * config.no_res_hp_multiplier
+
+    # --- Forest: HP-first priority mechanic ---
     forest = terrain == 6
-    resources = resources + forest.float() * config.forest_resource_gain
-    hp = hp + forest.float() * config.forest_hp_gain
+    at_max_hp = hp >= config.max_hp
+    # Heal if below max HP
+    hp = hp + forest.float() * (~at_max_hp).float() * config.forest_hp_gain
+    # Only collect resources when at full HP
+    resources = resources + forest.float() * at_max_hp.float() * config.forest_resource_gain
 
-    # --- Sea effects ---
-    water = terrain <= 2
-    exceeds_free = (state.terrain_clock > config.max_sea_movement_without_resources) & water
-
-    # Resource cost by water level
-    sea_res_cost = torch.zeros_like(resources)
-    sea_res_cost = torch.where((terrain == 0) & exceeds_free, torch.full_like(sea_res_cost, config.sea_resource_costs[0]), sea_res_cost)
-    sea_res_cost = torch.where((terrain == 1) & exceeds_free, torch.full_like(sea_res_cost, config.sea_resource_costs[1]), sea_res_cost)
-    sea_res_cost = torch.where((terrain == 2) & exceeds_free, torch.full_like(sea_res_cost, config.sea_resource_costs[2]), sea_res_cost)
-    resources = resources - sea_res_cost
-
-    # HP loss when out of resources at sea
-    no_res_at_sea = (resources <= 0) & exceeds_free
-    sea_hp_cost = torch.zeros_like(hp)
-    sea_hp_cost = torch.where((terrain == 0) & no_res_at_sea, torch.full_like(sea_hp_cost, config.sea_hp_costs[0]), sea_hp_cost)
-    sea_hp_cost = torch.where((terrain == 1) & no_res_at_sea, torch.full_like(sea_hp_cost, config.sea_hp_costs[1]), sea_hp_cost)
-    sea_hp_cost = torch.where((terrain == 2) & no_res_at_sea, torch.full_like(sea_hp_cost, config.sea_hp_costs[2]), sea_hp_cost)
-    hp = hp - sea_hp_cost
-
-    # --- Mountain effects ---
-    mtn_res_cost = torch.zeros_like(resources)
-    mtn_res_cost = torch.where(terrain == 7, torch.full_like(mtn_res_cost, config.mountain_resource_costs[0]), mtn_res_cost)
-    mtn_res_cost = torch.where(terrain == 8, torch.full_like(mtn_res_cost, config.mountain_resource_costs[1]), mtn_res_cost)
-    resources = resources - mtn_res_cost
-
-    no_res_mtn = (resources <= 0) & (terrain >= 7)
-    mtn_hp_cost = torch.zeros_like(hp)
-    mtn_hp_cost = torch.where((terrain == 7) & no_res_mtn, torch.full_like(mtn_hp_cost, config.mountain_hp_costs[0]), mtn_hp_cost)
-    mtn_hp_cost = torch.where((terrain == 8) & no_res_mtn, torch.full_like(mtn_hp_cost, config.mountain_hp_costs[1]), mtn_hp_cost)
-    hp = hp - mtn_hp_cost
+    # --- Land-to-water transition: costs resources; each missing resource = HP loss ---
+    moving = action != ACTIONS["stay"]
+    land_to_water = (old_terrain > 2) & (terrain <= 2) & moving
+    resources_available = torch.clamp(resources, 0.0, config.land_to_water_resource_cost)
+    resources_missing = config.land_to_water_resource_cost - resources_available
+    resources = resources - land_to_water.float() * resources_available
+    hp = hp - land_to_water.float() * resources_missing * config.land_to_water_hp_per_missing_res
 
     # --- Hard mode ---
     if config.hard_mode:

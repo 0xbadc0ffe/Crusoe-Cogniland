@@ -10,29 +10,30 @@ filtering: "square"
 sink_mode: 1
 
 # Agent parameters
-init_hp: 75.0
+init_hp: 100.0
 max_hp: 100.0
-init_resources: 0.0
+init_resources: 30.0
 max_resources: 100.0
-max_sea_movement_without_resources: 3
 hard_mode: false
 
-# Terrain effects — rebalanced
-passive_heal_rate: 0.0             # No free HP regen. Forests are the only HP source.
-land_to_water_penalty: 3.0
-forest_hp_gain: 2.0                # Halved (was 4.0). Forests heal, but modestly.
-forest_resource_gain: 3.0          # Tripled (was 1.0). Forests = primary resource source.
-sea_resource_costs: [3.0, 2.0, 1.0]       # 4x (was [0.75, 0.50, 0.25]). Sea drains resources fast.
-sea_hp_costs: [30.0, 25.0, 15.0]          # Slightly up (was [25.0, 25.0, 10.0]).
-mountain_resource_costs: [1.0, 2.5]       # 3-4x (was [0.25, 0.75]).
-mountain_hp_costs: [8.0, 25.0]            # Slightly up (was [5.0, 20.0]).
+# Terrain effects
+passive_heal_rate: 0.0
+land_to_water_resource_cost: 10.0       # Boat construction cost (resources)
+land_to_water_hp_per_missing_res: 5.0   # HP penalty per missing resource
+land_resource_drain: 1.0                # Beach, sandy, grassland drain per step
+no_res_hp_multiplier: 2.0              # HP lost per missing resource unit (all terrains)
+forest_hp_gain: 5.0                    # Healing per step when below max HP
+forest_resource_gain: 2.0              # Resources per step when at max HP
+sea_resource_costs: [3.0, 2.0, 1.5]   # Ocean, deep_water, water (per step, no free window)
+mountain_resource_costs: [1.5, 3.0]   # Rocky, mountains
+
 hard_mode_resource_drain: 0.25
 hard_mode_hp_gain: 1.0
 hard_mode_hp_loss: 0.5
 
 # Minimap
 minimap_ray: 5
-minimap_max_ray: 3               # Fixed CNN spatial dim = 2*max_ray+1 = 7
+minimap_max_ray: 7               # CNN spatial dim = 2*max_ray+1 = 15
 minimap_occlude: true
 minimap_min_clear_lv: 0.25
 
@@ -40,14 +41,14 @@ minimap_min_clear_lv: 0.25
 max_steps: 150
 
 # Reward coefficients
-reward_dist_coef: 0.35           # scaled up for 20×20 map (was 0.03 at 250×250)
-reward_reach_bonus: 12.0        # was 10.0 — slightly more incentive to finish
-reward_death_penalty: -8.0      # was -5.0 — dying should hurt more
+reward_dist_coef: 0.35
+reward_reach_bonus: 12.0
+reward_death_penalty: -8.0
 reward_time_penalty: -0.1
-reward_hp_coef: 0.05            # was 0.01 — survival signal now meaningful
-reward_hp_thresh: 35.0          # was 30.0 — wider danger zone, earlier warning
-reward_resource_coef: 0.02      # was 0.005 — resource management matters
-reward_resource_thresh: 25.0    # was 20.0
+reward_hp_coef: 0.05
+reward_hp_thresh: 35.0
+reward_resource_coef: 0.05
+reward_resource_thresh: 20.0
 
 # Custom map support (empty = procedurally generated)
 map_name: ""
