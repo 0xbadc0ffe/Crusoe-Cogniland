@@ -406,7 +406,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
     base = asdict(env_config_base) if env_config_base is not None else {}
     base.update(
         seed=42,
-        minimap_ray=5,
+        minimap_ray=15,
         minimap_max_ray=DEFAULT_MINIMAP_MAX_RAY,
         minimap_occlude=True,
         minimap_min_clear_lv=0.25,

@@ -1,6 +1,8 @@
 """Islands class — thin wrapper around the pure-function core.
 
-Owns the world_map (generated once) and delegates all step logic to core.py.
+Owns a pool of world_maps (generated once at init) and delegates all step
+logic to core.py.  Supports Level Replay: each environment in the batch
+may operate on a different map, and maps are re-sampled on episode reset.
 """
 
 from __future__ import annotations
@@ -107,9 +109,11 @@ def colorize(world_map: torch.Tensor, config: EnvConfig) -> torch.Tensor:
 
 
 class Islands:
-    """Batched island navigation environment.
+    """Batched island navigation environment with Level Replay.
 
-    Owns the world_map and delegates step logic to pure functions in core.py.
+    In procedural mode (map_name == ""), pre-generates a pool of N maps at init.
+    Each environment in the batch may be on a different map. On episode reset,
+    a new map is randomly sampled from the pool and spawn/target are re-sampled.
     """
 
     def __init__(self, config: EnvConfig | None = None, **kwargs):
@@ -118,21 +122,38 @@ class Islands:
         self.config = config
         self._device = config.resolved_device()
 
-        # Generate or load island (CPU) then move to device
         # Seed all RNGs — SimplexNoise uses Python's random module internally
         torch.manual_seed(config.seed)
         random.seed(config.seed)
         np.random.seed(config.seed)
 
         if config.map_name:
+            # Custom map mode — single map, no pool
             from cogniland.env import custom_maps as cm
-            self.world_map = cm.get_map(config.map_name).to(self._device)
+            single_map = cm.get_map(config.map_name).to(self._device)
+            self.world_maps = single_map.unsqueeze(0)   # [1, H, W]
             self._fixed_spawn: tuple[int, int] | None = cm.get_spawn(config.map_name)
             self._fixed_target: tuple[int, int] | None = cm.get_target(config.map_name)
         else:
-            self.world_map = generate_island(config).to(self._device)
+            # Procedural pool — generate N maps with different seeds
+            pool_size = config.map_pool_size
+            print(f"Generating {pool_size} procedural maps ({config.size}×{config.size}) ...")
+            maps = []
+            for i in range(pool_size):
+                seed_i = config.seed + i
+                torch.manual_seed(seed_i)
+                random.seed(seed_i)
+                np.random.seed(seed_i)
+                maps.append(generate_island(config))
+            self.world_maps = torch.stack(maps).to(self._device)  # [N, H, W]
+            print(f"Map pool ready: {self.world_maps.shape}")
             self._fixed_spawn = None
             self._fixed_target = None
+
+        # Backward-compat: world_map points to the first map by default.
+        # Eval code and trajectory rendering that uses self.world_map will
+        # get map 0; per-env indexing uses self.world_maps.
+        self.world_map = self.world_maps[0]
 
         # Per-run position overrides (config.spawn_r/c, target_r/c)
         if config.spawn_r >= 0:
@@ -140,36 +161,47 @@ class Islands:
         if config.target_r >= 0:
             self._fixed_target = (config.target_r, config.target_c)
 
+        # Per-env map assignment (set during reset)
+        self._env_map_idx: torch.Tensor | None = None
+
     # ------------------------------------------------------------------
     # Reset
     # ------------------------------------------------------------------
 
     def reset(self, batch_size: int, seed: int | None = None) -> tuple[EnvState, torch.Tensor]:
-        """Reset: sample spawn + target on land, return (initial_state, target_positions)."""
+        """Reset: sample maps, spawn + target on land, return (initial_state, target_positions)."""
         if seed is not None:
             torch.manual_seed(seed)
             random.seed(seed)
             np.random.seed(seed)
 
-        land_threshold = TERRAIN_THRESHOLDS[2].item()  # must be above water
+        N = self.world_maps.shape[0]
         size = self.config.size
 
-        # Sample or use fixed spawn/target positions
+        # Assign each env a random map from the pool
+        self._env_map_idx = torch.randint(0, N, (batch_size,), device=self._device)
+
+        land_threshold = TERRAIN_THRESHOLDS[2].item()  # must be above water
+
+        # Sample or use fixed spawn/target positions (per env, on its assigned map)
         if self._fixed_spawn is not None:
             r, c = self._fixed_spawn
             spawn_pos = torch.tensor([[r, c]], device=self._device).expand(batch_size, 2).clone()
         else:
-            spawn_pos = self._sample_land_positions(batch_size, land_threshold)
+            spawn_pos = self._sample_land_positions_batched(self._env_map_idx, land_threshold)
 
         if self._fixed_target is not None:
             r, c = self._fixed_target
             target_pos = torch.tensor([[r, c]], device=self._device).expand(batch_size, 2).clone()
         else:
-            target_pos = self._sample_land_positions(batch_size, land_threshold)
+            target_pos = self._sample_land_positions_batched(self._env_map_idx, land_threshold)
 
-        terrain_lev = compute_terrain_levels(self.world_map, spawn_pos)
+        # Build per-env world maps for batched ops: [B, H, W]
+        per_env_maps = self.world_maps[self._env_map_idx]  # [B, H, W]
+
+        terrain_lev = compute_terrain_levels(per_env_maps, spawn_pos)
         minimap = compute_minimap_batch(
-            self.world_map, spawn_pos,
+            per_env_maps, spawn_pos,
             self.config.minimap_max_ray, terrain_lev,
             self.config.minimap_occlude,
             self.config.minimap_min_clear_lv,
@@ -189,23 +221,34 @@ class Islands:
         )
         return state, target_pos
 
-    def _sample_land_positions(self, n: int, land_threshold: float) -> torch.Tensor:
-        """Sample n positions that are above `land_threshold` on the world_map."""
+    def _sample_land_positions_batched(
+        self, map_indices: torch.Tensor, land_threshold: float
+    ) -> torch.Tensor:
+        """Sample one land position per env, where each env uses its own map."""
+        B = map_indices.shape[0]
         size = self.config.size
-        positions = []
-        while len(positions) < n:
-            p = torch.randint(0, size, (2,), device=self._device)
-            if self.world_map[p[0], p[1]].item() > land_threshold:
-                positions.append(p)
-        return torch.stack(positions, dim=0)
+        positions = torch.zeros(B, 2, dtype=torch.long, device=self._device)
+
+        for b in range(B):
+            m = self.world_maps[map_indices[b]]  # [H, W]
+            while True:
+                p = torch.randint(0, size, (2,), device=self._device)
+                if m[p[0], p[1]].item() > land_threshold:
+                    positions[b] = p
+                    break
+        return positions
 
     # ------------------------------------------------------------------
     # Step
     # ------------------------------------------------------------------
 
     def step(self, state: EnvState, action: torch.Tensor, target_pos: torch.Tensor) -> StepResult:
-        """Single batched step — delegates to core.env_step."""
-        return env_step(state, action, self.world_map, target_pos, self.config)
+        """Single batched step — delegates to core.env_step.
+
+        Passes per-env maps [B, H, W] so each env steps on its own map.
+        """
+        per_env_maps = self.world_maps[self._env_map_idx]  # [B, H, W]
+        return env_step(state, action, per_env_maps, target_pos, self.config)
 
     # ------------------------------------------------------------------
     # Auto-reset helper
@@ -214,29 +257,41 @@ class Islands:
     def reset_done(
         self, state: EnvState, target_pos: torch.Tensor, done: torch.Tensor
     ) -> tuple[EnvState, torch.Tensor]:
-        """Re-sample only the environments where done[i]==True."""
+        """Re-sample only the environments where done[i]==True.
+
+        Each done env gets a new random map from the pool plus
+        fresh spawn/target positions on that map.
+        """
         if not done.any():
             return state, target_pos
 
         n_done = int(done.sum().item())
+        N = self.world_maps.shape[0]
         land_threshold = TERRAIN_THRESHOLDS[2].item()
+
+        # Assign new random map for each done env
+        new_map_idx = torch.randint(0, N, (n_done,), device=self._device)
+        self._env_map_idx[done] = new_map_idx
 
         if self._fixed_spawn is not None:
             r, c = self._fixed_spawn
             new_spawn = torch.tensor([[r, c]], device=self._device).expand(n_done, 2).clone()
         else:
-            new_spawn = self._sample_land_positions(n_done, land_threshold)
+            new_spawn = self._sample_land_positions_batched(new_map_idx, land_threshold)
 
         if self._fixed_target is not None:
             r, c = self._fixed_target
             new_target = torch.tensor([[r, c]], device=self._device).expand(n_done, 2).clone()
         else:
-            new_target = self._sample_land_positions(n_done, land_threshold)
+            new_target = self._sample_land_positions_batched(new_map_idx, land_threshold)
+
+        # Per-env maps for the done environments
+        done_maps = self.world_maps[new_map_idx]   # [n_done, H, W]
 
         # Build replacement state fields
-        new_terrain = compute_terrain_levels(self.world_map, new_spawn)
+        new_terrain = compute_terrain_levels(done_maps, new_spawn)
         new_minimap = compute_minimap_batch(
-            self.world_map, new_spawn,
+            done_maps, new_spawn,
             self.config.minimap_max_ray, new_terrain,
             self.config.minimap_occlude,
             self.config.minimap_min_clear_lv,

@@ -93,7 +93,7 @@ def batch_astar(
     """Run A* for each (start, goal) pair.
 
     Args:
-        world_map: [H, W] heightmap.
+        world_map: [H, W] shared or [B, H, W] per-env heightmap.
         terrain_costs: [9] costs per terrain level.
         starts: [B, 2] start positions.
         goals: [B, 2] goal positions.
@@ -102,7 +102,9 @@ def batch_astar(
         [B] tensor of optimal path costs (-1.0 for unreachable pairs).
     """
     B = starts.shape[0]
+    per_env = world_map.dim() == 3
     results = torch.zeros(B)
     for i in range(B):
-        results[i] = astar_shortest_path(world_map, terrain_costs, starts[i], goals[i])
+        wm_i = world_map[i] if per_env else world_map
+        results[i] = astar_shortest_path(wm_i, terrain_costs, starts[i], goals[i])
     return results

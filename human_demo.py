@@ -71,7 +71,7 @@ class IslandGameDemo:
         config = EnvConfig(
             seed=seed,
             hard_mode=self.hard_mode,
-            minimap_ray=5,
+            minimap_ray=15,
             minimap_occlude=True,
             minimap_min_clear_lv=0.25,
         )
