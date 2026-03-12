@@ -26,6 +26,7 @@ logging:
     hp_danger_threshold: 30.0
     deterministic_episodes: 16
     stochastic_episodes: 16
+    eval_seed_offset: 1000
 
 # Hydra output directory
 hydra:
