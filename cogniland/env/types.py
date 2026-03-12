@@ -39,7 +39,7 @@ class EnvConfig:
     """Immutable environment configuration."""
 
     # Island generation
-    size: int = 20
+    size: int = 250
     scale: float = 0.33
     octaves: int = 6
     persistence: float = 0.5
@@ -71,16 +71,16 @@ class EnvConfig:
     hard_mode_hp_loss: float = 0.5
 
     # Minimap
-    minimap_ray: int = 5
-    minimap_max_ray: int = 7        # CNN spatial dim = 2*max_ray+1 = 15
+    minimap_ray: int = 15
+    minimap_max_ray: int = 21        # CNN spatial dim = 2*max_ray+1 = 43
     minimap_occlude: bool = False
     minimap_min_clear_lv: float = 0.25
 
     # Episode limits
-    max_steps: int = 150
+    max_steps: int = 1000
 
     # Reward coefficients
-    reward_dist_coef: float = 0.35
+    reward_dist_coef: float = 0.05
     reward_reach_bonus: float = 12.0
     reward_death_penalty: float = -8.0
     reward_time_penalty: float = -0.1
@@ -95,6 +95,9 @@ class EnvConfig:
     spawn_c: int = -1
     target_r: int = -1
     target_c: int = -1
+
+    # Map pool (Level Replay)
+    map_pool_size: int = 16
 
     # Device
     device: str = "auto"
@@ -149,4 +152,5 @@ class EnvConfig:
             target_r=env.get("target_r", -1),
             target_c=env.get("target_c", -1),
             device=cfg.device,
+            map_pool_size=env.get("map_pool_size", 16),
         )

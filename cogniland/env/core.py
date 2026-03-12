@@ -31,7 +31,10 @@ def env_step(
     target_pos: torch.Tensor,
     config: EnvConfig,
 ) -> StepResult:
-    """Execute one batched step.  Pure function — no side effects."""
+    """Execute one batched step.  Pure function — no side effects.
+
+    world_map: either [H, W] (shared) or [B, H, W] (per-env Level Replay).
+    """
     from cogniland.env.reward import compute_reward
 
     old_terrain = state.terrain_lev.clone()
@@ -109,12 +112,22 @@ def apply_movement(state: EnvState, action: torch.Tensor, map_size: int) -> EnvS
 def compute_terrain_levels(world_map: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
     """Vectorised terrain-level lookup using searchsorted.
 
+    Args:
+        world_map: [H, W] shared or [B, H, W] per-env heightmap.
+        positions: [B, 2] (row, col) positions.
+
     Returns: [B] float terrain level indices (0-8).
     """
     device = positions.device
     thresholds = TERRAIN_THRESHOLDS.to(device)
-    height_values = world_map[positions[:, 0], positions[:, 1]]  # [B]
-    levels = torch.searchsorted(thresholds, height_values)        # [B]
+    if world_map.dim() == 3:
+        # Per-env maps: index [b, row, col]
+        b_idx = torch.arange(positions.shape[0], device=device)
+        height_values = world_map[b_idx, positions[:, 0], positions[:, 1]]
+    else:
+        # Shared map
+        height_values = world_map[positions[:, 0], positions[:, 1]]
+    levels = torch.searchsorted(thresholds, height_values)
     levels = torch.clamp(levels, 0, 8).float()
     return levels
 
@@ -352,22 +365,27 @@ def compute_minimap_batch(
 ) -> torch.Tensor:
     """Compute minimap with terrain-dependent visibility for a batch of positions.
 
+    Args:
+        world_map: [H, W] shared or [B, H, W] per-env heightmap.
+
     Returns: [B, 2, 2*max_ray+1, 2*max_ray+1] channel-first float tensor.
         Channel 0 = heightmap values (zero outside visibility circle)
         Channel 1 = binary visibility mask (1.0 inside, 0.0 outside)
     """
     B = positions.shape[0]
-    size = world_map.shape[0]
+    per_env = world_map.dim() == 3
+    size = world_map.shape[-1]  # works for both [H, W] and [B, H, W]
     diameter = 2 * max_ray + 1
     device = positions.device
 
     maps = torch.zeros(B, 2, diameter, diameter, device=device)
     patches = torch.zeros(B, diameter, diameter, device=device)
 
-    # 1. Slice out patches sequentially (fast because slice logic contains clamp bounds)
+    # 1. Slice out patches sequentially
     for b in range(B):
+        wm = world_map[b] if per_env else world_map  # [H, W]
         cy, cx = positions[b, 0].item(), positions[b, 1].item()
-        
+
         y0, y1 = cy - max_ray, cy + max_ray + 1
         x0, x1 = cx - max_ray, cx + max_ray + 1
 
@@ -382,7 +400,7 @@ def compute_minimap_batch(
         dx1 = dx0 + (sx1 - sx0)
 
         if sy0 < sy1 and sx0 < sx1:
-            patches[b, dy0:dy1, dx0:dx1] = world_map[sy0:sy1, sx0:sx1]
+            patches[b, dy0:dy1, dx0:dx1] = wm[sy0:sy1, sx0:sx1]
 
     # Pre-compute distance grid from center
     coords = torch.arange(diameter, device=device).float() - max_ray

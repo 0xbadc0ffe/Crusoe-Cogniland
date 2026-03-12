@@ -432,9 +432,10 @@ class PPOAgent:
         initial_spawns = eval_env.state.position.clone()
         initial_targets = eval_env.target_pos.clone()
 
-        # Compute A* optimal path costs
+        # Compute A* optimal path costs (per-env maps)
+        per_env_maps = eval_env.env.world_maps[eval_env.env._env_map_idx]  # [n_eps, H, W]
         astar_costs = batch_astar(
-            eval_env.env.world_map, TERRAIN_COSTS,
+            per_env_maps, TERRAIN_COSTS,
             initial_spawns, initial_targets,
         ).to(device)
 
@@ -636,8 +637,10 @@ class PPOAgent:
                     break
                 if len(det_trajs[i]) < 2:
                     continue
+                map_idx = det_env.env._env_map_idx[i].item()
+                world_map_i = det_env.env.world_maps[map_idx]
                 fig = render_trajectory(
-                    det_env.env.world_map, det_trajs[i],
+                    world_map_i, det_trajs[i],
                     det_targets[i], det_reached[i].item(), i,
                     TERRAIN_LEVELS, palette,
                 )

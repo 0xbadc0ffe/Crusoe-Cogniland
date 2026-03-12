@@ -29,14 +29,14 @@ TERRAIN_LEVELS = {
     8: {"name": "mountains", "threshold": 1.0, "cost": 6.0, "color": "snow"},
 }
 
-# Visibility ranges for minimap based on terrain
+# Visibility ranges for minimap based on terrain (scaled ×3 for 250×250 maps)
 VISIBILITY_RANGES = {
-    0: 6, 1: 5, 2: 4,   # water levels — open water gives good horizon
-    3: 3, 4: 3,          # beach, sandy
-    5: 3,                # grassland
-    6: 2,                # forest — slightly better than pitch black
-    7: 5,                # rocky — high ground advantage
-    8: 7,                # mountains — FULL 15×15 strategic view
+    0: 18, 1: 15, 2: 12,  # water levels — open water gives good horizon
+    3: 9, 4: 9,            # beach, sandy
+    5: 9,                  # grassland
+    6: 6,                  # forest — limited canopy visibility
+    7: 15,                 # rocky — high ground advantage
+    8: 21,                 # mountains — full strategic view
 }
 
 # Action mapping
