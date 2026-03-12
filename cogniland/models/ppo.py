@@ -250,6 +250,17 @@ class PPOAgent:
             start_update = global_step // (num_envs * rollout_steps) + 1
             print(f"Resumed from {resume_path} — global_step={global_step}, starting at update {start_update}")
 
+        # Pre-generate and cache the evaluation environment (held-out map pool)
+        eval_cfg = cfg.logging.get("eval", {})
+        eval_seed = cfg.env.seed + eval_cfg.get("eval_seed_offset", 1000)
+        n_eps_det = eval_cfg.get("deterministic_episodes", cfg.models.training.eval_episodes)
+        n_eps_sto = eval_cfg.get("stochastic_episodes", cfg.models.training.eval_episodes)
+        max_eval_eps = max(n_eps_det, n_eps_sto)
+        print(f"Caching Eval Env (seed offset {eval_cfg.get('eval_seed_offset', 1000)})...")
+        self.eval_env = BatchedIslandEnv(self.env_config, num_envs=max_eval_eps)
+        # This triggers procedural generation of the 16 held-out maps once
+        self.eval_env.reset(seed=eval_seed)
+
         start_time = time.time()
 
         for update in range(start_update, num_updates + 1):
@@ -425,8 +436,12 @@ class PPOAgent:
             n_eps = eval_cfg.get("stochastic_episodes", cfg.models.training.eval_episodes)
         hp_danger_threshold = eval_cfg.get("hp_danger_threshold", 30.0)
 
-        eval_env = BatchedIslandEnv(env_config, num_envs=n_eps)
-        obs = eval_env.reset(seed=cfg.env.seed + 1000)
+        # Reuse the cached eval_env to avoid re-generating the 16 held-out maps every eval step
+        eval_env = self.eval_env
+        
+        # Soft reset: re-rolls spawn/target points and map assignments, but DOES NOT regenerate maps
+        # The maps were already generated during init with the eval_seed_offset
+        obs = eval_env.reset()
 
         # Record initial positions before the loop
         initial_spawns = eval_env.state.position.clone()
