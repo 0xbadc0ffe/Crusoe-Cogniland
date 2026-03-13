@@ -80,7 +80,7 @@ class EnvConfig:
     max_steps: int = 1000
 
     # Reward coefficients
-    reward_dist_coef: float = 0.05
+    reward_dist_coef: float = 0.35
     reward_reach_bonus: float = 12.0
     reward_death_penalty: float = -8.0
     reward_time_penalty: float = -0.1

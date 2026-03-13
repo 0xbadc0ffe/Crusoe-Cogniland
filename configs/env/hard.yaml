@@ -12,7 +12,7 @@ sea_resource_costs: [5.0, 3.5, 2.5]
 mountain_resource_costs: [2.5, 5.0]
 
 # Reward: survival is critical, distance barely helps
-reward_dist_coef: 0.02
+reward_dist_coef: 0.35
 reward_reach_bonus: 20.0
 reward_death_penalty: -15.0
 reward_hp_coef: 0.10

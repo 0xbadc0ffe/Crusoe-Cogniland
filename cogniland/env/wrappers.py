@@ -81,10 +81,10 @@ class BatchedIslandEnv:
         scalars = torch.stack([
             s.compass[:, 0],
             s.compass[:, 1],
-            s.terrain_lev,
-            s.terrain_clock,
-            s.resources,
-            s.hp,
+            s.terrain_lev / 8.0,
+            s.terrain_clock / 10.0,
+            s.resources / self.config.max_resources,
+            s.hp / self.config.max_hp,
             vis_norm,
         ], dim=1)  # [B, 7]
         return {"scalars": scalars, "minimap": s.minimap}
