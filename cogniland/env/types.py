@@ -74,7 +74,7 @@ class EnvConfig:
     minimap_ray: int = 15
     minimap_max_ray: int = 21        # CNN spatial dim = 2*max_ray+1 = 43
     minimap_occlude: bool = False
-    minimap_min_clear_lv: float = 0.25
+    minimap_clear_tolerance: float = 0.1
 
     # Episode limits
     max_steps: int = 1000
@@ -136,7 +136,7 @@ class EnvConfig:
             minimap_ray=env.minimap_ray,
             minimap_max_ray=env.get("minimap_max_ray", 10),
             minimap_occlude=env.minimap_occlude,
-            minimap_min_clear_lv=env.minimap_min_clear_lv,
+            minimap_clear_tolerance=env.get("minimap_clear_tolerance", env.get("minimap_min_clear_lv", 0.1)),
             max_steps=env.max_steps,
             reward_dist_coef=env.reward_dist_coef,
             reward_reach_bonus=env.reward_reach_bonus,

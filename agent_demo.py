@@ -409,7 +409,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
         minimap_ray=15,
         minimap_max_ray=DEFAULT_MINIMAP_MAX_RAY,
         minimap_occlude=True,
-        minimap_min_clear_lv=0.25,
+        minimap_clear_tolerance=0.1,
         spawn_r=spawn_rc[0], spawn_c=spawn_rc[1],
         target_r=target_rc[0], target_c=target_rc[1],
     )

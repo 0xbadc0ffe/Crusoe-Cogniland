@@ -56,7 +56,7 @@ def env_step(
     # 4. Minimap update
     minimap = compute_minimap_batch(
         world_map, new_state.position, config.minimap_max_ray,
-        terrain_lev, config.minimap_occlude, config.minimap_min_clear_lv,
+        terrain_lev, config.minimap_occlude, config.minimap_clear_tolerance,
     )
     new_state = new_state._replace(minimap=minimap)
 
@@ -294,13 +294,13 @@ def _bresenham_rays(max_ray: int) -> torch.Tensor:
     return ray_tensor, lengths
 
 
-def compute_occlusion_mask_batch(patches: torch.Tensor, max_ray: int, min_clear_lv: float) -> torch.Tensor:
+def compute_occlusion_mask_batch(patches: torch.Tensor, max_ray: int, clear_tolerance: float) -> torch.Tensor:
     """Compute binary visibility mask in batch using raycasting from the center.
     
     Args:
         patches: [B, D, D] heightmap patches centered on the agents.
         max_ray: radius of the patches.
-        min_clear_lv: height threshold that blocks vision.
+        clear_tolerance: max height difference above the agent before vision is blocked.
         
     Returns:
         masks: [B, D, D] float tensor (1.0 = visible, 0.0 = occluded).
@@ -321,8 +321,11 @@ def compute_occlusion_mask_batch(patches: torch.Tensor, max_ray: int, min_clear_
     # Gather heights for all patches along all rays
     ray_heights = patches[:, ray_y, ray_x]  # [B, num_rays, max_len]
     
-    # Find blocking cells
-    blocks = (ray_heights >= min_clear_lv).float()
+    # Get the height of the agent at the center of each patch
+    center_heights = patches[:, max_ray, max_ray]  # [B]
+    
+    # Find blocking cells: Blocked if the cell is taller than the agent + tolerance
+    blocks = (ray_heights >= (center_heights.unsqueeze(1).unsqueeze(2) + clear_tolerance)).float()
     
     # Cells *after* the first block are occluded.
     # cummax creates a mask of 1s starting from the first block.
