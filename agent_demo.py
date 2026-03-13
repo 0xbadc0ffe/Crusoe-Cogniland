@@ -20,9 +20,11 @@ Controls during playback:
 import os
 import re
 import sys
+from pathlib import Path
 
 import pygame
 import torch
+from omegaconf import OmegaConf
 
 from cogniland.env.constants import (
     ACTIONS,
@@ -43,19 +45,35 @@ from cogniland.env.types import EnvConfig, EnvState
 from cogniland.models.ppo import ActorCritic
 
 # ---------------------------------------------------------------------------
-# Constants
+# Load configuration from YAML (single source of truth)
+# ---------------------------------------------------------------------------
+_CONFIGS_DIR = Path(__file__).resolve().parent / "configs"
+_model_cfg = OmegaConf.load(_CONFIGS_DIR / "models" / "ppo.yaml")
+_env_cfg = OmegaConf.load(_CONFIGS_DIR / "env" / "default.yaml")
+
+# Architecture params (from ppo.yaml)
+MODEL_SCALAR_DIM = _model_cfg.get("scalar_dim", 7)
+MODEL_MINIMAP_CHANNELS = _model_cfg.get("minimap_channels", 2)
+MODEL_HIDDEN_DIM = _model_cfg.get("hidden_dim", 128)
+MODEL_ACTION_DIM = _model_cfg.get("action_dim", NUM_ACTIONS)
+MODEL_CNN_CHANNELS = _model_cfg.get("cnn_channels", 32)
+MODEL_CNN_OUT_SPATIAL = _model_cfg.get("cnn_out_spatial", 4)
+MODEL_SCALAR_HIDDEN = _model_cfg.get("scalar_hidden", 64)
+
+# Env params (from default.yaml)
+ENV_MINIMAP_MAX_RAY = _env_cfg.get("minimap_max_ray", 21)
+ENV_MINIMAP_RAY = _env_cfg.get("minimap_ray", 15)
+ENV_MINIMAP_OCCLUDE = _env_cfg.get("minimap_occlude", True)
+ENV_MINIMAP_CLEAR_TOL = _env_cfg.get("minimap_clear_tolerance", 0.1)
+ENV_MAP_SIZE = _env_cfg.get("size", 250)
+
+# ---------------------------------------------------------------------------
+# UI constants
 # ---------------------------------------------------------------------------
 WINDOW_W, WINDOW_H = 1200, 800
 MAP_DISPLAY_SIZE = 550          # pixels for the big map
 MINIMAP_DISPLAY_SIZE = 180
 ACTION_NAMES = {0: "↑", 1: "↓", 2: "→", 3: "←", 4: "•"}
-
-# Default architecture (matches ppo.yaml)
-DEFAULT_SCALAR_DIM = 7
-DEFAULT_MINIMAP_CHANNELS = 2
-DEFAULT_HIDDEN_DIM = 128
-DEFAULT_ACTION_DIM = NUM_ACTIONS
-DEFAULT_MINIMAP_MAX_RAY = 3
 
 # Colors
 COLORS = {k: tuple(v) for k, v in palette.items()}
@@ -101,13 +119,14 @@ def discover_checkpoints(artifacts_dir="artifacts"):
 
 def load_actor_critic(ckpt_path, device="cpu"):
     """Load ActorCritic weights from a .pt checkpoint."""
-    minimap_size = 2 * DEFAULT_MINIMAP_MAX_RAY + 1
     model = ActorCritic(
-        scalar_dim=DEFAULT_SCALAR_DIM,
-        minimap_channels=DEFAULT_MINIMAP_CHANNELS,
-        minimap_size=minimap_size,
-        hidden_dim=DEFAULT_HIDDEN_DIM,
-        action_dim=DEFAULT_ACTION_DIM,
+        scalar_dim=MODEL_SCALAR_DIM,
+        minimap_channels=MODEL_MINIMAP_CHANNELS,
+        hidden_dim=MODEL_HIDDEN_DIM,
+        action_dim=MODEL_ACTION_DIM,
+        cnn_channels=MODEL_CNN_CHANNELS,
+        cnn_out_spatial=MODEL_CNN_OUT_SPATIAL,
+        scalar_hidden=MODEL_SCALAR_HIDDEN,
     ).to(device)
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model_state_dict"])
@@ -115,11 +134,11 @@ def load_actor_critic(ckpt_path, device="cpu"):
     return model
 
 
-def build_obs(state: EnvState, minimap_max_ray: int, env_config: EnvConfig, map_size: int = 20):
+def build_obs(state: EnvState, env_config: EnvConfig):
     """Replicate BatchedIslandEnv.get_obs() for a single-batch state."""
     s = state
     vis_range = TERRAIN_VISIBILITY.to(s.terrain_lev.device)[s.terrain_lev.long()].float()
-    vis_norm = vis_range / minimap_max_ray
+    vis_norm = vis_range / env_config.minimap_max_ray
     scalars = torch.stack([
         s.compass[:, 0],
         s.compass[:, 1],
@@ -406,10 +425,11 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
     base = asdict(env_config_base) if env_config_base is not None else {}
     base.update(
         seed=42,
-        minimap_ray=15,
-        minimap_max_ray=DEFAULT_MINIMAP_MAX_RAY,
-        minimap_occlude=True,
-        minimap_clear_tolerance=0.1,
+        minimap_ray=ENV_MINIMAP_RAY,
+        minimap_max_ray=ENV_MINIMAP_MAX_RAY,
+        minimap_occlude=ENV_MINIMAP_OCCLUDE,
+        minimap_clear_tolerance=ENV_MINIMAP_CLEAR_TOL,
+        map_pool_size=1,
         spawn_r=spawn_rc[0], spawn_c=spawn_rc[1],
         target_r=target_rc[0], target_c=target_rc[1],
     )
@@ -466,7 +486,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
             if frame_counter >= frames_per_step:
                 frame_counter = 0
 
-                obs = build_obs(state, DEFAULT_MINIMAP_MAX_RAY, env_config, map_size)
+                obs = build_obs(state, env_config)
                 with torch.no_grad():
                     action = model.get_deterministic_action(obs)
 
@@ -643,7 +663,7 @@ def main():
         map_name, default_spawn, default_target = map_result
 
         # Build base env config (carries map_name through the pipeline)
-        env_config = EnvConfig(seed=42, map_name=map_name)
+        env_config = EnvConfig(seed=42, map_name=map_name, map_pool_size=1)
 
         while True:
             # Phase 2: position picking (with optional pre-filled positions)
