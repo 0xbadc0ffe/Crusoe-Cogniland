@@ -115,7 +115,7 @@ def load_actor_critic(ckpt_path, device="cpu"):
     return model
 
 
-def build_obs(state: EnvState, minimap_max_ray: int, map_size: int = 20):
+def build_obs(state: EnvState, minimap_max_ray: int, env_config: EnvConfig, map_size: int = 20):
     """Replicate BatchedIslandEnv.get_obs() for a single-batch state."""
     s = state
     vis_range = TERRAIN_VISIBILITY.to(s.terrain_lev.device)[s.terrain_lev.long()].float()
@@ -123,10 +123,10 @@ def build_obs(state: EnvState, minimap_max_ray: int, map_size: int = 20):
     scalars = torch.stack([
         s.compass[:, 0],
         s.compass[:, 1],
-        s.terrain_lev,
-        s.terrain_clock,
-        s.resources,
-        s.hp,
+        s.terrain_lev / 8.0,
+        s.terrain_clock / 10.0,
+        s.resources / env_config.max_resources,
+        s.hp / env_config.max_hp,
         vis_norm,
     ], dim=1)
     return {"scalars": scalars, "minimap": s.minimap}
@@ -466,7 +466,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
             if frame_counter >= frames_per_step:
                 frame_counter = 0
 
-                obs = build_obs(state, DEFAULT_MINIMAP_MAX_RAY, map_size)
+                obs = build_obs(state, DEFAULT_MINIMAP_MAX_RAY, env_config, map_size)
                 with torch.no_grad():
                     action = model.get_deterministic_action(obs)
 
