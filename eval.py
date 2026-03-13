@@ -60,12 +60,15 @@ def main():
         import re
         ckpt_files = [f for f in os.listdir(local_artifact_dir) if f.endswith(".pt")]
         if ckpt_files:
-            # Sort by the step number extracted from the filename
-            def get_step(name):
-                match = re.search(r'ckpt_(\d+)\.pt', name)
-                return int(match.group(1)) if match else 0
-            ckpt_files.sort(key=get_step)
-            ckpt_path = os.path.join(local_artifact_dir, ckpt_files[-1])
+            # Prefer ckpt_final.pt if it exists; otherwise pick highest-numbered
+            if "ckpt_final.pt" in ckpt_files:
+                ckpt_path = os.path.join(local_artifact_dir, "ckpt_final.pt")
+            else:
+                def get_step(name):
+                    match = re.search(r'ckpt_(\d+)\.pt', name)
+                    return int(match.group(1)) if match else 0
+                ckpt_files.sort(key=get_step)
+                ckpt_path = os.path.join(local_artifact_dir, ckpt_files[-1])
             print(f"Found local checkpoint: {ckpt_path}")
             
     if not ckpt_path:
@@ -82,13 +85,16 @@ def main():
                 print("No .pt files found in the downloaded artifact.")
                 return
             
-            # Optionally sort wandb ckpts if there are more than 1
-            def get_step(name):
-                import re
-                match = re.search(r'ckpt_(\d+)\.pt', name)
-                return int(match.group(1)) if match else 0
-            ckpt_files.sort(key=get_step)
-            ckpt_path = os.path.join(artifact_dir, ckpt_files[-1])
+            # Prefer ckpt_final.pt if it exists; otherwise pick highest-numbered
+            if "ckpt_final.pt" in ckpt_files:
+                ckpt_path = os.path.join(artifact_dir, "ckpt_final.pt")
+            else:
+                def get_step(name):
+                    import re
+                    match = re.search(r'ckpt_(\d+)\.pt', name)
+                    return int(match.group(1)) if match else 0
+                ckpt_files.sort(key=get_step)
+                ckpt_path = os.path.join(artifact_dir, ckpt_files[-1])
             print(f"Downloaded checkpoint to: {ckpt_path}")
             
         except wandb.errors.CommError as e:
