@@ -35,7 +35,7 @@ hard_mode_hp_loss: 0.5
 minimap_ray: 15
 minimap_max_ray: 21               # CNN spatial dim = 2*max_ray+1 = 43
 minimap_occlude: true
-minimap_min_clear_lv: 0.25
+minimap_clear_tolerance: 0.1
 
 # Episode limits
 max_steps: 1000

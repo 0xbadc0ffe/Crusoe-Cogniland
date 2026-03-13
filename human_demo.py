@@ -73,7 +73,8 @@ class IslandGameDemo:
             hard_mode=self.hard_mode,
             minimap_ray=15,
             minimap_occlude=True,
-            minimap_min_clear_lv=0.25,
+            minimap_clear_tolerance=0.1,
+            map_pool_size=1,
         )
         self.env = Islands(config)
 

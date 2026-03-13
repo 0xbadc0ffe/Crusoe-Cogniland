@@ -14,12 +14,12 @@ training:
   # ── Rollout collection ──
   parallel_envs: 32             # How many environments run in parallel during rollout
   moves_per_rollout: 64         # How many moves each env makes before the model learns
-  total_env_moves: 500_000      # Total moves budget across all envs for the entire training
+  total_env_moves: 2_500_000      # Total moves budget across all envs for the entire training
 
   # ── PPO optimisation ──
   epochs_per_update: 4          # How many times the model re-studies each rollout's data
-  minibatch_size: 128           # Transitions per gradient step
-  learning_rate: 0.0003         # Adam optimiser initial learning rate
+  minibatch_size: 512           # Transitions per gradient step
+  learning_rate: 0.0001         # Adam optimiser initial learning rate
   anneal_lr: true               # Linearly decay LR to 0 over training
 
   # ── Advantage estimation (GAE) ──
@@ -29,7 +29,7 @@ training:
   # ── Loss coefficients ──
   policy_clip_range: 0.2        # ε — max allowed policy ratio change per update
   value_loss_weight: 0.5        # Weight of critic loss in the total loss
-  entropy_bonus_weight: 0.01    # Weight of entropy bonus (promotes exploration)
+  entropy_bonus_weight: 0.05    # Weight of entropy bonus (promotes exploration)
   max_grad_norm: 0.5            # Gradient clipping threshold for stability
 
   # ── Evaluation & checkpointing ──

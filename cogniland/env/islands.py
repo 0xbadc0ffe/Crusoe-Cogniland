@@ -204,7 +204,7 @@ class Islands:
             per_env_maps, spawn_pos,
             self.config.minimap_max_ray, terrain_lev,
             self.config.minimap_occlude,
-            self.config.minimap_min_clear_lv,
+            self.config.minimap_clear_tolerance,
         )
         compass_raw = (spawn_pos - target_pos).float()
         compass = compass_raw / torch.norm(compass_raw, dim=1, keepdim=True).clamp(min=1e-8)
@@ -294,7 +294,7 @@ class Islands:
             done_maps, new_spawn,
             self.config.minimap_max_ray, new_terrain,
             self.config.minimap_occlude,
-            self.config.minimap_min_clear_lv,
+            self.config.minimap_clear_tolerance,
         )
         new_compass_raw = (new_spawn - new_target).float()
         new_compass = new_compass_raw / torch.norm(new_compass_raw, dim=1, keepdim=True).clamp(min=1e-8)
