@@ -226,7 +226,7 @@ class PPOAgent:
         logger = WandBLogger(cfg)
         print(f"Device: {device}")
         print(f"Model: ppo")
-
+        #test
         env = BatchedIslandEnv(self.env_config, num_envs=cfg.models.training.parallel_envs)
         optimizer = optim.Adam(model.parameters(), lr=cfg.models.training.learning_rate, eps=1e-5)
 
