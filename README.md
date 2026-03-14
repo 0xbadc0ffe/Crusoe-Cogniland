@@ -18,7 +18,7 @@ conda env create -f environment.yml
 conda activate crusoe
 ```
 
-### 3. Install the package eheh
+### 3. Install the package
 
 ```bash
 pip install -e .
