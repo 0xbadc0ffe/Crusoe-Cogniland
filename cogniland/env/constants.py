@@ -26,17 +26,17 @@ TERRAIN_LEVELS = {
     5: {"name": "grassland", "threshold": 0.25, "cost": 1.5, "color": "green"},
     6: {"name": "forest", "threshold": 0.6, "cost": 3.5, "color": "darkgreen"},
     7: {"name": "rocky", "threshold": 0.7, "cost": 3.5, "color": "mountain"},
-    8: {"name": "mountains", "threshold": 1.0, "cost": 6.0, "color": "snow"},
+    8: {"name": "mountains", "threshold": 1.0, "cost": 4.0, "color": "snow"},
 }
 
 # Visibility ranges for minimap based on terrain (scaled ×3 for 250×250 maps)
 VISIBILITY_RANGES = {
-    0: 18, 1: 15, 2: 12,  # water levels — open water gives good horizon
-    3: 9, 4: 9,            # beach, sandy
-    5: 9,                  # grassland
-    6: 6,                  # forest — limited canopy visibility
-    7: 15,                 # rocky — high ground advantage
-    8: 21,                 # mountains — full strategic view
+    0: 10, 1: 8, 2: 6,  # water levels — open water gives good horizon
+    3: 4, 4: 4,          # beach, sandy
+    5: 4,                # grassland
+    6: 4,                # forest — limited canopy visibility
+    7: 8,                # rocky — high ground advantage
+    8: 22,               # mountains — full strategic view
 }
 
 # Action mapping

@@ -9,10 +9,7 @@ def build_model(cfg):
     device = env_config.resolved_device()
     name = cfg.models.name
 
-    if name == "compass":
-        from cogniland.models.compass import CompassModel
-        return CompassModel(cfg, env_config, device)
-    elif name in ("ppo", "ppo_mini"):
+    if name in ("ppo", "ppo_mini"):
         from cogniland.models.ppo import PPOAgent
         return PPOAgent(cfg, env_config, device)
     else:

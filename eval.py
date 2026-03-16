@@ -23,10 +23,10 @@ def main():
         run_id = run_id_arg.split("=")[1]
     else:
         run_id = run_id_arg
-    
+
     # Based on your previous artifacts, assuming standard Crusoe-Cogniland paths
     project_path = "crusoe/cogniland"
-    
+
     print(f"Initializing WandB API to fetch config for run: {run_id}")
     api = wandb.Api()
     try:
@@ -38,7 +38,7 @@ def main():
 
     # Extract the exact Config from when it was trained
     print("Reconstructing original training configuration...")
-    
+
     # WandB's run.config returns values in a flat structure; rebuild the dictionary
     raw_config = {k: v for k, v in run_data.config.items() if not k.startswith('_')}
     cfg = OmegaConf.create(raw_config)
@@ -47,7 +47,7 @@ def main():
     entity = run_data.entity
     project = run_data.project
     run = wandb.init(
-        project=project, 
+        project=project,
         entity=entity,
         job_type="evaluation"
     )
@@ -55,7 +55,7 @@ def main():
     print(f"Checking for local checkpoints in artifacts/{run_id}...")
     local_artifact_dir = os.path.join("artifacts", run_id)
     ckpt_path = None
-    
+
     if os.path.isdir(local_artifact_dir):
         import re
         ckpt_files = [f for f in os.listdir(local_artifact_dir) if f.endswith(".pt")]
@@ -70,21 +70,21 @@ def main():
                 ckpt_files.sort(key=get_step)
                 ckpt_path = os.path.join(local_artifact_dir, ckpt_files[-1])
             print(f"Found local checkpoint: {ckpt_path}")
-            
+
     if not ckpt_path:
         artifact_name = f"{cfg.models.name}_agent_{run_id}:latest"
         print(f"Fetching artifact from WandB: {artifact_name}...")
-        
+
         try:
             # Request explicitly from the entity/project namespace
             artifact = run.use_artifact(f"{entity}/{project}/{artifact_name}")
             artifact_dir = artifact.download()
-            
+
             ckpt_files = [f for f in os.listdir(artifact_dir) if f.endswith(".pt")]
             if not ckpt_files:
                 print("No .pt files found in the downloaded artifact.")
                 return
-            
+
             # Prefer ckpt_final.pt if it exists; otherwise pick highest-numbered
             if "ckpt_final.pt" in ckpt_files:
                 ckpt_path = os.path.join(artifact_dir, "ckpt_final.pt")
@@ -96,7 +96,7 @@ def main():
                 ckpt_files.sort(key=get_step)
                 ckpt_path = os.path.join(artifact_dir, ckpt_files[-1])
             print(f"Downloaded checkpoint to: {ckpt_path}")
-            
+
         except wandb.errors.CommError as e:
             print("Error fetching artifact. Make sure the run ID saved a checkpoint, or it exists locally.")
             print(e)
@@ -109,19 +109,19 @@ def main():
 
     # Load the checkpoint
     print("Loading checkpoint weights...")
-    
+
     # Handle device dynamically avoiding missing 'device' attributes
     if getattr(cfg, "device", "cpu") == "auto":
         device_str = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
     else:
         device_str = getattr(cfg, "device", "cpu")
-        
+
     device = torch.device(device_str)
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-    
+
     model.model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
-    
+
     param_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print("--- Evaluation Ready ---")
     print(f"Run ID: {run_id}")
@@ -134,10 +134,30 @@ def main():
     # training (cfg.env.seed + 1000). To evaluate on fully unseen procedural maps
     # and test true zero-shot generalization, simply override the seed here:
     # cfg.env.seed = 9999
-    
+
     print("Running evaluation metrics...")
-    metrics = model._run_eval(cfg, logger=None, global_step=0)
-    
+    from cogniland.env.types import EnvConfig
+    from cogniland.env.wrappers import BatchedIslandEnv
+    from cogniland.eval import CognilandSummarizer, EvalRunner
+
+    env_config = EnvConfig.from_hydra(cfg)
+    eval_cfg = cfg.logging.get("eval", {}) if hasattr(cfg, "logging") else {}
+    n_eps = eval_cfg.get("deterministic_episodes", cfg.models.training.eval_episodes)
+    eval_seed = cfg.env.seed + eval_cfg.get("eval_seed_offset", 1000)
+
+    eval_env = BatchedIslandEnv(env_config, num_envs=n_eps)
+    eval_env.reset(seed=eval_seed)
+
+    runner = EvalRunner(eval_env, env_config, str(device))
+    result = runner.run(
+        policy_fn=lambda obs: model.get_deterministic_action(obs),
+        n_episodes=n_eps,
+        mode="det",
+        split="test",
+        global_step=0,
+    )
+    metrics = CognilandSummarizer().scalar_metrics(result)
+
     print("\n" + "="*40)
     print("EVALUATION RESULTS")
     print("="*40)
@@ -147,7 +167,7 @@ def main():
         else:
             print(f"{k}: {v}")
     print("="*40)
-    
+
     run.finish()
 
 if __name__ == "__main__":

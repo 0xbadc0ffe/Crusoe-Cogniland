@@ -37,7 +37,7 @@ def env_step(
     """
     from cogniland.env.reward import compute_reward
 
-    old_terrain = state.terrain_lev.clone()
+    old_terrain = state.terrain_idx.clone()  # needed for land-to-water transition
     prev_dist = torch.norm((state.position - target_pos).float(), dim=1)
 
     # 1. Movement
@@ -50,20 +50,17 @@ def env_step(
     new_state = new_state._replace(compass=compass_unit)
 
     # 3. Terrain level (needed by minimap visibility)
-    terrain_lev = compute_terrain_levels(world_map, new_state.position)
-    new_state = new_state._replace(terrain_lev=terrain_lev)
+    terrain_idx = compute_terrain_levels(world_map, new_state.position)
+    new_state = new_state._replace(terrain_idx=terrain_idx)
 
     # 4. Minimap update
     minimap = compute_minimap_batch(
         world_map, new_state.position, config.minimap_max_ray,
-        terrain_lev, config.minimap_occlude, config.minimap_clear_tolerance,
+        terrain_idx, config.minimap_occlude, config.minimap_clear_tolerance,
     )
     new_state = new_state._replace(minimap=minimap)
 
-    # 5. Terrain clock
-    new_state = update_terrain_clock(new_state, old_terrain)
-
-    # 6. Passive healing (easy mode only)
+    # 5. Passive healing (easy mode only)
     if not config.hard_mode:
         new_state = new_state._replace(hp=new_state.hp + config.passive_heal_rate)
 
@@ -132,27 +129,6 @@ def compute_terrain_levels(world_map: torch.Tensor, positions: torch.Tensor) -> 
     return levels
 
 
-def _get_terrain_group(terrain_levels: torch.Tensor) -> torch.Tensor:
-    """Group terrain types for clock purposes.
-
-    0 = water (0-2), 1 = flat land (3-5), 2 = forest (6), 3 = rocky/mountain (7-8).
-    """
-    groups = torch.zeros_like(terrain_levels)
-    groups = torch.where(terrain_levels <= 2, torch.zeros_like(groups), groups)
-    groups = torch.where((terrain_levels >= 3) & (terrain_levels <= 5), torch.ones_like(groups), groups)
-    groups = torch.where(terrain_levels == 6, torch.full_like(groups, 2), groups)
-    groups = torch.where(terrain_levels >= 7, torch.full_like(groups, 3), groups)
-    return groups
-
-
-def update_terrain_clock(state: EnvState, old_terrain: torch.Tensor) -> EnvState:
-    """Increment clock if same terrain group, else reset to 1."""
-    old_group = _get_terrain_group(old_terrain)
-    new_group = _get_terrain_group(state.terrain_lev)
-    same = old_group == new_group
-    clock = torch.where(same, state.terrain_clock + 1, torch.ones_like(state.terrain_clock))
-    return state._replace(terrain_clock=clock)
-
 
 # ---------------------------------------------------------------------------
 # Movement costs
@@ -161,13 +137,15 @@ def update_terrain_clock(state: EnvState, old_terrain: torch.Tensor) -> EnvState
 def apply_movement_costs(
     state: EnvState, action: torch.Tensor, config: EnvConfig
 ) -> EnvState:
-    """Apply base movement costs based on terrain (vectorised)."""
+    """Apply base movement costs based on terrain (vectorised).
+
+    The stay action still incurs the terrain cost — it represents time passing,
+    not a free pause. Only the land-to-water transition is gated on actual movement.
+    """
     device = state.position.device
-    moving = action != ACTIONS["stay"]
     costs = TERRAIN_COSTS.to(device)
-    terrain_idx = state.terrain_lev.long()
+    terrain_idx = state.terrain_idx.long()
     step_cost = costs[terrain_idx]  # [B]
-    step_cost = step_cost * moving.float()
 
     return state._replace(cost=state.cost + step_cost)
 
@@ -181,7 +159,7 @@ def apply_terrain_effects(
 ) -> EnvState:
     """Apply forest, sea, mountain, and hard-mode effects (vectorised)."""
     device = state.position.device
-    terrain = state.terrain_lev
+    terrain = state.terrain_idx
     hp = state.hp.clone()
     resources = state.resources.clone()
 
@@ -362,7 +340,7 @@ def compute_minimap_batch(
     world_map: torch.Tensor,
     positions: torch.Tensor,
     max_ray: int,
-    terrain_levels: torch.Tensor,
+    terrain_indices: torch.Tensor,
     occlude: bool,
     min_clear_lv: float,
 ) -> torch.Tensor:
@@ -411,7 +389,7 @@ def compute_minimap_batch(
     dist_grid = torch.sqrt(dy_grid ** 2 + dx_grid ** 2)  # [D, D]
 
     # Batch distance visibility mask
-    vis_radii = TERRAIN_VISIBILITY.to(device)[terrain_levels.long()]  # [B]
+    vis_radii = TERRAIN_VISIBILITY.to(device)[terrain_indices.long()]  # [B]
     dist_masks = (dist_grid.unsqueeze(0) <= vis_radii.view(B, 1, 1)).float()  # [B, D, D]
 
     # Batch occlusion mask
