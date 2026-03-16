@@ -137,13 +137,12 @@ def load_actor_critic(ckpt_path, device="cpu"):
 def build_obs(state: EnvState, env_config: EnvConfig):
     """Replicate BatchedIslandEnv.get_obs() for a single-batch state."""
     s = state
-    vis_range = TERRAIN_VISIBILITY.to(s.terrain_lev.device)[s.terrain_lev.long()].float()
+    vis_range = TERRAIN_VISIBILITY.to(s.terrain_idx.device)[s.terrain_idx.long()].float()
     vis_norm = vis_range / env_config.minimap_max_ray
     scalars = torch.stack([
         s.compass[:, 0],
         s.compass[:, 1],
-        s.terrain_lev / 8.0,
-        s.terrain_clock / 10.0,
+        s.terrain_idx / 8.0,
         s.resources / env_config.max_resources,
         s.hp / env_config.max_hp,
         vis_norm,
@@ -584,7 +583,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
             ("Time Cost", f"{s.cost[0].item():.2f}", COLORS["panel_fg"]),
             ("Moves", f"{step_count}", COLORS["panel_fg"]),
             ("Position", f"({int(pr)}, {int(pc)})", COLORS["panel_fg"]),
-            ("Terrain", TERRAIN_LEVELS[int(s.terrain_lev[0].item())]["name"].capitalize(), COLORS["panel_fg"]),
+            ("Terrain", TERRAIN_LEVELS[int(s.terrain_idx[0].item())]["name"].capitalize(), COLORS["panel_fg"]),
             ("Distance", f"{torch.norm((s.position[0].float() - target_pos[0].float())).item():.1f}", COLORS["panel_fg"]),
         ]
 

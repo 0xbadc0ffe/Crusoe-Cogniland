@@ -199,10 +199,10 @@ class Islands:
         # Build per-env world maps for batched ops: [B, H, W]
         per_env_maps = self.world_maps[self._env_map_idx]  # [B, H, W]
 
-        terrain_lev = compute_terrain_levels(per_env_maps, spawn_pos)
+        terrain_idx = compute_terrain_levels(per_env_maps, spawn_pos)
         minimap = compute_minimap_batch(
             per_env_maps, spawn_pos,
-            self.config.minimap_max_ray, terrain_lev,
+            self.config.minimap_max_ray, terrain_idx,
             self.config.minimap_occlude,
             self.config.minimap_clear_tolerance,
         )
@@ -213,8 +213,7 @@ class Islands:
             position=spawn_pos,
             minimap=minimap,
             compass=compass,
-            terrain_lev=terrain_lev,
-            terrain_clock=torch.zeros(batch_size, device=self._device),
+            terrain_idx=terrain_idx,
             resources=torch.full((batch_size,), self.config.init_resources, device=self._device),
             hp=torch.full((batch_size,), self.config.init_hp, device=self._device),
             cost=torch.zeros(batch_size, device=self._device),
@@ -309,11 +308,8 @@ class Islands:
         compass = state.compass.clone()
         compass[done] = new_compass
 
-        terrain_lev = state.terrain_lev.clone()
-        terrain_lev[done] = new_terrain
-
-        terrain_clock = state.terrain_clock.clone()
-        terrain_clock[done] = 0.0
+        terrain_idx = state.terrain_idx.clone()
+        terrain_idx[done] = new_terrain
 
         resources = state.resources.clone()
         resources[done] = self.config.init_resources
@@ -326,7 +322,7 @@ class Islands:
 
         new_state = EnvState(
             position=position, minimap=minimap, compass=compass,
-            terrain_lev=terrain_lev, terrain_clock=terrain_clock,
+            terrain_idx=terrain_idx,
             resources=resources, hp=hp, cost=cost,
         )
 

@@ -39,32 +39,40 @@ Paste your API key from [wandb.ai/authorize](https://wandb.ai/authorize). To ski
 ### Training
 
 ```bash
-python train.py [overrides]
+# Default PPO run
+python train.py
+
+# Smoke test — fast, no WandB
+python train.py models.training.total_env_moves=20000 logging.wandb.mode=disabled
+
+# Hard-mode environment
+python train.py env=hard
+
+# Override hyperparameters (Hydra syntax)
+python train.py models.training.learning_rate=3e-4 models.training.parallel_envs=64
 ```
 
-All config lives in `configs/config.yaml` and any value can be overridden from CLI:
+All config lives in `configs/`. Any value can be overridden from the CLI:
 
 | Override | Values | Default |
 |----------|--------|---------|
-| `models` | `ppo`, `compass` | `ppo` |
-| `env` | `default`, `hard`, `map_strait`, `map_forest_belt`, `map_twin_peaks`, `map_river_delta`, `map_archipelago` | `default` |
+| `env` | `default`, `hard`, `map_strait`, `map_twin_peaks`, `map_river_delta`, `map_archipelago` | `default` |
+| `models` | `ppo`, `ppo_mini` | `ppo` |
 | `device` | `auto`, `cuda`, `cpu` | `auto` |
-| `models.training.total_timesteps` | int | `10000000` |
-| `models.training.num_envs` | int | `32` |
+| `models.training.total_env_moves` | int | `2_500_000` |
+| `models.training.parallel_envs` | int | `32` |
 | `models.training.learning_rate` | float | `0.0003` |
 | `logging.wandb.mode` | `online`, `offline`, `disabled` | `online` |
 
-See `configs/config.yaml` for all PPO hyperparams and `configs/env/default.yaml` for all reward coefficients.
+See `configs/models/ppo.yaml` for all PPO hyperparameters and `configs/env/default.yaml` for all reward coefficients and terrain effects.
 
 ### Evaluating a Model from WandB
-
-You can cleanly evaluate any historically trained model using its WandB Run ID (the 8-character string at the end of the run URL).
 
 ```bash
 python eval.py YOUR_RUN_ID
 ```
 
-This script is entirely decoupled from the local `configs/` folder. It automatically downloads the exact frozen configuration and weights that the model was originally trained with, guaranteeing no configuration mismatch errors. It works modularly for any model assuming they use `build_model(cfg)` and `model_state_dict`.
+Fetches the exact frozen config and weights from WandB, runs `EvalRunner` with the deterministic policy, and prints all behavioral metrics. Works offline if `artifacts/{run_id}/ckpt_final.pt` exists locally.
 
 ### Interactive Demo (Human)
 
@@ -76,119 +84,114 @@ python human_demo.py [hard]
 
 ### Agent Demo (AI Playback)
 
-Load a trained checkpoint, visually pick spawn and target on the map, and watch the agent navigate step-by-step with trajectory trail, minimap, and live stats. Supports speed control and pause.
-
 ```bash
 python agent_demo.py
 ```
 
-**Flow:** Select a checkpoint from `artifacts/` → click on the map to place spawn (red) then target (green) → press Enter to start.
+Load a trained checkpoint, click spawn and target on the map, watch the agent navigate with trajectory trail, minimap, and live stats.
 
-**Controls during playback:** +/− to change speed, P to pause, R to reset positions, ESC to quit.
+**Flow:** Select checkpoint from `artifacts/` → click spawn (red) then target (green) → Enter to start.
+**Controls:** +/− speed, P pause, R reset, ESC quit.
 
 ## Project Structure
 
 ```
 Crusoe-Cogniland/
-├── configs/                    # Hydra configuration
-│   ├── config.yaml             # Top-level: training + logging params inlined
-│   ├── env/                    # Environment configs (default, hard)
-│   └── models/                 # Model configs (ppo, compass)
-├── cogniland/                  # Main Python package
-│   ├── env/                    # Environment engine
-│   │   ├── constants.py        # TERRAIN_LEVELS, ACTIONS, palette, etc.
-│   │   ├── types.py            # EnvState, StepResult, EnvConfig
-│   │   ├── core.py             # Pure-function step logic
-│   │   ├── reward.py           # Reward function
-│   │   ├── islands.py          # Islands class + terrain generation
-│   │   └── wrappers.py         # BatchedIslandEnv (auto-reset, obs dict)
-│   ├── models/                 # Self-contained agents
-│   │   ├── __init__.py         # build_model() factory
-│   │   ├── ppo.py              # PPO: architecture + rollout + GAE + training loop + eval
-│   │   └── compass.py          # Compass: greedy baseline + eval
-│   ├── simplexnoise/           # Bundled noise library (for island generation)
-│   ├── logging.py              # WandB logger + behavioral metrics
-│   └── utils.py                # Checkpoints + reproducibility
-├── train.py                    # Hydra entry point → build_model(cfg).train(cfg)
-├── human_demo.py               # Interactive PyGame demo (manual play)
-├── agent_demo.py               # AI playback demo (watch trained agent)
-├── assets/
-│   ├── images/                 # Reference island screenshots
-│   └── maps/                   # Auto-generated PNG previews of custom maps
-├── utils/
-│   └── generate_map_assets.py  # Regenerate assets/maps/ from custom_maps.py
-├── setup.py                    # Package definition (enables pip install -e .)
-├── environment.yml             # Conda environment (reproducible)
-└── requirements.txt            # Pip-only fallback
+├── configs/
+│   ├── config.yaml             # Top-level: device, logging, eval settings
+│   ├── env/                    # default.yaml, hard.yaml, map_*.yaml
+│   └── models/                 # ppo.yaml, ppo_mini.yaml
+├── cogniland/
+│   ├── env/
+│   │   ├── constants.py        # TERRAIN_COSTS, TERRAIN_VISIBILITY, ACTION_DELTAS
+│   │   ├── types.py            # EnvState (NamedTuple), EnvConfig (frozen dataclass)
+│   │   ├── core.py             # Pure-function step logic (movement, terrain, minimap)
+│   │   ├── reward.py           # compute_reward() — pure function
+│   │   ├── islands.py          # Procedural map generation + batched reset
+│   │   ├── pathfinding.py      # batch_astar() — vectorised A*
+│   │   └── wrappers.py         # BatchedIslandEnv (auto-reset, obs dict, episode stats)
+│   ├── models/
+│   │   ├── __init__.py         # build_model(cfg) factory
+│   │   └── ppo.py              # PPO: ActorCritic, RolloutBuffer, GAE, training loop
+│   ├── eval/
+│   │   ├── __init__.py         # Public API: EvalRunner, EpisodeResult, EvalResult, CognilandSummarizer
+│   │   ├── runner.py           # EvalRunner — runs episodes, computes behavioral metrics
+│   │   └── summarizer.py       # CognilandSummarizer — aggregates EvalResult → dict[str, float]
+│   ├── simplexnoise/           # Bundled noise library for island generation
+│   ├── logging.py              # WandBLogger + log_rollout_stats()
+│   └── utils.py                # Checkpoints, render_trajectory, set_reproducibility
+├── train.py                    # Hydra entry point
+├── eval.py                     # Standalone evaluation by WandB run ID
+├── human_demo.py               # Interactive PyGame demo
+├── agent_demo.py               # AI playback demo
+├── CLAUDE.md                   # Full architecture & metrics reference
+├── environment.yml             # Conda environment
+└── setup.py
 ```
-
-### Show custom maps
-
-After adding or modifying a map in `cogniland/env/custom_maps.py`, regenerate the PNG previews:
-
-```bash
-python utils/generate_map_assets.py
-```
-
-This writes one PNG per map to `assets/maps/`, using the same terrain palette as the game.
-
-### Adding a new model
-
-1. Create `cogniland/models/your_model.py` with a class that has `.train(cfg)`
-2. Add a branch in `cogniland/models/__init__.py`
-3. Add `configs/models/your_model.yaml`
 
 ## Terrain Types
 
-| Level | Name       | Move Cost | Visibility | Resource drain/step | HP/step (no resources) | Notes |
-|-------|------------|-----------|------------|---------------------|------------------------|-------|
-| 0     | Ocean      | 0.5       | 6          | −3.0                | −6.0                   | Fast travel, very expensive |
-| 1     | Deep Water | 0.75      | 5          | −2.0                | −4.0                   | |
-| 2     | Water      | 1.0       | 4          | −1.5                | −3.0                   | Highway if resourced |
-| 3     | Beach      | 1.5       | 3          | −1.0                | −2.0                   | Coastal, but not free |
-| 4     | Sandy      | 2.0       | 3          | −1.0                | −2.0                   | Desert |
-| 5     | Grassland  | 1.5       | 3          | −1.0                | −2.0                   | Open land |
-| 6     | Forest     | 3.5       | 2          | +5 HP/step **or** +2 res/step | —          | HP-first: heals until max HP, then gathers resources |
-| 7     | Rocky      | 3.5       | 5          | −1.5                | −3.0                   | High-ground view advantage |
-| 8     | Mountains  | 6.0       | 7          | −3.0                | −6.0                   | Full 15×15 strategic view |
+| Level | Name | Move cost | Visibility (tiles) | Resource drain/step | HP drain if no resources |
+|-------|------|-----------|--------------------|---------------------|--------------------------|
+| 0 | Ocean | 0.5 | 18 | 3.0 | 6.0 |
+| 1 | Deep Water | 0.75 | 15 | 2.0 | 4.0 |
+| 2 | Water | 1.0 | 12 | 1.5 | 3.0 |
+| 3 | Beach | 1.5 | 9 | 1.0 | 2.0 |
+| 4 | Sandy | 2.0 | 9 | 1.0 | 2.0 |
+| 5 | Grassland | 1.5 | 9 | 1.0 | 2.0 |
+| 6 | Forest | 3.5 | 6 | 0 | — |
+| 7 | Rocky | 3.5 | 15 | 1.5 | 3.0 |
+| 8 | Mountains | 6.0 | 21 | 3.0 | 6.0 |
 
-Resource drain applies **every step** with no free window. HP/step when no resources = `drain × 2`.
-**Visibility** is the radius in tiles; the minimap window is `2×visibility+1` across (max 15×15 at mountains).
+Resource drain applies every step. When resources hit 0, remaining drain becomes HP damage via `no_res_hp_multiplier` (default 2.0). HP drain when no resources = `drain × 2.0`.
 
 ### Land → Water transition
 
-Entering any water tile (levels 0–2) from land (levels 3–8) costs **10 resources** as a boat-construction fee.
-Each resource point short of 10 deals **5 HP** damage instead.
-This makes ocean crossings a deliberate, resource-gated decision.
+Entering any water tile (levels 0–2) from land (levels 3–8) costs **10 resources** (boat construction). Each resource point short deals **5 HP** damage instead.
 
-### Forest priority mechanic
+### Forest mechanic (HP-first priority)
 
-- HP below max (100): forest heals **+10 HP/step**, no resource gain.
-- HP at max (100): forest gathers **+2 resources/step**, no further healing.
+- HP below max: heals **+5 HP/step**, no resource gain.
+- HP at max: gathers **+2 resources/step**, no further healing.
 
-Forest is the only HP source in the game (no passive regeneration).
+Forest is the main HP recovery zone (no passive regeneration in default mode).
 
 ## WandB Metrics
 
-Training runs log the following to WandB:
+All metrics follow a `{split}/{mode}/env/{name}` namespace. Every behavioral metric is logged as `_mean` and `_std` across evaluation episodes.
 
-- **Training:** policy_loss, value_loss, entropy, clipfrac, approx_kl, mean_reward, episode_length, SPS
-- **Evaluation:** success_rate, mean_reward, mean_steps, final_hp, path_efficiency
-- **Behavioral:** terrain distribution (water/forest/mountain %), resource management, HP score, directness ratio
+```
+train/env/episode_return_mean   — online rollout stats
+train/env/success_rate
+train/model/ppo/policy_loss
+train/model/ppo/entropy
+system/steps_per_second
 
-See `docs/METRICS.md` for detailed metric definitions.
+val/det/env/success_rate        — deterministic policy, held-out maps
+val/det/env/path_efficiency_mean
+val/det/env/directness_mean
+val/det/env/survival_margin_min_mean
+val/det/env/exploration_mean
+val/det/charts/terrain_distribution
+val/det/tables/episodes
+
+val/stoch/...                   — same keys, sampled policy
+test/det/...                    — final eval at end of training
+```
+
+See `CLAUDE.md` for the full metric schema and behavioral metric formulas.
 
 ## Reproducibility
 
-- All seeds are controlled via `configs/env/default.yaml` → `seed: 42`
-- `set_reproducibility()` pins PyTorch, NumPy, and Python RNG seeds + CuDNN deterministic mode
-- Checkpoints save full RNG state for exact resume
+- All seeds controlled via `configs/env/default.yaml` → `seed: 42`
+- `set_reproducibility()` pins PyTorch, NumPy, and Python RNG + CuDNN deterministic mode
+- Eval maps are held-out at `seed + eval_seed_offset` (default +1000) — never seen during training
 
 ## Architecture Notes
 
-- **JAX-ready**: Environment state is a NamedTuple (JAX pytree), step logic is pure functions
-- **Batched**: All operations are vectorized over batch dimension
-- **GPU-friendly**: All tensors on device, only island generation runs on CPU
-- **Self-contained models**: Each model defines its own architecture + training loop — swap by changing `models=ppo` to `models=compass`
+- **JAX-ready**: `EnvState` is a NamedTuple (pytree), all step logic in pure functions
+- **Batched**: all operations vectorised over the batch dimension, no Python loops in hot paths
+- **GPU-friendly**: all tensors on device; map generation runs on CPU once at startup
+- **Eval pipeline**: `EvalRunner → CognilandSummarizer → WandBLogger` — no WandB dependency in runner or summarizer; `eval.py` reuses runner without any wandb calls
 
-See `docs/ARCHITECTURE.md` for detailed architecture documentation.
+See `CLAUDE.md` for full architecture documentation.

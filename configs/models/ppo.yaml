@@ -1,7 +1,7 @@
 name: ppo
 
 # ── Network architecture ──
-scalar_dim: 7            # Number of scalar inputs (compass_x, compass_y, terrain, terrain_clock, resources, hp, visibility_range)
+scalar_dim: 6            # Number of scalar inputs (compass_x, compass_y, terrain_idx, resources, hp, visibility_range)
 minimap_channels: 2      # Minimap input channels (ch0 = heightmap, ch1 = visibility mask)
 cnn_channels: 32         # Output channels of second CNN conv layer (first = cnn_channels // 2)
 cnn_out_spatial: 4       # AdaptiveAvgPool2d output size → cnn_out = cnn_channels × cnn_out_spatial²
@@ -14,12 +14,12 @@ training:
   # ── Rollout collection ──
   parallel_envs: 32             # How many environments run in parallel during rollout
   moves_per_rollout: 256        # How many moves each env makes before the model learns
-  total_env_moves: 2_500_000      # Total moves budget across all envs for the entire training
+  total_env_moves: 1_000_000      # Total moves budget across all envs for the entire training
 
   # ── PPO optimisation ──
   epochs_per_update: 4          # How many times the model re-studies each rollout's data
   minibatch_size: 256           # Transitions per gradient step
-  learning_rate: 0.0003         # Adam optimiser initial learning rate
+  learning_rate: 0.001         # Adam optimiser initial learning rate
   anneal_lr: true               # Linearly decay LR to 0 over training
 
   # ── Advantage estimation (GAE) ──
@@ -33,6 +33,6 @@ training:
   max_grad_norm: 0.5            # Gradient clipping threshold for stability
 
   # ── Evaluation & checkpointing ──
-  eval_every_n_updates: 10      # Run evaluation every N training updates
+  eval_every_n_updates: 2      # Run evaluation every N training updates
   eval_episodes: 16             # Number of full episodes per evaluation
   checkpoint_every_n_updates: 50 # Save model checkpoint every N training updates

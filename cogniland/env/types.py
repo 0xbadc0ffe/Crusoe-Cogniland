@@ -18,8 +18,7 @@ class EnvState(NamedTuple):
     position: torch.Tensor        # [B, 2] long
     minimap: torch.Tensor         # [B, 2, 2*max_ray+1, 2*max_ray+1] float (ch0=heightmap, ch1=visibility mask)
     compass: torch.Tensor         # [B, 2] float — unit direction vector (position − target) / dist
-    terrain_lev: torch.Tensor     # [B] float
-    terrain_clock: torch.Tensor   # [B] float
+    terrain_idx: torch.Tensor     # [B] float
     resources: torch.Tensor       # [B] float
     hp: torch.Tensor              # [B] float
     cost: torch.Tensor            # [B] float
@@ -72,7 +71,7 @@ class EnvConfig:
 
     # Minimap
     minimap_ray: int = 15
-    minimap_max_ray: int = 21        # CNN spatial dim = 2*max_ray+1 = 43
+    minimap_max_ray: int = 22        # CNN spatial dim = 2*max_ray+1 = 45
     minimap_occlude: bool = False
     minimap_clear_tolerance: float = 0.1
 
