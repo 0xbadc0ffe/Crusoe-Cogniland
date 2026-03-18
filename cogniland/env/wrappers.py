@@ -6,7 +6,7 @@ import torch
 
 from cogniland.env.constants import TERRAIN_VISIBILITY
 from cogniland.env.islands import Islands
-from cogniland.env.types import EnvConfig, EnvState
+from cogniland.env.types import CurriculumStage, EnvConfig, EnvState
 
 
 class BatchedIslandEnv:
@@ -16,21 +16,32 @@ class BatchedIslandEnv:
     as a dict with ``"scalars"`` and ``"minimap"`` keys.
     """
 
-    def __init__(self, config: EnvConfig, num_envs: int):
+    def __init__(
+        self,
+        config: EnvConfig,
+        num_envs: int,
+        world_maps: torch.Tensor | None = None,
+    ):
         self.config = config
         self.num_envs = num_envs
-        self.env = Islands(config)
+        self.env = Islands(config, world_maps=world_maps)
         self.state: EnvState | None = None
         self.target_pos: torch.Tensor | None = None
         self.step_count: torch.Tensor | None = None
         self._device = config.resolved_device()
+        self._curriculum_stage = CurriculumStage.NORMAL
 
         # Track episode stats
         self.episode_rewards: torch.Tensor | None = None
         self.episode_lengths: torch.Tensor | None = None
 
+    def set_curriculum_stage(self, stage: CurriculumStage) -> None:
+        self._curriculum_stage = stage
+
     def reset(self, seed: int | None = None) -> dict[str, torch.Tensor]:
-        self.state, self.target_pos = self.env.reset(self.num_envs, seed=seed)
+        self.state, self.target_pos = self.env.reset(
+            self.num_envs, seed=seed, curriculum_stage=self._curriculum_stage
+        )
         self.step_count = torch.zeros(self.num_envs, device=self._device)
         self.episode_rewards = torch.zeros(self.num_envs, device=self._device)
         self.episode_lengths = torch.zeros(self.num_envs, device=self._device)
@@ -63,7 +74,10 @@ class BatchedIslandEnv:
 
         # Auto-reset done environments
         if done.any():
-            self.state, self.target_pos = self.env.reset_done(self.state, self.target_pos, done)
+            self.state, self.target_pos = self.env.reset_done(
+                self.state, self.target_pos, done,
+                curriculum_stage=self._curriculum_stage,
+            )
             self.step_count[done] = 0
 
         return self.get_obs(), result.reward, done, info
