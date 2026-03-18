@@ -48,6 +48,6 @@ target_r: -1
 target_c: -1
 
 # Dataset and curriculum (optional)
-dataset_path: ""                # path to .pt file from scripts/generate_dataset.py; "" = procedural
+dataset_path: "data/maps_seed42_train128_val16_test16.pt"  # path to .pt file from scripts/generate_dataset.py; "" = procedural
 curriculum_switch_steps: 0     # 0 = disabled; switch EASY → NORMAL at this global_step
 curriculum_easy_radius: 50     # radius (cells) around map center for EASY spawn/target
