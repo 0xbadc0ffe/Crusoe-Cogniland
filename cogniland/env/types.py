@@ -7,9 +7,16 @@ NamedTuples are chosen for JAX compatibility (they are pytrees).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import NamedTuple
 
 import torch
+
+
+class CurriculumStage(str, Enum):
+    """Training curriculum stage controlling spawn/target sampling."""
+    EASY   = "easy"    # Spawn + target constrained to radius-50 circle around map center
+    NORMAL = "normal"  # Spawn + target sampled uniformly over land cells
 
 
 class EnvState(NamedTuple):
@@ -44,7 +51,6 @@ class EnvConfig:
     persistence: float = 0.5
     lacunarity: float = 2.0
     seed: int = 42
-    detailed_ocean: bool = True
     filtering: str = "square"   # "circle", "square", "diamond"
     sink_mode: int = 1          # 0=none, 1, 2
 
@@ -70,7 +76,6 @@ class EnvConfig:
     hard_mode_hp_loss: float = 0.5
 
     # Minimap
-    minimap_ray: int = 15
     minimap_max_ray: int = 22        # CNN spatial dim = 2*max_ray+1 = 45
     minimap_occlude: bool = False
     minimap_clear_tolerance: float = 0.1
@@ -98,6 +103,11 @@ class EnvConfig:
     # Map pool (Level Replay)
     map_pool_size: int = 16
 
+    # Dataset and curriculum
+    dataset_path: str = ""
+    curriculum_switch_steps: int = 0   # 0 = disabled; switch EASY→NORMAL at this global_step
+    curriculum_easy_radius: int = 50   # radius (cells) around center for EASY spawn/target
+
     # Device
     device: str = "auto"
 
@@ -113,7 +123,7 @@ class EnvConfig:
         return cls(
             size=env.size, scale=env.scale, octaves=env.octaves,
             persistence=env.persistence, lacunarity=env.lacunarity,
-            seed=env.seed, detailed_ocean=env.detailed_ocean,
+            seed=env.seed,
             filtering=env.filtering, sink_mode=env.sink_mode,
             init_hp=env.init_hp, max_hp=env.max_hp,
             init_resources=env.init_resources,
@@ -132,7 +142,6 @@ class EnvConfig:
             hard_mode_resource_drain=env.get("hard_mode_resource_drain", 0.25),
             hard_mode_hp_gain=env.get("hard_mode_hp_gain", 1.0),
             hard_mode_hp_loss=env.get("hard_mode_hp_loss", 0.5),
-            minimap_ray=env.minimap_ray,
             minimap_max_ray=env.get("minimap_max_ray", 10),
             minimap_occlude=env.minimap_occlude,
             minimap_clear_tolerance=env.get("minimap_clear_tolerance", env.get("minimap_min_clear_lv", 0.1)),
@@ -152,4 +161,7 @@ class EnvConfig:
             target_c=env.get("target_c", -1),
             device=cfg.device,
             map_pool_size=env.get("map_pool_size", 16),
+            dataset_path=env.get("dataset_path", ""),
+            curriculum_switch_steps=env.get("curriculum_switch_steps", 0),
+            curriculum_easy_radius=env.get("curriculum_easy_radius", 50),
         )

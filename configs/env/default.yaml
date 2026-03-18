@@ -5,34 +5,32 @@ octaves: 6
 persistence: 0.5
 lacunarity: 2.0
 seed: 42
-detailed_ocean: true
 filtering: "square"
 sink_mode: 1
 
 # Agent parameters
 init_hp: 100.0
 max_hp: 100.0
-init_resources: 30.0
+init_resources: 80.0
 max_resources: 100.0
 hard_mode: false
 
 # Terrain effects
 passive_heal_rate: 0.0
-land_to_water_resource_cost: 10.0       # Boat construction cost (resources)
+land_to_water_resource_cost: 20.0       # Boat construction cost — break-even at ~17 steps saved vs land detour
 land_to_water_hp_per_missing_res: 5.0   # HP penalty per missing resource
-land_resource_drain: 1.0                # Beach, sandy, grassland drain per step
+land_resource_drain: 1.5                # Beach, sandy, grassland drain per step — pressure to manage resources
 no_res_hp_multiplier: 2.0              # HP lost per missing resource unit (all terrains)
-forest_hp_gain: 5.0                    # Healing per step when below max HP
-forest_resource_gain: 2.0              # Resources per step when at max HP
-sea_resource_costs: [3.0, 2.0, 1.5]   # Ocean, deep_water, water (per step, no free window)
+forest_hp_gain: 8.0                    # Healing per step when below max HP
+forest_resource_gain: 3.0              # Resources per step when at max HP — detour is worth it
+sea_resource_costs: [0.7, 0.5, 0.3]   # Ocean, deep_water, water — CHEAPER than land, ocean = fast travel
 mountain_resource_costs: [1.5, 3.0]   # Rocky, mountains
 
 hard_mode_resource_drain: 0.25
 hard_mode_hp_gain: 1.0
 hard_mode_hp_loss: 0.5
 
-# Minimap (scaled ×3 for 250×250 maps)
-minimap_ray: 15
+# Minimap
 minimap_max_ray: 22               # CNN spatial dim = 2*max_ray+1 = 45
 minimap_occlude: true
 minimap_clear_tolerance: 0.1
@@ -41,13 +39,13 @@ minimap_clear_tolerance: 0.1
 max_steps: 1000
 
 # Reward coefficients
-reward_dist_coef: 0.25
-reward_reach_bonus: 60.0
-reward_death_penalty: -40.0
-reward_time_penalty: -0.01
-reward_hp_coef: 0.05
+reward_dist_coef: 1.0           # approach reward per cell — navigation signal
+reward_reach_bonus: 100.0
+reward_death_penalty: -20.0
+reward_time_penalty: -0.02      # stronger efficiency pressure — motivates ocean shortcuts and direct routes
+reward_hp_coef: 0.02
 reward_hp_thresh: 50.0
-reward_resource_coef: 0.05
+reward_resource_coef: 0.03      # resource shaping — makes forest detours worth their opportunity cost
 reward_resource_thresh: 30.0
 
 # Map pool (Level Replay) — number of procedural maps to pre-generate
@@ -59,3 +57,8 @@ spawn_r: -1
 spawn_c: -1
 target_r: -1
 target_c: -1
+
+# Dataset and curriculum (optional)
+dataset_path: ""                # path to .pt file from scripts/generate_dataset.py; "" = procedural
+curriculum_switch_steps: 0     # 0 = disabled; switch EASY → NORMAL at this global_step
+curriculum_easy_radius: 50     # radius (cells) around map center for EASY spawn/target

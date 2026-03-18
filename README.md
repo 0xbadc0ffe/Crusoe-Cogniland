@@ -129,57 +129,11 @@ Crusoe-Cogniland/
 └── setup.py
 ```
 
-## Terrain Types
+## Environment
 
-| Level | Name | Move cost | Visibility (tiles) | Resource drain/step | HP drain if no resources |
-|-------|------|-----------|--------------------|---------------------|--------------------------|
-| 0 | Ocean | 0.5 | 18 | 3.0 | 6.0 |
-| 1 | Deep Water | 0.75 | 15 | 2.0 | 4.0 |
-| 2 | Water | 1.0 | 12 | 1.5 | 3.0 |
-| 3 | Beach | 1.5 | 9 | 1.0 | 2.0 |
-| 4 | Sandy | 2.0 | 9 | 1.0 | 2.0 |
-| 5 | Grassland | 1.5 | 9 | 1.0 | 2.0 |
-| 6 | Forest | 3.5 | 6 | 0 | — |
-| 7 | Rocky | 3.5 | 15 | 1.5 | 3.0 |
-| 8 | Mountains | 6.0 | 21 | 3.0 | 6.0 |
+Terrain types, reward function, resource system, map generation, curriculum, and episode lifecycle are documented in [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 
-Resource drain applies every step. When resources hit 0, remaining drain becomes HP damage via `no_res_hp_multiplier` (default 2.0). HP drain when no resources = `drain × 2.0`.
-
-### Land → Water transition
-
-Entering any water tile (levels 0–2) from land (levels 3–8) costs **10 resources** (boat construction). Each resource point short deals **5 HP** damage instead.
-
-### Forest mechanic (HP-first priority)
-
-- HP below max: heals **+5 HP/step**, no resource gain.
-- HP at max: gathers **+2 resources/step**, no further healing.
-
-Forest is the main HP recovery zone (no passive regeneration in default mode).
-
-## WandB Metrics
-
-All metrics follow a `{split}/{mode}/env/{name}` namespace. Every behavioral metric is logged as `_mean` and `_std` across evaluation episodes.
-
-```
-train/env/episode_return_mean   — online rollout stats
-train/env/success_rate
-train/model/ppo/policy_loss
-train/model/ppo/entropy
-system/steps_per_second
-
-val/det/env/success_rate        — deterministic policy, held-out maps
-val/det/env/path_efficiency_mean
-val/det/env/directness_mean
-val/det/env/survival_margin_min_mean
-val/det/env/exploration_mean
-val/det/charts/terrain_distribution
-val/det/tables/episodes
-
-val/stoch/...                   — same keys, sampled policy
-test/det/...                    — final eval at end of training
-```
-
-See `CLAUDE.md` for the full metric schema and behavioral metric formulas.
+WandB metric schema and behavioral metric formulas (path efficiency, directness, survival margin, exploration) are documented in `CLAUDE.md`.
 
 ## Reproducibility
 

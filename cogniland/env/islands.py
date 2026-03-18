@@ -16,7 +16,7 @@ import torch
 
 from cogniland.env.constants import TERRAIN_THRESHOLDS
 from cogniland.env.core import compute_minimap_batch, compute_terrain_levels, env_step
-from cogniland.env.types import EnvConfig, EnvState, StepResult
+from cogniland.env.types import CurriculumStage, EnvConfig, EnvState, StepResult
 
 
 def generate_island(config: EnvConfig) -> torch.Tensor:
@@ -116,7 +116,12 @@ class Islands:
     a new map is randomly sampled from the pool and spawn/target are re-sampled.
     """
 
-    def __init__(self, config: EnvConfig | None = None, **kwargs):
+    def __init__(
+        self,
+        config: EnvConfig | None = None,
+        world_maps: torch.Tensor | None = None,
+        **kwargs,
+    ):
         if config is None:
             config = EnvConfig(**kwargs)
         self.config = config
@@ -127,13 +132,18 @@ class Islands:
         random.seed(config.seed)
         np.random.seed(config.seed)
 
-        if config.map_name:
+        if world_maps is not None:
+            # Pre-generated maps provided externally (from MapDataset) — skip generation
+            self.world_maps = world_maps.to(self._device)
+            self._fixed_spawn: tuple[int, int] | None = None
+            self._fixed_target: tuple[int, int] | None = None
+        elif config.map_name:
             # Custom map mode — single map, no pool
             from cogniland.env import custom_maps as cm
             single_map = cm.get_map(config.map_name).to(self._device)
             self.world_maps = single_map.unsqueeze(0)   # [1, H, W]
-            self._fixed_spawn: tuple[int, int] | None = cm.get_spawn(config.map_name)
-            self._fixed_target: tuple[int, int] | None = cm.get_target(config.map_name)
+            self._fixed_spawn = cm.get_spawn(config.map_name)
+            self._fixed_target = cm.get_target(config.map_name)
         else:
             # Procedural pool — generate N maps with different seeds
             pool_size = config.map_pool_size
@@ -168,7 +178,12 @@ class Islands:
     # Reset
     # ------------------------------------------------------------------
 
-    def reset(self, batch_size: int, seed: int | None = None) -> tuple[EnvState, torch.Tensor]:
+    def reset(
+        self,
+        batch_size: int,
+        seed: int | None = None,
+        curriculum_stage: CurriculumStage = CurriculumStage.NORMAL,
+    ) -> tuple[EnvState, torch.Tensor]:
         """Reset: sample maps, spawn + target on land, return (initial_state, target_positions)."""
         if seed is not None:
             torch.manual_seed(seed)
@@ -188,13 +203,17 @@ class Islands:
             r, c = self._fixed_spawn
             spawn_pos = torch.tensor([[r, c]], device=self._device).expand(batch_size, 2).clone()
         else:
-            spawn_pos = self._sample_land_positions_batched(self._env_map_idx, land_threshold)
+            spawn_pos = self._sample_land_positions_batched(
+                self._env_map_idx, land_threshold, curriculum_stage
+            )
 
         if self._fixed_target is not None:
             r, c = self._fixed_target
             target_pos = torch.tensor([[r, c]], device=self._device).expand(batch_size, 2).clone()
         else:
-            target_pos = self._sample_land_positions_batched(self._env_map_idx, land_threshold)
+            target_pos = self._sample_land_positions_batched(
+                self._env_map_idx, land_threshold, curriculum_stage
+            )
 
         # Build per-env world maps for batched ops: [B, H, W]
         per_env_maps = self.world_maps[self._env_map_idx]  # [B, H, W]
@@ -221,17 +240,39 @@ class Islands:
         return state, target_pos
 
     def _sample_land_positions_batched(
-        self, map_indices: torch.Tensor, land_threshold: float
+        self,
+        map_indices: torch.Tensor,
+        land_threshold: float,
+        curriculum_stage: CurriculumStage = CurriculumStage.NORMAL,
     ) -> torch.Tensor:
-        """Sample one land position per env, where each env uses its own map."""
+        """Sample one land position per env, where each env uses its own map.
+
+        In EASY mode, positions are constrained to a circle of radius
+        ``config.curriculum_easy_radius`` around the map center.
+        """
         B = map_indices.shape[0]
         size = self.config.size
         positions = torch.zeros(B, 2, dtype=torch.long, device=self._device)
 
+        if curriculum_stage == CurriculumStage.EASY:
+            center = size // 2
+            radius = self.config.curriculum_easy_radius
+            r_lo = max(0, center - radius)
+            r_hi = min(size - 1, center + radius)
+            c_lo = max(0, center - radius)
+            c_hi = min(size - 1, center + radius)
+
         for b in range(B):
             m = self.world_maps[map_indices[b]]  # [H, W]
             while True:
-                p = torch.randint(0, size, (2,), device=self._device)
+                if curriculum_stage == CurriculumStage.EASY:
+                    r = random.randint(r_lo, r_hi)
+                    c = random.randint(c_lo, c_hi)
+                    if (r - center) ** 2 + (c - center) ** 2 > radius * radius:
+                        continue
+                    p = torch.tensor([r, c], dtype=torch.long, device=self._device)
+                else:
+                    p = torch.randint(0, size, (2,), device=self._device)
                 if m[p[0], p[1]].item() > land_threshold:
                     positions[b] = p
                     break
@@ -254,7 +295,11 @@ class Islands:
     # ------------------------------------------------------------------
 
     def reset_done(
-        self, state: EnvState, target_pos: torch.Tensor, done: torch.Tensor
+        self,
+        state: EnvState,
+        target_pos: torch.Tensor,
+        done: torch.Tensor,
+        curriculum_stage: CurriculumStage = CurriculumStage.NORMAL,
     ) -> tuple[EnvState, torch.Tensor]:
         """Re-sample only the environments where done[i]==True.
 
@@ -276,13 +321,17 @@ class Islands:
             r, c = self._fixed_spawn
             new_spawn = torch.tensor([[r, c]], device=self._device).expand(n_done, 2).clone()
         else:
-            new_spawn = self._sample_land_positions_batched(new_map_idx, land_threshold)
+            new_spawn = self._sample_land_positions_batched(
+                new_map_idx, land_threshold, curriculum_stage
+            )
 
         if self._fixed_target is not None:
             r, c = self._fixed_target
             new_target = torch.tensor([[r, c]], device=self._device).expand(n_done, 2).clone()
         else:
-            new_target = self._sample_land_positions_batched(new_map_idx, land_threshold)
+            new_target = self._sample_land_positions_batched(
+                new_map_idx, land_threshold, curriculum_stage
+            )
 
         # Per-env maps for the done environments
         done_maps = self.world_maps[new_map_idx]   # [n_done, H, W]

@@ -13,7 +13,8 @@ import torch.nn as nn
 import torch.optim as optim
 
 from cogniland.env.constants import NUM_ACTIONS
-from cogniland.env.types import EnvConfig
+from cogniland.env.dataset import MapDataset
+from cogniland.env.types import CurriculumStage, EnvConfig
 from cogniland.env.wrappers import BatchedIslandEnv
 from cogniland.eval import CognilandSummarizer, EvalRunner
 from cogniland.logging import WandBLogger, log_rollout_stats
@@ -227,7 +228,20 @@ class PPOAgent:
         print(f"Device: {device}")
         print(f"Model: ppo")
 
-        env = BatchedIslandEnv(self.env_config, num_envs=cfg.models.training.parallel_envs)
+        # Load map dataset if configured (train/val/test splits)
+        dataset_path = self.env_config.dataset_path
+        dataset: MapDataset | None = None
+        if dataset_path:
+            print(f"Loading MapDataset from {dataset_path} ...")
+            dataset = MapDataset.load(dataset_path)
+            print(f"  train={dataset.n_train} val={dataset.n_val} test={dataset.n_test} maps")
+
+        # Train environment — uses train split maps if dataset loaded, else procedural
+        env = BatchedIslandEnv(
+            self.env_config,
+            num_envs=cfg.models.training.parallel_envs,
+            world_maps=dataset.train_maps if dataset else None,
+        )
         optimizer = optim.Adam(model.parameters(), lr=cfg.models.training.learning_rate, eps=1e-5)
 
         param_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -238,6 +252,13 @@ class PPOAgent:
         total_timesteps = cfg.models.training.total_env_moves
         num_updates = total_timesteps // (num_envs * rollout_steps)
         print(f"Total updates: {num_updates}, Moves per update: {num_envs * rollout_steps}")
+
+        # Curriculum setup
+        curriculum_switch_steps = self.env_config.curriculum_switch_steps
+        curriculum_active = curriculum_switch_steps > 0
+        if curriculum_active:
+            env.set_curriculum_stage(CurriculumStage.EASY)
+            print(f"Curriculum: EASY stage until global_step={curriculum_switch_steps}")
 
         obs = env.reset(seed=cfg.env.seed)
         global_step = 0
@@ -250,15 +271,27 @@ class PPOAgent:
             start_update = global_step // (num_envs * rollout_steps) + 1
             print(f"Resumed from {resume_path} — global_step={global_step}, starting at update {start_update}")
 
-        # Pre-generate and cache the evaluation environment (held-out map pool)
+        # Pre-generate and cache the evaluation environment (val split maps)
         eval_cfg = cfg.logging.get("eval", {})
         eval_seed = cfg.env.seed + eval_cfg.get("eval_seed_offset", 1000)
         n_eps_det = eval_cfg.get("deterministic_episodes", cfg.models.training.eval_episodes)
         n_eps_sto = eval_cfg.get("stochastic_episodes", cfg.models.training.eval_episodes)
         max_eval_eps = max(n_eps_det, n_eps_sto)
         print(f"Caching Eval Env (seed offset {eval_cfg.get('eval_seed_offset', 1000)})...")
-        self.eval_env = BatchedIslandEnv(self.env_config, num_envs=max_eval_eps)
+        self.eval_env = BatchedIslandEnv(
+            self.env_config,
+            num_envs=max_eval_eps,
+            world_maps=dataset.val_maps if dataset else None,
+        )
         self.eval_env.reset(seed=eval_seed)
+
+        # Store test maps for lazy test env construction at end of training
+        self._test_maps = dataset.test_maps if dataset else None
+        self._max_eval_eps = max_eval_eps
+        self._eval_seed = eval_seed
+
+        # Cache EvalRunner to avoid rebuilding on every periodic eval
+        self._eval_runner = EvalRunner(self.eval_env, self.env_config, device)
 
         start_time = time.time()
 
@@ -273,6 +306,12 @@ class PPOAgent:
             # Collect rollout
             buffer, obs, episode_stats = _collect_rollout(env, model, obs, rollout_steps)
             global_step += num_envs * rollout_steps
+
+            # Curriculum: switch EASY → NORMAL when threshold is reached
+            if curriculum_active and global_step >= curriculum_switch_steps:
+                env.set_curriculum_stage(CurriculumStage.NORMAL)
+                curriculum_active = False
+                print(f"[Update {update}] Curriculum switched to NORMAL (global_step={global_step})")
 
             # Log episode stats from rollout
             log_rollout_stats(logger, episode_stats, step=update)
@@ -435,7 +474,19 @@ class PPOAgent:
         max_images = cfg.logging.get("trajectory", {}).get("max_saved_per_eval", 4)
 
         model = self.model
-        runner = EvalRunner(self.eval_env, self.env_config, self.device)
+
+        # For test split, build a fresh env with the held-out test maps
+        if split == "test":
+            test_env = BatchedIslandEnv(
+                self.env_config,
+                num_envs=self._max_eval_eps,
+                world_maps=self._test_maps,
+            )
+            test_env.reset(seed=self._eval_seed + 1000)
+            runner = EvalRunner(test_env, self.env_config, self.device)
+        else:
+            runner = self._eval_runner  # reuse cached runner for val
+
         summarizer = CognilandSummarizer()
 
         det_result = runner.run(
@@ -465,7 +516,7 @@ class PPOAgent:
         if logger is not None:
             # Trajectory images (deterministic mode only)
             figures, captions, env_indices = [], [], []
-            eval_env = self.eval_env
+            eval_env = runner.eval_env
             targets = det_result.initial_targets
 
             for i, ep in enumerate(det_result.episodes):
