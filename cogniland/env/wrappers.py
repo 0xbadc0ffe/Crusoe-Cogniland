@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import torch
 
-from cogniland.env.constants import TERRAIN_VISIBILITY
 from cogniland.env.islands import Islands
 from cogniland.env.types import CurriculumStage, EnvConfig, EnvState
 
@@ -86,18 +85,15 @@ class BatchedIslandEnv:
         """Build observation dict from current state.
 
         Returns:
-            ``"scalars"``: [B, 6] — compass_dir(2) unit vector, terrain_idx, resources, hp, visibility_range
+            ``"scalars"``: [B, 5] — compass_dir(2) unit vector, terrain_idx, resources, hp
             ``"minimap"``: [B, 2, H, W]
         """
         s = self.state
-        vis_range = TERRAIN_VISIBILITY.to(s.terrain_idx.device)[s.terrain_idx.long()].float()
-        vis_norm = vis_range / self.config.minimap_max_ray  # normalize to [0, 1]
         scalars = torch.stack([
             s.compass[:, 0],
             s.compass[:, 1],
             s.terrain_idx / 8.0,
             s.resources / self.config.max_resources,
             s.hp / self.config.max_hp,
-            vis_norm,
-        ], dim=1)  # [B, 6]
+        ], dim=1)  # [B, 5]
         return {"scalars": scalars, "minimap": s.minimap}

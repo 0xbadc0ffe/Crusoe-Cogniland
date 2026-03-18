@@ -22,6 +22,7 @@ import re
 import sys
 from pathlib import Path
 
+import numpy as np
 import pygame
 import torch
 from omegaconf import OmegaConf
@@ -30,7 +31,6 @@ from cogniland.env.constants import (
     ACTIONS,
     NUM_ACTIONS,
     TERRAIN_LEVELS,
-    TERRAIN_VISIBILITY,
     VISIBILITY_RANGES,
     palette,
 )
@@ -61,8 +61,7 @@ MODEL_CNN_OUT_SPATIAL = _model_cfg.get("cnn_out_spatial", 4)
 MODEL_SCALAR_HIDDEN = _model_cfg.get("scalar_hidden", 64)
 
 # Env params (from default.yaml)
-ENV_MINIMAP_MAX_RAY = _env_cfg.get("minimap_max_ray", 21)
-ENV_MINIMAP_RAY = _env_cfg.get("minimap_ray", 15)
+ENV_MINIMAP_MAX_RAY = _env_cfg.get("minimap_max_ray", 22)
 ENV_MINIMAP_OCCLUDE = _env_cfg.get("minimap_occlude", True)
 ENV_MINIMAP_CLEAR_TOL = _env_cfg.get("minimap_clear_tolerance", 0.1)
 ENV_MAP_SIZE = _env_cfg.get("size", 250)
@@ -135,17 +134,14 @@ def load_actor_critic(ckpt_path, device="cpu"):
 
 
 def build_obs(state: EnvState, env_config: EnvConfig):
-    """Replicate BatchedIslandEnv.get_obs() for a single-batch state."""
+    """Replicate BatchedIslandEnv.get_obs() — 5 scalars (compass×2, terrain, resources, hp)."""
     s = state
-    vis_range = TERRAIN_VISIBILITY.to(s.terrain_idx.device)[s.terrain_idx.long()].float()
-    vis_norm = vis_range / env_config.minimap_max_ray
     scalars = torch.stack([
         s.compass[:, 0],
         s.compass[:, 1],
         s.terrain_idx / 8.0,
         s.resources / env_config.max_resources,
         s.hp / env_config.max_hp,
-        vis_norm,
     ], dim=1)
     return {"scalars": scalars, "minimap": s.minimap}
 
@@ -419,12 +415,10 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
     print(f"Loaded model from {ckpt_path}")
 
     # Build env config — start from caller's base (preserves map_name)
-    # then override spawn/target with whatever the user picked.
     from dataclasses import asdict
     base = asdict(env_config_base) if env_config_base is not None else {}
     base.update(
         seed=42,
-        minimap_ray=ENV_MINIMAP_RAY,
         minimap_max_ray=ENV_MINIMAP_MAX_RAY,
         minimap_occlude=ENV_MINIMAP_OCCLUDE,
         minimap_clear_tolerance=ENV_MINIMAP_CLEAR_TOL,
@@ -436,9 +430,48 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
     env = Islands(env_config)
     state, target_pos = env.reset(batch_size=1, seed=42)
 
-    # Pre-render map surface (only once)
-    map_surface = heightmap_to_surface(env.world_map, MAP_DISPLAY_SIZE)
     map_size = env.world_map.shape[0]
+
+    # Precompute base map RGB once
+    _wm = env.world_map.numpy()
+    _thresholds = np.array([TERRAIN_LEVELS[i]["threshold"] for i in range(9)])
+    _terrain_map = np.searchsorted(_thresholds, _wm).clip(0, 8)
+    _color_lut = np.array([
+        tuple(v) for v in [palette[TERRAIN_LEVELS[i]["color"]] for i in range(9)]
+    ], dtype=np.uint8)
+    base_map_rgb = _color_lut[_terrain_map]  # [H, W, 3]
+
+    # Seen mask and minimap offset grid for fog of war
+    seen_mask = np.zeros((map_size, map_size), dtype=bool)
+    _max_ray = env_config.minimap_max_ray
+    _D = 2 * _max_ray + 1
+    _dy, _dx = np.meshgrid(np.arange(_D) - _max_ray, np.arange(_D) - _max_ray, indexing="ij")
+
+    def update_seen(st):
+        vis = st.minimap[0, 1].numpy()
+        cy, cx = int(st.position[0, 0].item()), int(st.position[0, 1].item())
+        rows = np.clip(cy + _dy, 0, map_size - 1)
+        cols = np.clip(cx + _dx, 0, map_size - 1)
+        seen_mask[rows[vis > 0.5], cols[vis > 0.5]] = True
+
+    update_seen(state)
+
+    def map_to_surface_with_fog():
+        fog = np.where(seen_mask[:, :, None], 1.0, 0.35).astype(np.float32)
+        rgb = (base_map_rgb * fog).astype(np.uint8)
+        surf = pygame.Surface((map_size, map_size))
+        pygame.surfarray.blit_array(surf, rgb.transpose(1, 0, 2))
+        return pygame.transform.scale(surf, (MAP_DISPLAY_SIZE, MAP_DISPLAY_SIZE))
+
+    # Risk exposure tracking
+    ec = env_config
+    _terrain_res_drains = [
+        ec.sea_resource_costs[0], ec.sea_resource_costs[1], ec.sea_resource_costs[2],
+        ec.land_resource_drain, ec.land_resource_drain, ec.land_resource_drain,
+        0.0, ec.mountain_resource_costs[0], ec.mountain_resource_costs[1],
+    ]
+    risk_sum = 0.0
+    risk_count = 0
 
     font_large = pygame.font.Font(None, 36)
     font_med   = pygame.font.Font(None, 26)
@@ -490,9 +523,20 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
                     action = model.get_deterministic_action(obs)
 
                 last_action = action.item()
+
+                # Track risk before step
+                t_idx = int(state.terrain_idx[0].item())
+                drain = _terrain_res_drains[t_idx]
+                res = state.resources[0].item()
+                hp = state.hp[0].item()
+                risk_sum += drain / (res + hp / 2.0 + 1e-6)
+                risk_count += 1
+
                 result = env.step(state, action, target_pos)
                 state = result.state
                 step_count += 1
+
+                update_seen(state)
 
                 pos = tuple(state.position[0].cpu().tolist())
                 trajectory.append(pos)
@@ -518,8 +562,8 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
         title = font_large.render(f"AI Demo  —  {status}  —  {speed_label}", True, COLORS["blue_ui"])
         screen.blit(title, (MAP_X, 12))
 
-        # Map
-        screen.blit(map_surface, (MAP_X, MAP_Y))
+        # Map with fog-of-war
+        screen.blit(map_to_surface_with_fog(), (MAP_X, MAP_Y))
 
         # Trajectory trail (gradient from yellow → red)
         n = len(trajectory)
@@ -576,15 +620,21 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
         hp_val = s.hp[0].item()
         hp_max = env_config.max_hp
         hp_ratio = hp_val / hp_max
+        res_val = s.resources[0].item()
+        risk_mean = risk_sum / max(risk_count, 1)
+        explored_pct = 100.0 * seen_mask.sum() / seen_mask.size
+        dist_val = (s.position[0].float() - target_pos[0].float()).abs().sum().item()
 
         stats = [
-            ("HP", f"{hp_val:.1f} / {hp_max}", COLORS["green_ui"] if hp_ratio > 0.5 else (COLORS["red"] if hp_ratio < 0.3 else (255, 165, 0))),
-            ("Resources", f"{s.resources[0].item():.1f}", COLORS["panel_fg"]),
+            ("HP", f"{hp_val:.1f} / {hp_max:.0f}", COLORS["green_ui"] if hp_ratio > 0.5 else (COLORS["red"] if hp_ratio < 0.3 else (255, 165, 0))),
+            ("Resources", f"{res_val:.1f}", COLORS["red"] if res_val / env_config.max_resources < 0.2 else COLORS["panel_fg"]),
             ("Time Cost", f"{s.cost[0].item():.2f}", COLORS["panel_fg"]),
             ("Moves", f"{step_count}", COLORS["panel_fg"]),
-            ("Position", f"({int(pr)}, {int(pc)})", COLORS["panel_fg"]),
+            ("Risk Exp.", f"{risk_mean:.3f}", COLORS["red"] if risk_mean > 0.5 else COLORS["panel_fg"]),
+            ("Explored", f"{explored_pct:.1f}%", COLORS["panel_fg"]),
+            ("Distance", f"{dist_val:.1f}", COLORS["panel_fg"]),
             ("Terrain", TERRAIN_LEVELS[int(s.terrain_idx[0].item())]["name"].capitalize(), COLORS["panel_fg"]),
-            ("Distance", f"{torch.norm((s.position[0].float() - target_pos[0].float())).item():.1f}", COLORS["panel_fg"]),
+            ("Position", f"({int(pr)}, {int(pc)})", COLORS["panel_fg"]),
         ]
 
         for label, value, color in stats:
@@ -618,22 +668,23 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
             if won:
                 msg = "TARGET REACHED!"
                 color = COLORS["green_ui"]
-                detail = f"Arrived in {step_count} moves  •  Cost: {s.cost[0].item():.2f}"
             else:
-                if s.hp[0].item() <= 0:
-                    msg = "AGENT DIED"
-                else:
-                    msg = "MAX STEPS REACHED"
+                msg = "AGENT DIED" if s.hp[0].item() <= 0 else "MAX STEPS REACHED"
                 color = COLORS["red"]
-                detail = f"Survived {step_count} moves  •  HP: {hp_val:.1f}"
 
+            lines = [
+                f"Moves: {step_count}  •  Time cost: {s.cost[0].item():.2f}",
+                f"Risk exposure: {risk_mean:.3f}  •  Explored: {explored_pct:.1f}%",
+            ]
+
+            cy_ov = WINDOW_H // 2
             msg_surf = font_large.render(msg, True, color)
-            det_surf = font_med.render(detail, True, COLORS["white"])
+            screen.blit(msg_surf, msg_surf.get_rect(center=(WINDOW_W // 2, cy_ov - 50)))
+            for k, line in enumerate(lines):
+                surf = font_med.render(line, True, COLORS["white"])
+                screen.blit(surf, surf.get_rect(center=(WINDOW_W // 2, cy_ov + k * 32)))
             hint_surf = font_small.render("R = try again  •  ESC = quit", True, COLORS["gray"])
-
-            screen.blit(msg_surf, (WINDOW_W // 2 - msg_surf.get_width() // 2, WINDOW_H // 2 - 50))
-            screen.blit(det_surf, (WINDOW_W // 2 - det_surf.get_width() // 2, WINDOW_H // 2))
-            screen.blit(hint_surf, (WINDOW_W // 2 - hint_surf.get_width() // 2, WINDOW_H // 2 + 40))
+            screen.blit(hint_surf, hint_surf.get_rect(center=(WINDOW_W // 2, cy_ov + 80)))
 
         pygame.display.flip()
         clock.tick(60)

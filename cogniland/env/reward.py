@@ -21,20 +21,26 @@ def compute_reward(
     """Compute per-environment reward.  Pure function.
 
     Components:
-        r_dist  — dense: encourages moving toward target
-        r_reach — sparse: large bonus for reaching target
-        r_death — sparse: penalty for dying
-        r_time  — dense: small per-step penalty to encourage efficiency
-        r_hp       — mild: penalise dangerously low HP
-        r_resource — mild: penalise dangerously low resources
+        r_progress — dense: encourages moving toward target (Manhattan distance)
+        r_success  — sparse: reach bonus + time-efficiency bonus
+        r_death    — sparse: proportional penalty for dying
     """
-    r_dist = (prev_dist - dist_to_target) * config.reward_dist_coef
-    r_reach = torch.where(reached, torch.tensor(config.reward_reach_bonus, device=state.hp.device), torch.tensor(0.0, device=state.hp.device))
-    r_death = torch.where(~alive, torch.tensor(config.reward_death_penalty, device=state.hp.device), torch.tensor(0.0, device=state.hp.device))
-    r_time = config.reward_time_penalty
-    r_hp = config.reward_hp_coef * torch.clamp(config.reward_hp_thresh - state.hp, min=0.0)
-    r_resource = config.reward_resource_coef * torch.clamp(
-        config.reward_resource_thresh - state.resources, min=0.0
+    device = state.hp.device
+
+    r_progress = config.lambda_p * (prev_dist - dist_to_target)
+
+    # Time-efficiency ratio: optimal time / actual time, clamped to [0, 1]
+    time_ratio = torch.clamp(state.dijkstra_cost / (state.cost + 1e-6), 0.0, 1.0)
+
+    r_success = torch.where(
+        reached,
+        torch.tensor(config.reward_reach_bonus, device=device) + config.lambda_t * time_ratio,
+        torch.zeros(1, device=device),
+    )
+    r_death = torch.where(
+        ~alive,
+        torch.tensor(-config.lambda_d * config.reward_reach_bonus, device=device),
+        torch.zeros(1, device=device),
     )
 
-    return r_dist + r_reach + r_death + r_time - r_hp - r_resource
+    return r_progress + r_success + r_death

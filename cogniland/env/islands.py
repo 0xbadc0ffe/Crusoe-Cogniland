@@ -14,8 +14,9 @@ import random
 import numpy as np
 import torch
 
-from cogniland.env.constants import TERRAIN_THRESHOLDS
+from cogniland.env.constants import TERRAIN_COSTS, TERRAIN_THRESHOLDS
 from cogniland.env.core import compute_minimap_batch, compute_terrain_levels, env_step
+from cogniland.env.pathfinding import batch_dijkstra_from_sources
 from cogniland.env.types import CurriculumStage, EnvConfig, EnvState, StepResult
 
 
@@ -228,6 +229,17 @@ class Islands:
         compass_raw = (spawn_pos - target_pos).float()
         compass = compass_raw / torch.norm(compass_raw, dim=1, keepdim=True).clamp(min=1e-8)
 
+        # Precompute optimal time cost spawn→target via Dijkstra (episode constant)
+        dist_maps = batch_dijkstra_from_sources(
+            per_env_maps.cpu(), TERRAIN_COSTS, spawn_pos.cpu()
+        )
+        dijkstra_cost = torch.tensor([
+            dist_maps[i][target_pos[i, 0].item(), target_pos[i, 1].item()]
+            for i in range(batch_size)
+        ], dtype=torch.float32, device=self._device)
+        if not torch.all(torch.isfinite(dijkstra_cost)):
+            raise ValueError("Dijkstra returned inf cost — disconnected map at reset()")
+
         state = EnvState(
             position=spawn_pos,
             minimap=minimap,
@@ -236,6 +248,7 @@ class Islands:
             resources=torch.full((batch_size,), self.config.init_resources, device=self._device),
             hp=torch.full((batch_size,), self.config.init_hp, device=self._device),
             cost=torch.zeros(batch_size, device=self._device),
+            dijkstra_cost=dijkstra_cost,
         )
         return state, target_pos
 
@@ -347,6 +360,17 @@ class Islands:
         new_compass_raw = (new_spawn - new_target).float()
         new_compass = new_compass_raw / torch.norm(new_compass_raw, dim=1, keepdim=True).clamp(min=1e-8)
 
+        # Precompute optimal time cost for done envs
+        done_dist_maps = batch_dijkstra_from_sources(
+            done_maps.cpu(), TERRAIN_COSTS, new_spawn.cpu()
+        )
+        new_dijkstra_cost_np = torch.tensor([
+            done_dist_maps[i][new_target[i, 0].item(), new_target[i, 1].item()]
+            for i in range(n_done)
+        ], dtype=torch.float32, device=self._device)
+        if not torch.all(torch.isfinite(new_dijkstra_cost_np)):
+            raise ValueError("Dijkstra returned inf cost — disconnected map at reset_done()")
+
         # Replace done environments in each tensor
         position = state.position.clone()
         position[done] = new_spawn
@@ -369,10 +393,14 @@ class Islands:
         cost = state.cost.clone()
         cost[done] = 0.0
 
+        dijkstra_cost = state.dijkstra_cost.clone()
+        dijkstra_cost[done] = new_dijkstra_cost_np
+
         new_state = EnvState(
             position=position, minimap=minimap, compass=compass,
             terrain_idx=terrain_idx,
             resources=resources, hp=hp, cost=cost,
+            dijkstra_cost=dijkstra_cost,
         )
 
         new_targets = target_pos.clone()

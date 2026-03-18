@@ -2,8 +2,7 @@
 """Interactive Pygame Demo for Island Navigation Game
 
 Usage:
-    python demo.py              # Interactive difficulty selection
-    python demo.py hard         # Hard mode
+    python human_demo.py
 
 Controls:
     Arrow keys or WASD: Move
@@ -12,6 +11,7 @@ Controls:
     ESC: Quit
 """
 
+import numpy as np
 import pygame
 import torch
 import sys
@@ -38,62 +38,82 @@ COLORS.update({
 
 
 class IslandGameDemo:
-    def __init__(self, window_width=1200, window_height=800, hard_mode=False):
+    def __init__(self, window_width=1200, window_height=800):
         self.window_width = window_width
         self.window_height = window_height
-        self.map_size = 400  # Size of the main map display
+        self.map_size = 400
         self.minimap_size = 200
         self.ui_width = 300
-        self.hard_mode = hard_mode
 
-        # Create display
         self.screen = pygame.display.set_mode((window_width, window_height))
-        mode_text = "Hard Mode" if hard_mode else "Easy Mode"
-        pygame.display.set_caption(f"Island Navigation Game - {mode_text}")
+        pygame.display.set_caption("Island Navigation Game")
 
-        # Fonts
         self.font_small = pygame.font.Font(None, 20)
         self.font_medium = pygame.font.Font(None, 28)
         self.font_large = pygame.font.Font(None, 36)
 
-        # Initialize environment
         self.reset_environment()
 
-        # Game state
         self.running = True
         self.clock = pygame.time.Clock()
-        self.zoom_level = 1.0
-        self.map_offset = [0, 0]
 
     def reset_environment(self):
-        """Reset the environment to initial state"""
         seed = torch.randint(1, 1000, (1,)).item()
         config = EnvConfig(
             seed=seed,
-            hard_mode=self.hard_mode,
-            minimap_ray=15,
+            minimap_max_ray=15,
             minimap_occlude=True,
             minimap_clear_tolerance=0.1,
             map_pool_size=1,
         )
         self.env = Islands(config)
 
-        # Ensure minimum distance between spawn and target
         while True:
             self.state, self.target_pos = self.env.reset(batch_size=1, seed=seed)
             spawn = self.state.position[0]
             target = self.target_pos[0]
-            dist = torch.norm((spawn - target).float()).item()
-            if dist >= config.size * 0.25:
+            dist = (spawn - target).float().abs().sum().item()
+            if dist >= config.size * 0.3:
                 break
             seed += 1
+
+        H = W = config.size
+        self.seen_mask = np.zeros((H, W), dtype=bool)
+        self._update_seen_mask()
+
+        # Precompute base map RGB image [H, W, 3] uint8
+        wm = self.env.world_map.numpy()
+        thresholds = np.array([TERRAIN_LEVELS[i]["threshold"] for i in range(9)])
+        terrain_map = np.searchsorted(thresholds, wm).clip(0, 8)
+        color_lut = np.array([
+            COLORS.get(TERRAIN_LEVELS[i]["color"], (200, 200, 200)) for i in range(9)
+        ], dtype=np.uint8)
+        self._base_map_rgb = color_lut[terrain_map]  # [H, W, 3]
 
         self.game_over = False
         self.won = False
         self.moves_count = 0
+        self._risk_sum = 0.0
+        self._risk_count = 0
+
+    def _update_seen_mask(self):
+        """Mark all currently-visible cells from the minimap visibility channel."""
+        vis_mask = self.state.minimap[0, 1].numpy()  # [D, D] float in [0, 1]
+        max_ray = self.env.config.minimap_max_ray
+        D = 2 * max_ray + 1
+        pos = self.state.position[0].numpy()
+        cy, cx = int(pos[0]), int(pos[1])
+        H, W = self.seen_mask.shape
+
+        dy = np.arange(D) - max_ray
+        dx = np.arange(D) - max_ray
+        dy_grid, dx_grid = np.meshgrid(dy, dx, indexing="ij")
+        world_rows = np.clip(cy + dy_grid, 0, H - 1)
+        world_cols = np.clip(cx + dx_grid, 0, W - 1)
+        visible = vis_mask > 0.5
+        self.seen_mask[world_rows[visible], world_cols[visible]] = True
 
     def handle_events(self):
-        """Handle pygame events"""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
@@ -119,13 +139,30 @@ class IslandGameDemo:
                         self.make_move(action)
 
     def make_move(self, action):
-        """Execute a move in the environment"""
         if self.game_over:
             return
 
-        result = self.env.step(self.state, action, self.target_pos)
+        # Compute per-terrain drain for risk tracking before step
+        ec = self.env.config
+        terrain_res_drains = [
+            ec.sea_resource_costs[0], ec.sea_resource_costs[1], ec.sea_resource_costs[2],
+            ec.land_resource_drain, ec.land_resource_drain, ec.land_resource_drain,
+            0.0,
+            ec.mountain_resource_costs[0], ec.mountain_resource_costs[1],
+        ]
+        terrain_idx = int(self.state.terrain_idx[0].item())
+        drain = terrain_res_drains[terrain_idx]
+        res = self.state.resources[0].item()
+        hp = self.state.hp[0].item()
+        risk = drain / (res + hp / 2.0 + 1e-6)
+        self._risk_sum += risk
+        self._risk_count += 1
+
+        result = self.env.step(self.state, action.to(self.env._device), self.target_pos)
         self.state = result.state
         self.moves_count += 1
+
+        self._update_seen_mask()
 
         alive = result.info["alive"][0]
         reached = result.info["reached"][0]
@@ -138,297 +175,170 @@ class IslandGameDemo:
             self.won = True
 
     def terrain_level_to_color(self, level):
-        """Convert terrain level to color using canonical TERRAIN_LEVELS + palette."""
         info = TERRAIN_LEVELS.get(int(level))
         if info is None:
             return COLORS['white']
         return COLORS.get(info['color'], COLORS['white'])
 
-    def world_map_to_surface(self, world_map, size):
-        """Convert world map to pygame surface"""
-        height, width = world_map.shape[:2]
-        surface = pygame.Surface((width, height))
-
-        for y in range(height):
-            for x in range(width):
-                height_val = world_map[y, x].item() if world_map.dim() == 2 else world_map[y, x, 0].item()
-                # Determine terrain level
-                terrain_level = 8
-                for level in range(9):
-                    if height_val <= TERRAIN_LEVELS[level]["threshold"]:
-                        terrain_level = level
-                        break
-
-                color = self.terrain_level_to_color(terrain_level)
-                surface.set_at((x, y), color)
-
-        return pygame.transform.scale(surface, (size, size))
-
     def draw_map(self):
-        """Draw the main world map"""
-        map_surface = self.world_map_to_surface(self.env.world_map, self.map_size)
+        """Draw world map with fog-of-war darkening for unseen cells."""
+        # Apply fog: darken unseen cells to 35% brightness
+        fog = np.where(self.seen_mask[:, :, None], 1.0, 0.35).astype(np.float32)
+        rgb = (self._base_map_rgb * fog).astype(np.uint8)  # [H, W, 3]
+
+        # Convert to pygame surface via surfarray (fast path)
+        surf = pygame.Surface((rgb.shape[1], rgb.shape[0]))
+        pygame.surfarray.blit_array(surf, rgb.transpose(1, 0, 2))
+        map_surface = pygame.transform.scale(surf, (self.map_size, self.map_size))
+
         map_rect = pygame.Rect(10, 10, self.map_size, self.map_size)
         self.screen.blit(map_surface, map_rect)
 
-        # Draw player position
-        player_pos = self.state.position[0]
         map_scale = self.map_size / self.env.world_map.shape[0]
+
+        player_pos = self.state.position[0]
         player_x = int(player_pos[1] * map_scale) + 10
         player_y = int(player_pos[0] * map_scale) + 10
         pygame.draw.circle(self.screen, COLORS['player'], (player_x, player_y), 5)
 
-        # Draw target position
         target = self.target_pos[0]
         target_x = int(target[1] * map_scale) + 10
         target_y = int(target[0] * map_scale) + 10
         pygame.draw.circle(self.screen, COLORS['target'], (target_x, target_y), 5)
 
-        # Draw border
         pygame.draw.rect(self.screen, COLORS['black'], map_rect, 2)
 
     def draw_minimap(self):
-        """Draw the minimap (player's view)"""
-        minimap_data = self.state.minimap[0, 0]  # [H, W] from [B, 1, H, W]
-        minimap_surface = self.world_map_to_surface(minimap_data, self.minimap_size)
+        minimap_data = self.state.minimap[0, 0]  # heightmap channel
+        height, width = minimap_data.shape
+        surf = pygame.Surface((width, height))
+        for y in range(height):
+            for x in range(width):
+                h_val = minimap_data[y, x].item()
+                t_level = 8
+                for level in range(9):
+                    if h_val <= TERRAIN_LEVELS[level]["threshold"]:
+                        t_level = level
+                        break
+                surf.set_at((x, y), self.terrain_level_to_color(t_level))
+        minimap_surface = pygame.transform.scale(surf, (self.minimap_size, self.minimap_size))
+
         minimap_rect = pygame.Rect(self.map_size + 30, 10, self.minimap_size, self.minimap_size)
         self.screen.blit(minimap_surface, minimap_rect)
 
-        # Draw player in center of minimap
-        center_x = minimap_rect.centerx
-        center_y = minimap_rect.centery
-        pygame.draw.circle(self.screen, COLORS['player'], (center_x, center_y), 3)
-
-        # Draw border
+        pygame.draw.circle(self.screen, COLORS['player'], minimap_rect.center, 3)
         pygame.draw.rect(self.screen, COLORS['black'], minimap_rect, 2)
 
-        # Minimap label
-        label = self.font_medium.render("Minimap", True, COLORS['black'])
+        label = self.font_medium.render("Minimap (agent view)", True, COLORS['black'])
         self.screen.blit(label, (minimap_rect.x, minimap_rect.y - 25))
 
     def draw_ui(self):
-        """Draw the UI panel with game information"""
         ui_x = self.map_size + 30
         ui_y = self.minimap_size + 50
 
         s = self.state
+        ec = self.env.config
 
-        # Game stats
-        mode_text = "HARD MODE" if self.hard_mode else "EASY MODE"
+        hp_ratio = s.hp[0] / ec.max_hp
+        res_ratio = s.resources[0] / ec.max_resources
+        risk_mean = self._risk_sum / max(self._risk_count, 1)
+        explored_pct = 100.0 * self.seen_mask.sum() / self.seen_mask.size
+
         stats = [
-            f"Mode: {mode_text}",
-            f"HP: {s.hp[0]:.1f} / {self.env.config.max_hp}",
-            f"Resources: {s.resources[0]:.1f}",
-            f"Time Cost: {s.cost[0]:.2f}",
-            f"Moves: {self.moves_count}",
-            f"",
-            f"Position: ({s.position[0][0]}, {s.position[0][1]})",
-            f"Terrain Index: {int(s.terrain_idx[0])}",
-            f"Terrain: {TERRAIN_LEVELS[int(s.terrain_idx[0])]['name']}",
-            f"",
-            f"Distance to Target: {torch.norm((s.position[0].float() - self.target_pos[0].float())):.1f}",
-            f"Target: ({self.target_pos[0][0]}, {self.target_pos[0][1]})",
-            f"",
-            f"Visibility Range: {VISIBILITY_RANGES[int(s.terrain_idx[0])]}",
+            ("Live Stats", None, self.font_medium, COLORS['black']),
+            (f"Moves:     {self.moves_count}", None, self.font_small, COLORS['black']),
+            (f"Time Cost: {s.cost[0]:.2f}", None, self.font_small, COLORS['black']),
+            (f"HP:        {s.hp[0]:.1f} / {ec.max_hp:.0f}", None, self.font_small,
+                COLORS['red'] if hp_ratio < 0.3 else (255, 165, 0) if hp_ratio < 0.6 else COLORS['green_ui']),
+            (f"Resources: {s.resources[0]:.1f} / {ec.max_resources:.0f}", None, self.font_small,
+                COLORS['red'] if res_ratio < 0.2 else COLORS['black']),
+            (f"Risk Exp:  {risk_mean:.3f}", None, self.font_small,
+                COLORS['red'] if risk_mean > 0.5 else COLORS['black']),
+            (f"Explored:  {explored_pct:.1f}%", None, self.font_small, COLORS['black']),
+            ("", None, self.font_small, COLORS['black']),
+            ("Position", None, self.font_medium, COLORS['black']),
+            (f"Pos:    ({s.position[0][0]}, {s.position[0][1]})", None, self.font_small, COLORS['black']),
+            (f"Target: ({self.target_pos[0][0]}, {self.target_pos[0][1]})", None, self.font_small, COLORS['black']),
+            (f"Dist:   {(s.position[0].float() - self.target_pos[0].float()).abs().sum():.1f}", None, self.font_small, COLORS['black']),
+            (f"Terrain: {TERRAIN_LEVELS[int(s.terrain_idx[0])]['name']}", None, self.font_small, COLORS['black']),
+            (f"Visibility: {VISIBILITY_RANGES[int(s.terrain_idx[0])]}", None, self.font_small, COLORS['black']),
         ]
 
         y_offset = ui_y
-        for stat in stats:
-            if stat:
-                color = COLORS['black']
-                font = self.font_small
+        for text, _, font, color in stats:
+            if text:
+                surf = font.render(text, True, color)
+                self.screen.blit(surf, (ui_x, y_offset))
+            y_offset += 26 if font == self.font_medium else 20
 
-                if "Mode:" in stat:
-                    if self.hard_mode:
-                        color = COLORS['red']
-                    else:
-                        color = COLORS['green_ui']
-                    font = self.font_medium
-                elif "HP:" in stat:
-                    hp_ratio = s.hp[0] / self.env.config.max_hp
-                    if hp_ratio < 0.3:
-                        color = COLORS['red']
-                    elif hp_ratio < 0.6:
-                        color = (255, 165, 0)  # Orange
-                    else:
-                        color = COLORS['green_ui']
+        y_offset += 10
+        controls_title = self.font_medium.render("Controls", True, COLORS['black'])
+        self.screen.blit(controls_title, (ui_x, y_offset))
+        y_offset += 26
+        for line in ["WASD / Arrows: Move", "Space: Stay", "R: Reset", "ESC: Quit"]:
+            surf = self.font_small.render(line, True, COLORS['gray'])
+            self.screen.blit(surf, (ui_x, y_offset))
+            y_offset += 18
 
-                text = font.render(stat, True, color)
-                self.screen.blit(text, (ui_x, y_offset))
-            y_offset += 25
-
-        # Controls
-        y_offset += 20
-        controls = [
-            "CONTROLS:",
-            "Arrow Keys/WASD: Move",
-            "Space: Stay",
-            "R: Reset",
-            "ESC: Quit",
-            ""
-        ]
-
-        if self.hard_mode:
-            controls.extend([
-                "HARD MODE RULES:",
-                "With resources: -0.25/turn, +1HP",
-                "Without resources: -0.5HP/turn",
-                "Find forests to survive!"
-            ])
-
-        for control in controls:
-            if control:
-                color = COLORS['gray']
-                font = self.font_small
-
-                if control in ["CONTROLS:", "HARD MODE RULES:"]:
-                    color = COLORS['red'] if "HARD MODE" in control else COLORS['black']
-                    font = self.font_medium
-
-                text = font.render(control, True, color)
-                self.screen.blit(text, (ui_x, y_offset))
-                y_offset += 20 if font == self.font_medium else 18
-            else:
-                y_offset += 10
-
-        # Terrain legend
-        y_offset += 30
-        legend_title = self.font_medium.render("TERRAIN LEGEND:", True, COLORS['black'])
+        y_offset += 15
+        legend_title = self.font_medium.render("Terrain Legend", True, COLORS['black'])
         self.screen.blit(legend_title, (ui_x, y_offset))
-        y_offset += 25
-
-        terrain_names = [
-            (i, f"{info['name'].capitalize()} ({info['cost']})")
-            for i, info in TERRAIN_LEVELS.items()
-        ]
-
-        for level, name in terrain_names:
-            color = self.terrain_level_to_color(level)
-            pygame.draw.rect(self.screen, color, (ui_x, y_offset, 15, 15))
-            pygame.draw.rect(self.screen, COLORS['black'], (ui_x, y_offset, 15, 15), 1)
-            text = self.font_small.render(name, True, COLORS['black'])
-            self.screen.blit(text, (ui_x + 20, y_offset))
+        y_offset += 26
+        for i, info in TERRAIN_LEVELS.items():
+            color = self.terrain_level_to_color(i)
+            pygame.draw.rect(self.screen, color, (ui_x, y_offset, 14, 14))
+            pygame.draw.rect(self.screen, COLORS['black'], (ui_x, y_offset, 14, 14), 1)
+            label = f"{info['name'].capitalize()} (cost {info['cost']})"
+            surf = self.font_small.render(label, True, COLORS['black'])
+            self.screen.blit(surf, (ui_x + 18, y_offset))
             y_offset += 18
 
     def draw_game_over(self):
-        """Draw game over screen"""
         overlay = pygame.Surface((self.window_width, self.window_height))
         overlay.set_alpha(180)
         overlay.fill(COLORS['black'])
         self.screen.blit(overlay, (0, 0))
 
         if self.won:
-            title = "VICTORY!"
-            color = COLORS['green_ui']
-            message = f"Reached target in {self.moves_count} moves"
-            score_msg = f"Final time cost: {self.state.cost[0]:.2f}"
+            title, color = "VICTORY!", COLORS['green_ui']
+            lines = [
+                f"Reached target in {self.moves_count} moves",
+                f"Final time cost: {self.state.cost[0]:.2f}",
+                f"Mean risk exposure: {self._risk_sum / max(self._risk_count, 1):.3f}",
+                f"Map explored: {100.0 * self.seen_mask.sum() / self.seen_mask.size:.1f}%",
+            ]
         else:
-            title = "GAME OVER"
-            color = COLORS['red']
-            message = f"HP reached zero after {self.moves_count} moves"
-            score_msg = f"Time cost: {self.state.cost[0]:.2f}"
+            title, color = "GAME OVER", COLORS['red']
+            lines = [
+                f"HP reached zero after {self.moves_count} moves",
+                f"Time cost: {self.state.cost[0]:.2f}",
+                f"Mean risk exposure: {self._risk_sum / max(self._risk_count, 1):.3f}",
+            ]
 
-        title_text = self.font_large.render(title, True, color)
-        title_rect = title_text.get_rect(center=(self.window_width//2, self.window_height//2 - 50))
-        self.screen.blit(title_text, title_rect)
-
-        message_text = self.font_medium.render(message, True, COLORS['white'])
-        message_rect = message_text.get_rect(center=(self.window_width//2, self.window_height//2))
-        self.screen.blit(message_text, message_rect)
-
-        score_text = self.font_medium.render(score_msg, True, COLORS['white'])
-        score_rect = score_text.get_rect(center=(self.window_width//2, self.window_height//2 + 30))
-        self.screen.blit(score_text, score_rect)
-
-        restart_text = self.font_small.render("Press R to restart", True, COLORS['white'])
-        restart_rect = restart_text.get_rect(center=(self.window_width//2, self.window_height//2 + 80))
-        self.screen.blit(restart_text, restart_rect)
+        cy = self.window_height // 2
+        title_surf = self.font_large.render(title, True, color)
+        self.screen.blit(title_surf, title_surf.get_rect(center=(self.window_width // 2, cy - 60)))
+        for k, line in enumerate(lines):
+            surf = self.font_medium.render(line, True, COLORS['white'])
+            self.screen.blit(surf, surf.get_rect(center=(self.window_width // 2, cy - 10 + k * 32)))
+        restart_surf = self.font_small.render("Press R to restart", True, COLORS['white'])
+        self.screen.blit(restart_surf, restart_surf.get_rect(center=(self.window_width // 2, cy + 130)))
 
     def run(self):
-        """Main game loop"""
         while self.running:
             self.handle_events()
-
             self.screen.fill(COLORS['white'])
-
             self.draw_map()
             self.draw_minimap()
             self.draw_ui()
-
             if self.game_over:
                 self.draw_game_over()
-
             pygame.display.flip()
             self.clock.tick(60)
-
         pygame.quit()
         sys.exit()
 
 
-def show_difficulty_selection():
-    """Show difficulty selection screen"""
-    pygame.init()
-    screen = pygame.display.set_mode((400, 300))
-    pygame.display.set_caption("Island Navigation - Select Difficulty")
-
-    font_large = pygame.font.Font(None, 36)
-    font_medium = pygame.font.Font(None, 28)
-    font_small = pygame.font.Font(None, 20)
-
-    clock = pygame.time.Clock()
-
-    while True:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_1:
-                    return False  # Easy mode
-                elif event.key == pygame.K_2:
-                    return True   # Hard mode
-                elif event.key == pygame.K_ESCAPE:
-                    pygame.quit()
-                    sys.exit()
-
-        screen.fill(COLORS['white'])
-
-        title = font_large.render("Select Difficulty", True, COLORS['black'])
-        title_rect = title.get_rect(center=(200, 60))
-        screen.blit(title, title_rect)
-
-        easy_text = font_medium.render("1 - Easy Mode", True, COLORS['green_ui'])
-        easy_rect = easy_text.get_rect(center=(200, 120))
-        screen.blit(easy_text, easy_rect)
-
-        easy_desc = font_small.render("Standard gameplay with passive healing", True, COLORS['gray'])
-        easy_desc_rect = easy_desc.get_rect(center=(200, 145))
-        screen.blit(easy_desc, easy_desc_rect)
-
-        hard_text = font_medium.render("2 - Hard Mode", True, COLORS['red'])
-        hard_rect = hard_text.get_rect(center=(200, 180))
-        screen.blit(hard_text, hard_rect)
-
-        hard_desc1 = font_small.render("Resources required for survival!", True, COLORS['gray'])
-        hard_desc1_rect = hard_desc1.get_rect(center=(200, 205))
-        screen.blit(hard_desc1, hard_desc1_rect)
-
-        hard_desc2 = font_small.render("No resources = -0.5 HP/turn", True, COLORS['gray'])
-        hard_desc2_rect = hard_desc2.get_rect(center=(200, 220))
-        screen.blit(hard_desc2, hard_desc2_rect)
-
-        instruction = font_small.render("Press ESC to quit", True, COLORS['black'])
-        instruction_rect = instruction.get_rect(center=(200, 260))
-        screen.blit(instruction, instruction_rect)
-
-        pygame.display.flip()
-        clock.tick(60)
-
-
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        hard_mode = sys.argv[1].lower() in ('hard', 'h', '2')
-    else:
-        hard_mode = show_difficulty_selection()
-
-    game = IslandGameDemo(hard_mode=hard_mode)
+    game = IslandGameDemo()
     game.run()

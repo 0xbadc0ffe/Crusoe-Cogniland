@@ -81,7 +81,7 @@ def load_checkpoint(
 # ---------------------------------------------------------------------------
 
 def render_trajectory(world_map, positions, target, reached_target, env_idx,
-                      terrain_levels, color_palette):
+                      terrain_levels, color_palette, observed_mask=None):
     """Render agent trajectory on top of the island map.
 
     Args:
@@ -92,6 +92,8 @@ def render_trajectory(world_map, positions, target, reached_target, env_idx,
         env_idx: int — episode index (for title).
         terrain_levels: TERRAIN_LEVELS dict from constants.
         color_palette: palette dict from constants.
+        observed_mask: optional [H, W] bool array — cells seen during episode.
+            Unseen cells are rendered darker (fog of war halo).
 
     Returns:
         matplotlib Figure.
@@ -109,6 +111,11 @@ def render_trajectory(world_map, positions, target, reached_target, env_idx,
         dtype=np.float32,
     ) / 255.0
     rgb = color_lut[terrain_map]
+
+    # Fog-of-war: darken cells the agent never observed
+    if observed_mask is not None:
+        fog = np.where(observed_mask[:, :, None], 1.0, 0.35).astype(np.float32)
+        rgb = rgb * fog
 
     fig, ax = plt.subplots(figsize=(14, 14), dpi=150)
     ax.imshow(rgb, origin="upper", interpolation="nearest")
