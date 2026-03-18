@@ -38,15 +38,15 @@ def env_step(
     from cogniland.env.reward import compute_reward
 
     old_terrain = state.terrain_idx.clone()  # needed for land-to-water transition
-    prev_dist = torch.norm((state.position - target_pos).float(), dim=1)
+    prev_dist = (state.position - target_pos).float().abs().sum(dim=1)
 
     # 1. Movement
     new_state = apply_movement(state, action, config.size)
 
     # 2. Compass update — unit direction (pos − target), magnitude dropped
     compass_raw = (new_state.position - target_pos).float()           # [B, 2]
-    compass_dist = torch.norm(compass_raw, dim=1, keepdim=True).clamp(min=1e-8)
-    compass_unit = compass_raw / compass_dist                          # [B, 2]
+    compass_euclidean = torch.norm(compass_raw, dim=1, keepdim=True).clamp(min=1e-8)
+    compass_unit = compass_raw / compass_euclidean                     # [B, 2]
     new_state = new_state._replace(compass=compass_unit)
 
     # 3. Terrain level (needed by minimap visibility)
@@ -60,11 +60,7 @@ def env_step(
     )
     new_state = new_state._replace(minimap=minimap)
 
-    # 5. Passive healing (easy mode only)
-    if not config.hard_mode:
-        new_state = new_state._replace(hp=new_state.hp + config.passive_heal_rate)
-
-    # 7. Movement costs & terrain effects
+    # 5. Movement costs & terrain effects
     new_state = apply_movement_costs(new_state, action, config)
     new_state = apply_terrain_effects(new_state, old_terrain, action, config)
 
@@ -75,7 +71,7 @@ def env_step(
 
     # 9. Terminal conditions
     alive = new_state.hp > 0
-    dist_to_target = compass_dist.squeeze(1)
+    dist_to_target = (new_state.position - target_pos).float().abs().sum(dim=1)
     reached = dist_to_target < 1.0
     done = ~alive | reached
 
@@ -190,20 +186,13 @@ def apply_terrain_effects(
     # Only collect resources when at full HP
     resources = resources + forest.float() * at_max_hp.float() * config.forest_resource_gain
 
-    # --- Land-to-water transition: costs resources; each missing resource = HP loss ---
+    # --- Land-to-water transition: costs resources; shortfall converts to HP via no_res_hp_multiplier ---
     moving = action != ACTIONS["stay"]
     land_to_water = (old_terrain > 2) & (terrain <= 2) & moving
     resources_available = torch.clamp(resources, 0.0, config.land_to_water_resource_cost)
     resources_missing = config.land_to_water_resource_cost - resources_available
     resources = resources - land_to_water.float() * resources_available
-    hp = hp - land_to_water.float() * resources_missing * config.land_to_water_hp_per_missing_res
-
-    # --- Hard mode ---
-    if config.hard_mode:
-        # Only spend 0.25 when agent has at least 0.25; else treat as no resources
-        has_res = resources >= config.hard_mode_resource_drain
-        resources = torch.where(has_res, resources - config.hard_mode_resource_drain, resources)
-        hp = torch.where(has_res, hp + config.hard_mode_hp_gain, hp - config.hard_mode_hp_loss)
+    hp = hp - land_to_water.float() * resources_missing * config.no_res_hp_multiplier
 
     return state._replace(hp=hp, resources=resources)
 

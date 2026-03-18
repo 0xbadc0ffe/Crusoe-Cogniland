@@ -10,12 +10,21 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
+import numpy as np
 import torch
 
-from cogniland.env.constants import TERRAIN_COSTS, TERRAIN_VISIBILITY
+from cogniland.env.constants import TERRAIN_COSTS
 from cogniland.env.pathfinding import batch_dijkstra_from_sources
 from cogniland.env.types import EnvConfig
 from cogniland.env.wrappers import BatchedIslandEnv
+from cogniland.eval.metrics import (
+    compute_danger_fraction,
+    compute_directness,
+    compute_exploration,
+    compute_risk_exposure,
+    compute_terrain_visit_fractions,
+    read_dijkstra_to_final,
+)
 
 _TERRAIN_NAMES = [
     "ocean", "deep_water", "water", "beach", "sandy",
@@ -33,6 +42,7 @@ class EpisodeResult:
     metrics: dict[str, float]                        # all domain-specific scalars
     map_id: int | None = None
     trajectory: list[tuple[int, int]] | None = None
+    observed_mask: "np.ndarray | None" = None        # [H, W] bool — cells seen during episode
 
 
 @dataclass
@@ -54,39 +64,14 @@ class EvalRunner:
         self.env_config = env_config
         self.device = device
 
-        # Precompute survival margin conversion factors from EnvConfig
+        # Per-terrain resource drain lookup (for risk exposure computation)
         ec = env_config
-        terrain_res_drains = [
+        self._terrain_res_drains = torch.tensor([
             ec.sea_resource_costs[0], ec.sea_resource_costs[1], ec.sea_resource_costs[2],
             ec.land_resource_drain, ec.land_resource_drain, ec.land_resource_drain,
-            0.0,  # forest — gains resources instead of draining
+            0.0,  # forest gains resources, not drains
             ec.mountain_resource_costs[0], ec.mountain_resource_costs[1],
-        ]
-        mean_drain = sum(terrain_res_drains) / len(terrain_res_drains)
-        mean_cost = TERRAIN_COSTS.mean().item()
-        self._k_R = mean_drain / mean_cost if mean_cost > 0 else 1.0
-
-        # Precompute disk offsets for each visibility range (CPU; cached to device in run())
-        self._disk_offsets: dict[int, torch.Tensor] = {}
-        for vis_r in TERRAIN_VISIBILITY.unique().tolist():
-            vis_r = int(vis_r)
-            offsets = [
-                (dr, dc)
-                for dr in range(-vis_r, vis_r + 1)
-                for dc in range(-vis_r, vis_r + 1)
-                if dr * dr + dc * dc <= vis_r * vis_r
-            ]
-            self._disk_offsets[vis_r] = torch.tensor(offsets, dtype=torch.long)
-
-        # Device-cached offsets (populated lazily on first run())
-        self._disk_offsets_device: dict[int, torch.Tensor] = {}
-
-    def _cache_offsets_to_device(self, device: str) -> None:
-        """Move disk offset tensors to device once per run() call."""
-        self._disk_offsets_device = {
-            vis_r: offsets.to(device)
-            for vis_r, offsets in self._disk_offsets.items()
-        }
+        ])
 
     def run(
         self,
@@ -114,31 +99,20 @@ class EvalRunner:
         device = self.device
         H = W = env_config.size
 
-        # Cache disk offsets on the correct device
-        self._cache_offsets_to_device(device)
+        terrain_res_drains = self._terrain_res_drains.to(device)
 
         obs = eval_env.reset()
         initial_spawns = eval_env.state.position.clone()   # [n_eps, 2]
         initial_targets = eval_env.target_pos.clone()      # [n_eps, 2]
 
         # Run Dijkstra from each spawn — one call per episode, returns full distance map.
-        # Replaces 2×B sequential A* calls: distance to target AND to final position
-        # are both read from the same dist_maps after the episode loop.
+        # Distance to target AND to final position are both read from dist_maps after the loop.
         per_env_maps = eval_env.env.world_maps[eval_env.env._env_map_idx]  # [n_eps, H, W]
         dist_maps = batch_dijkstra_from_sources(
             per_env_maps.cpu(), TERRAIN_COSTS, initial_spawns.cpu()
         )  # list of n_eps arrays [H, W]
 
-        # Optimal spawn→target cost per episode (for path_efficiency and survival_margin)
-        astar_costs = torch.tensor([
-            dist_maps[i][initial_targets[i, 0].item(), initial_targets[i, 1].item()]
-            for i in range(n_episodes)
-        ], dtype=torch.float32, device=device)
-
-        # Initial distance for survival margin denominator
-        initial_dist = torch.norm(
-            (initial_spawns - initial_targets).float(), dim=1
-        ).clamp(min=1e-6)
+        # No dijkstra_costs needed (path_efficiency removed; directness uses spawn→final)
 
         # --------------- Tracking tensors ---------------
         total_rewards = torch.zeros(n_episodes, device=device)
@@ -158,11 +132,23 @@ class EvalRunner:
 
         terrain_visits = torch.zeros(n_episodes, 9, device=device)
 
-        # Survival margin: track step-wise minimum
-        survival_margin = torch.full((n_episodes,), float("inf"), device=device)
+        # Risk exposure: drain_t / (resources_t + hp_t / 2), mean across episode
+        risk_sum = torch.zeros(n_episodes, device=device)
+        risk_count = torch.zeros(n_episodes, device=device)
 
-        # Exploration: bool map of observed cells
+        # Exploration: bool map of observed cells (updated via minimap visibility mask)
         observed = torch.zeros(n_episodes, H, W, dtype=torch.bool, device=device)
+
+        # Minimap offset grid for mapping patch coords to world coords [1, D, D]
+        max_ray = env_config.minimap_max_ray
+        D = 2 * max_ray + 1
+        _dy, _dx = torch.meshgrid(
+            torch.arange(D, device=device) - max_ray,
+            torch.arange(D, device=device) - max_ray,
+            indexing="ij",
+        )
+        dy_grid = _dy.unsqueeze(0)  # [1, D, D]
+        dx_grid = _dx.unsqueeze(0)  # [1, D, D]
 
         # Final position / cost — captured before auto-reset clears them
         final_positions = initial_spawns.clone()
@@ -175,8 +161,14 @@ class EvalRunner:
             p = eval_env.state.position[i].cpu().tolist()
             trajectories[i] = [tuple(p)]
 
-        # Unique visibility radii for vectorized exploration
-        vis_radii = [int(v) for v in TERRAIN_VISIBILITY.unique().tolist()]
+        # Seed observed mask with initial visibility at spawn
+        _init_vis = eval_env.state.minimap[:, 1]  # [N, D, D]
+        _init_pos = eval_env.state.position        # [N, 2]
+        _world_rows = (_init_pos[:, 0].view(-1, 1, 1) + dy_grid).clamp(0, H - 1)
+        _world_cols = (_init_pos[:, 1].view(-1, 1, 1) + dx_grid).clamp(0, W - 1)
+        _vis = _init_vis > 0.5
+        _ep = torch.arange(n_episodes, device=device).view(-1, 1, 1).expand(n_episodes, D, D)
+        observed[_ep[_vis], _world_rows[_vis], _world_cols[_vis]] = True
 
         # --------------- Episode loop ---------------
         for _move in range(env_config.max_steps):
@@ -225,44 +217,24 @@ class EvalRunner:
             running_idx = torch.where(still_running)[0]
             terrain_visits[running_idx, pre_move_terrain[running_idx].long()] += 1
 
-            # Survival margin: combined HP+resource budget vs remaining journey cost.
-            # HP and resources are substitutable (when resources run out, drain
-            # overflows to HP at no_res_hp_multiplier), so the effective budget is:
-            #   effective_resources = resources + HP / no_res_hp_multiplier
-            # SM = effective_resources / (C_remaining × k_R)
-            # SM > 1 → enough to reach target; SM < 1 → projected to run dry.
-            c_remaining = astar_costs * (dist_to_target / initial_dist)
-            eps = 1e-6
-            effective_resources = (
-                current_resources
-                + current_hp / self.env_config.no_res_hp_multiplier
-            )
-            sm_t = effective_resources / (c_remaining * self._k_R + eps)
-            survival_margin[still_running] = torch.minimum(
-                survival_margin[still_running], sm_t[still_running]
-            )
+            # Risk exposure: drain_t / (resources_t + hp_t / 2)
+            drain_t = terrain_res_drains[eval_env.state.terrain_idx.long()]  # [n_eps]
+            risk_t = drain_t / (current_resources + current_hp / 2.0 + 1e-6)
+            risk_sum[still_running] += risk_t[still_running]
+            risk_count[still_running] += 1
 
-            # Exploration — vectorized: group running episodes by visibility radius.
-            # Exclude just-finished episodes: their position has already been reset
-            # by auto-reset and no longer reflects where the agent actually stood.
+            # Exploration via minimap visibility mask (accounts for occlusion).
+            # Exclude just-finished episodes: their minimap has been reset by auto-reset.
             explore_idx = torch.where(still_running & ~just_finished)[0]
             if explore_idx.numel() > 0:
-                running_terrain = pre_move_terrain[explore_idx].long()
-                running_vis_r = TERRAIN_VISIBILITY.to(device)[running_terrain].int()
-                positions = eval_env.state.position[explore_idx]  # [G, 2]
-
-                for vis_r in vis_radii:
-                    group_mask = (running_vis_r == vis_r)
-                    if not group_mask.any():
-                        continue
-                    group_eps = explore_idx[group_mask]           # [G]
-                    offsets = self._disk_offsets_device[vis_r]    # [K, 2] on device
-                    G = group_eps.shape[0]
-                    K = offsets.shape[0]
-                    pos_g = positions[group_mask]                  # [G, 2]
-                    rows = (pos_g[:, 0:1] + offsets[:, 0]).clamp(0, H - 1)  # [G, K]
-                    cols = (pos_g[:, 1:2] + offsets[:, 1]).clamp(0, W - 1)  # [G, K]
-                    observed[group_eps.unsqueeze(1).expand(G, K), rows, cols] = True
+                G = explore_idx.shape[0]
+                vis_masks = eval_env.state.minimap[explore_idx, 1]       # [G, D, D]
+                pos_g = eval_env.state.position[explore_idx]              # [G, 2]
+                world_rows = (pos_g[:, 0].view(G, 1, 1) + dy_grid).clamp(0, H - 1)  # [G, D, D]
+                world_cols = (pos_g[:, 1].view(G, 1, 1) + dx_grid).clamp(0, W - 1)  # [G, D, D]
+                visible = vis_masks > 0.5                                  # [G, D, D]
+                ep_idx = explore_idx.view(G, 1, 1).expand(G, D, D)
+                observed[ep_idx[visible], world_rows[visible], world_cols[visible]] = True
 
             # Capture final state for just-finished episodes before auto-reset clears them
             new_finalized = just_finished & ~is_finalized
@@ -299,44 +271,16 @@ class EvalRunner:
             total_moves[still_running] = env_config.max_steps
 
         # --------------- Derived metrics ---------------
-        danger_fraction = danger_steps / total_moves.clamp(min=1)
+        danger_fraction = compute_danger_fraction(danger_steps, total_moves)
         final_resources = eval_env.state.resources
         resource_mean = resource_sum / resource_count.clamp(min=1)
         hp_mean = hp_sum / hp_count.clamp(min=1)
 
-        # Path efficiency: how close to optimal was the agent's terrain cost?
-        # clamp(astar / agent_cost, 0, 1); 0 when agent cost is 0 (edge case)
-        path_efficiency = torch.where(
-            final_cost > 1e-6,
-            (astar_costs / final_cost.clamp(min=1e-6)).clamp(0.0, 1.0),
-            torch.zeros_like(final_cost),
-        )
-
-        # Directness: D = C_agent / (C_agent - C_astar_partial), range [1, 100]
-        # Read spawn→final distances from the pre-computed dist_maps (no second A* call)
-        final_pos_cpu = final_positions.cpu()
-        astar_to_final = torch.tensor([
-            dist_maps[i][final_pos_cpu[i, 0].item(), final_pos_cpu[i, 1].item()]
-            for i in range(n_episodes)
-        ], dtype=torch.float32, device=device)
-
-        directness = torch.where(
-            final_cost > astar_to_final + 1e-6,
-            (final_cost / (final_cost - astar_to_final)).clamp(max=100.0),
-            torch.full_like(final_cost, 100.0),
-        )
-
-        # Exploration: fraction of map cells ever observed
-        exploration = observed.sum(dim=(1, 2)).float() / (H * W)
-
-        # Terrain visit fractions per episode
-        visit_totals = terrain_visits.sum(dim=1, keepdim=True).clamp(min=1)
-        terrain_visit_frac = terrain_visits / visit_totals  # [N, 9]
-
-        # Fix inf survival margins (e.g. initial dist = 0 edge case)
-        survival_margin = torch.nan_to_num(
-            survival_margin, nan=0.0, posinf=100.0, neginf=0.0
-        )
+        dijkstra_to_final = read_dijkstra_to_final(dist_maps, final_positions, device)
+        directness = compute_directness(final_cost, dijkstra_to_final)
+        exploration = compute_exploration(observed)
+        terrain_visit_frac = compute_terrain_visit_fractions(terrain_visits)
+        risk_exposure = compute_risk_exposure(risk_sum, risk_count)
 
         # --------------- Build EpisodeResult list ---------------
         map_ids = eval_env.env._env_map_idx.tolist()
@@ -358,9 +302,8 @@ class EvalRunner:
                 "final_resources": final_resources[i].item(),
                 "mean_resources": resource_mean[i].item(),
                 "max_resources": max_resources[i].item(),
-                "path_efficiency": path_efficiency[i].item(),
                 "directness": directness[i].item(),
-                "survival_margin": survival_margin[i].item(),
+                "risk_exposure": risk_exposure[i].item(),
                 "exploration": exploration[i].item(),
             }
             for j, name in enumerate(_TERRAIN_NAMES):
@@ -373,6 +316,7 @@ class EvalRunner:
                 metrics=metrics,
                 map_id=int(map_ids[i]),
                 trajectory=trajectories[i],
+                observed_mask=observed[i].cpu().numpy(),
             ))
 
         return EvalResult(

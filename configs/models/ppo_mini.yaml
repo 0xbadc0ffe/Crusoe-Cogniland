@@ -6,7 +6,7 @@ name: ppo_mini
 # ── Compact PPO variant for faster runs (~15k params vs ~96k for full ppo) ──
 #
 #   CNN:        Conv(2→8) + Conv(8→16) + AdaptivePool(3) → 16×3×3 = 144 out
-#   Scalar net: Linear(7→32)                             → 32 out
+#   Scalar net: Linear(5→32)                             → 32 out
 #   Trunk ×2:   Linear(176→64) + Linear(64→64)
 #   Actor/Critic heads on 64-dim features
 #

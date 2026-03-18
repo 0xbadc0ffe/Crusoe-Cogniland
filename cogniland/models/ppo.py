@@ -529,6 +529,7 @@ class PPOAgent:
                     world_map_i, ep.trajectory,
                     targets[i], ep.outcome == "success", i,
                     TERRAIN_LEVELS, palette,
+                    observed_mask=ep.observed_mask,
                 )
                 figures.append(fig)
                 captions.append(f"env{i} {ep.outcome} {ep.episode_length} moves")
