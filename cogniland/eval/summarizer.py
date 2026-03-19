@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import numpy as np
+
 from cogniland.eval.runner import EvalResult
 
 _TERRAIN_NAMES = [
@@ -16,37 +18,35 @@ _SCALAR_METRIC_KEYS = [
 ]
 
 
-def _mean(vals: list[float]) -> float:
-    return sum(vals) / len(vals) if vals else 0.0
-
-
 class CognilandSummarizer:
     """Converts EvalResult into flat scalar dicts. No WandB calls."""
 
     def scalar_metrics(self, result: EvalResult) -> dict[str, float]:
-        """Return success_rate as the single aggregate scalar.
+        """Return success_rate plus mean/std/max/min for every metric.
 
-        All other per-episode metrics are handled by ``per_episode_metrics()``
-        and logged as interactive multi-line charts via WandBLogger.log_eval_charts().
+        Keys are logged as standard WandB scalars and render as native line plots.
         """
         prefix = f"{result.split}_{result.mode}/env"
         eps = result.episodes
+        n = len(eps)
         n_success = sum(1 for ep in eps if ep.outcome == "success")
-        return {f"{prefix}/success_rate": n_success / len(eps) if eps else 0.0}
+        out: dict[str, float] = {f"{prefix}/success_rate": n_success / n if n else 0.0}
 
-    def per_episode_metrics(self, result: EvalResult) -> dict[str, list[float]]:
-        """Return per-metric lists of episode values for charting.
-
-        Returns ``{metric_name: [val_ep0, val_ep1, …]}``.
-        """
-        eps = result.episodes
-        metrics: dict[str, list[float]] = {
+        all_metrics: dict[str, list[float]] = {
             "return": [ep.total_return for ep in eps],
             "episode_length": [float(ep.episode_length) for ep in eps],
         }
         for key in _SCALAR_METRIC_KEYS:
-            metrics[key] = [ep.metrics[key] for ep in eps]
-        return metrics
+            all_metrics[key] = [ep.metrics[key] for ep in eps]
+
+        for name, vals in all_metrics.items():
+            arr = np.array(vals, dtype=float)
+            out[f"{prefix}/{name}_mean"] = float(arr.mean())
+            out[f"{prefix}/{name}_std"]  = float(arr.std())
+            out[f"{prefix}/{name}_max"]  = float(arr.max())
+            out[f"{prefix}/{name}_min"]  = float(arr.min())
+
+        return out
 
     def terrain_pcts(self, result: EvalResult) -> dict[str, float]:
         """Return per-terrain mean visit fractions for the stacked area chart."""
@@ -54,7 +54,7 @@ class CognilandSummarizer:
         pcts: dict[str, float] = {}
         for name in _TERRAIN_NAMES:
             vals = [ep.metrics[f"terrain_visit_{name}"] for ep in eps]
-            pcts[name] = _mean(vals)
+            pcts[name] = sum(vals) / len(vals) if vals else 0.0
         return pcts
 
     def eval_table_rows(self, result: EvalResult) -> tuple[list[str], list[list]]:

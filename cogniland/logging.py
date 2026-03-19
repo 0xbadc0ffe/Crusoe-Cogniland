@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
-
 
 # ---------------------------------------------------------------------------
 # Terrain names (9 types, indices 0–8)
@@ -90,9 +88,8 @@ class WandBLogger:
                 tags=[cfg.models.name, f"env_{cfg.env.get('hard_mode', False)}"],
                 save_code=True,
             )
-        # Per-namespace flat row lists; grow across eval steps
+        # Per-namespace row lists for terrain distribution; grow across eval steps
         self._terrain_history: dict[str, list] = {}
-        self._eval_history: dict[str, dict[str, list]] = {}
 
     def log(self, data: dict[str, Any], step: int | None = None) -> None:
         if self.enabled and self._run is not None:
@@ -187,60 +184,6 @@ class WandBLogger:
             },
         )
         self._run.log({f"{namespace}/terrain_distribution": chart}, step=step)
-
-    def log_eval_charts(
-        self,
-        per_ep_data: dict[str, list[float]],
-        namespace: str,
-        step: int,
-    ) -> None:
-        """Append aggregated eval metrics to growing WandB Tables (one per metric).
-
-        Each call appends a ``[step, mean, lower_std, upper_std]`` row per metric.
-        Tables grow across eval steps so custom Vega shaded-area charts can be
-        configured in the W&B UI using the JSON spec stored in
-        ``docs/wandb_specs/eval_metric.json``.
-
-        Args:
-            per_ep_data: ``{metric_name: [val_ep0, val_ep1, …]}`` from
-                CognilandSummarizer.per_episode_metrics().
-            namespace: e.g. ``"val_det"`` → keys ``"val_det/tables/eval_{metric}"``.
-            step: WandB x-axis step.
-        """
-        if not self.enabled or self._run is None:
-            return
-        import wandb
-
-        if namespace not in self._eval_history:
-            self._eval_history[namespace] = {}
-        ns_hist = self._eval_history[namespace]
-
-        for metric_name, episode_values in per_ep_data.items():
-            arr = np.array(episode_values, dtype=float)
-            mean = float(arr.mean())
-            std = float(arr.std())
-
-            label = metric_name.replace("_", " ").title()
-            if metric_name not in ns_hist:
-                ns_hist[metric_name] = []
-            ns_hist[metric_name].append([step, mean, mean - std, mean + std, label])
-
-            table = wandb.Table(
-                data=ns_hist[metric_name],
-                columns=["step", "mean", "lower_std", "upper_std", "label"],
-            )
-            chart = wandb.plot_table(
-                vega_spec_name="crusoe/eval_mean_std",
-                data_table=table,
-                fields={
-                    "step": "step",
-                    "mean": "mean",
-                    "lower_std": "lower_std",
-                    "upper_std": "upper_std",
-                    "label": "label",
-                },
-            )
-            self._run.log({f"{namespace}/env/{metric_name}": chart}, step=step)
 
     def log_model_artifact(self, name: str, path: str, aliases: list[str] = ["latest"]) -> None:
         """Uploads a model checkpoint to WandB as an artifact."""
