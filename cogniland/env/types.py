@@ -23,7 +23,7 @@ class EnvState(NamedTuple):
     """Full batched environment state."""
 
     position: torch.Tensor        # [B, 2] long
-    minimap: torch.Tensor         # [B, 2, 2*max_ray+1, 2*max_ray+1] float (ch0=heightmap, ch1=visibility mask)
+    minimap: torch.Tensor         # [B, 3, 2*max_ray+1, 2*max_ray+1] float (ch0=heightmap, ch1=target indicator, ch2=visibility mask)
     compass: torch.Tensor         # [B, 2] float — unit direction vector (position − target) / dist
     terrain_idx: torch.Tensor     # [B] float
     resources: torch.Tensor       # [B] float

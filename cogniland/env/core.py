@@ -57,6 +57,7 @@ def env_step(
     minimap = compute_minimap_batch(
         world_map, new_state.position, config.minimap_max_ray,
         terrain_idx, config.minimap_occlude, config.minimap_clear_tolerance,
+        target_pos=target_pos,
     )
     new_state = new_state._replace(minimap=minimap)
 
@@ -332,15 +333,18 @@ def compute_minimap_batch(
     terrain_indices: torch.Tensor,
     occlude: bool,
     min_clear_lv: float,
+    target_pos: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Compute minimap with terrain-dependent visibility for a batch of positions.
 
     Args:
         world_map: [H, W] shared or [B, H, W] per-env heightmap.
+        target_pos: optional [B, 2] int tensor of target positions.
 
-    Returns: [B, 2, 2*max_ray+1, 2*max_ray+1] channel-first float tensor.
+    Returns: [B, 3, 2*max_ray+1, 2*max_ray+1] channel-first float tensor.
         Channel 0 = heightmap values (zero outside visibility circle)
-        Channel 1 = binary visibility mask (1.0 inside, 0.0 outside)
+        Channel 1 = target indicator (1.0 if target cell is in view, gated by visibility)
+        Channel 2 = binary visibility mask (1.0 inside, 0.0 outside)
     """
     B = positions.shape[0]
     per_env = world_map.dim() == 3
@@ -348,7 +352,7 @@ def compute_minimap_batch(
     diameter = 2 * max_ray + 1
     device = positions.device
 
-    maps = torch.zeros(B, 2, diameter, diameter, device=device)
+    maps = torch.zeros(B, 3, diameter, diameter, device=device)
     patches = torch.zeros(B, diameter, diameter, device=device)
 
     # 1. Slice out patches sequentially
@@ -388,8 +392,21 @@ def compute_minimap_batch(
     else:
         final_masks = dist_masks
 
+    # Build target indicator channel
+    target_mask = torch.zeros(B, diameter, diameter, device=device)
+    if target_pos is not None:
+        for b in range(B):
+            cy, cx = positions[b, 0].item(), positions[b, 1].item()
+            ty, tx = target_pos[b, 0].item(), target_pos[b, 1].item()
+            # Offset of target relative to patch top-left corner
+            patch_y = int(ty - cy + max_ray)
+            patch_x = int(tx - cx + max_ray)
+            if 0 <= patch_y < diameter and 0 <= patch_x < diameter:
+                target_mask[b, patch_y, patch_x] = 1.0
+
     # Combine
     maps[:, 0] = patches * final_masks
-    maps[:, 1] = final_masks
+    maps[:, 1] = target_mask * final_masks  # target indicator, gated by visibility
+    maps[:, 2] = final_masks
 
     return maps

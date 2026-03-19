@@ -2,7 +2,7 @@ name: ppo
 
 # ── Network architecture ──
 scalar_dim: 5            # Number of scalar inputs (compass_x, compass_y, terrain_idx, resources, hp)
-minimap_channels: 2      # Minimap input channels (ch0 = heightmap, ch1 = visibility mask)
+minimap_channels: 3      # Minimap input channels (ch0 = heightmap, ch1 = target indicator, ch2 = visibility mask)
 cnn_channels: 32         # Output channels of second CNN conv layer (first = cnn_channels // 2)
 cnn_out_spatial: 4       # AdaptiveAvgPool2d output size → cnn_out = cnn_channels × cnn_out_spatial²
 scalar_hidden: 64        # Scalar MLP hidden width

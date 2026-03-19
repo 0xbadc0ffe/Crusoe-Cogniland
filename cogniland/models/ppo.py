@@ -37,7 +37,7 @@ class ActorCritic(nn.Module):
     def __init__(
         self,
         scalar_dim: int = 7,
-        minimap_channels: int = 2,
+        minimap_channels: int = 3,
         hidden_dim: int = 128,
         action_dim: int = 5,
         cnn_channels: int = 32,
