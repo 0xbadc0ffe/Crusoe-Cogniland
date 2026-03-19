@@ -457,7 +457,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
     update_seen(state)
 
     def map_to_surface_with_fog():
-        fog = np.where(seen_mask[:, :, None], 1.0, 0.35).astype(np.float32)
+        fog = np.where(seen_mask[:, :, None], 1.0, 0.55).astype(np.float32)
         rgb = (base_map_rgb * fog).astype(np.uint8)
         surf = pygame.Surface((map_size, map_size))
         pygame.surfarray.blit_array(surf, rgb.transpose(1, 0, 2))

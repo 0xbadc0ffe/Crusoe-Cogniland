@@ -182,8 +182,8 @@ class IslandGameDemo:
 
     def draw_map(self):
         """Draw world map with fog-of-war darkening for unseen cells."""
-        # Apply fog: darken unseen cells to 35% brightness
-        fog = np.where(self.seen_mask[:, :, None], 1.0, 0.35).astype(np.float32)
+        # Apply fog: darken unseen cells to 55% brightness
+        fog = np.where(self.seen_mask[:, :, None], 1.0, 0.55).astype(np.float32)
         rgb = (self._base_map_rgb * fog).astype(np.uint8)  # [H, W, 3]
 
         # Convert to pygame surface via surfarray (fast path)
