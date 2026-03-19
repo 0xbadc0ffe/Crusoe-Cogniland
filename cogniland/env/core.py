@@ -402,7 +402,12 @@ def compute_minimap_batch(
             patch_y = int(ty - cy + max_ray)
             patch_x = int(tx - cx + max_ray)
             if 0 <= patch_y < diameter and 0 <= patch_x < diameter:
-                target_mask[b, patch_y, patch_x] = 1.0
+                # Draw a 3x3 block to prevent the signal from fading during CNN Pooling
+                y_start = max(0, patch_y - 1)
+                y_end   = min(diameter, patch_y + 2)
+                x_start = max(0, patch_x - 1)
+                x_end   = min(diameter, patch_x + 2)
+                target_mask[b, y_start:y_end, x_start:x_end] = 1.0
 
     # Combine
     maps[:, 0] = patches * final_masks
