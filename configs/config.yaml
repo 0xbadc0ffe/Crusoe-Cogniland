@@ -19,7 +19,7 @@ logging:
   trajectory:
     max_saved_per_eval: 3
   eval:
-    hp_danger_threshold: 30.0
+    hp_danger_threshold: 50.0
     deterministic_episodes: 16
     stochastic_episodes: 16
     eval_seed_offset: 1000

@@ -293,6 +293,13 @@ class PPOAgent:
         # Cache EvalRunner to avoid rebuilding on every periodic eval
         self._eval_runner = EvalRunner(self.eval_env, self.env_config, device)
 
+        import os
+        run_id = logger._run.id if logger.enabled and logger._run else "local"
+        ckpt_dir = f"artifacts/{run_id}"
+        os.makedirs(ckpt_dir, exist_ok=True)
+        best_ckpt_path = f"{ckpt_dir}/ckpt_best.pt"
+        best_val_sr = -1.0
+
         start_time = time.time()
 
         for update in range(start_update, num_updates + 1):
@@ -347,6 +354,11 @@ class PPOAgent:
                 print(f"  deterministic success: {det_sr:.3f}, "
                       f"stochastic success: {sto_sr:.3f}")
 
+                if det_sr > best_val_sr:
+                    best_val_sr = det_sr
+                    save_checkpoint(model, optimizer, global_step, path=best_ckpt_path)
+                    print(f"  New best val success rate {det_sr:.3f} — saved {best_ckpt_path}")
+
             # Periodic checkpoint
             if update % cfg.models.training.checkpoint_every_n_updates == 0:
                 import os
@@ -358,24 +370,18 @@ class PPOAgent:
                 save_checkpoint(model, optimizer, global_step, path=ckpt_path)
                 print(f"  Checkpoint saved locally at {ckpt_path}")
 
-        # ── Final checkpoint + optional WandB upload ──
-        import os
-        run_id = logger._run.id if logger.enabled and logger._run else "local"
-        ckpt_dir = f"artifacts/{run_id}"
-        os.makedirs(ckpt_dir, exist_ok=True)
-
-        final_ckpt_path = f"{ckpt_dir}/ckpt_final.pt"
-        save_checkpoint(model, optimizer, global_step, path=final_ckpt_path)
-        print(f"  Final checkpoint saved locally at {final_ckpt_path}")
-
+        # ── Upload best checkpoint to WandB ──
+        if best_val_sr < 0:  # no eval ran — save current weights as fallback
+            save_checkpoint(model, optimizer, global_step, path=best_ckpt_path)
+        print(f"  Best checkpoint: val_det success {best_val_sr:.3f} → {best_ckpt_path}")
         store_wandb = cfg.logging.wandb.get("store_last_ckpt", False)
         if store_wandb:
             logger.log_model_artifact(
                 name=f"{cfg.models.name}_agent",
-                path=final_ckpt_path,
-                aliases=["latest", f"update_{num_updates}"]
+                path=best_ckpt_path,
+                aliases=["best", f"sr{best_val_sr:.3f}"]
             )
-            print(f"  Final checkpoint uploaded to WandB as artifact")
+            print(f"  Best checkpoint uploaded to WandB as artifact")
 
         # ── Final test evaluation ──
         print("Running final test evaluation...")

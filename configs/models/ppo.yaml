@@ -14,7 +14,7 @@ training:
   # ── Rollout collection ──
   parallel_envs: 32             # How many environments run in parallel during rollout
   moves_per_rollout: 256        # How many moves each env makes before the model learns
-  total_env_moves: 15_000_000      # Total moves budget across all envs for the entire training
+  total_env_moves: 5_000_000      # Total moves budget across all envs for the entire training
 
   # ── PPO optimisation ──
   epochs_per_update: 2          # How many times the model re-studies each rollout's data
@@ -35,4 +35,4 @@ training:
   # ── Evaluation & checkpointing ──
   eval_every_n_updates: 10     # Run evaluation every N training updates
   eval_episodes: 16             # Number of full episodes per evaluation
-  checkpoint_every_n_updates: 50 # Save model checkpoint every N training updates
+  checkpoint_every_n_updates: 100 # Save model checkpoint every N training updates

@@ -162,7 +162,7 @@ class EvalRunner:
             trajectories[i] = [tuple(p)]
 
         # Seed observed mask with initial visibility at spawn
-        _init_vis = eval_env.state.minimap[:, 1]  # [N, D, D]
+        _init_vis = eval_env.state.minimap[:, 2]  # [N, D, D] visibility mask (ch2)
         _init_pos = eval_env.state.position        # [N, 2]
         _world_rows = (_init_pos[:, 0].view(-1, 1, 1) + dy_grid).clamp(0, H - 1)
         _world_cols = (_init_pos[:, 1].view(-1, 1, 1) + dx_grid).clamp(0, W - 1)
@@ -228,7 +228,7 @@ class EvalRunner:
             explore_idx = torch.where(still_running & ~just_finished)[0]
             if explore_idx.numel() > 0:
                 G = explore_idx.shape[0]
-                vis_masks = eval_env.state.minimap[explore_idx, 1]       # [G, D, D]
+                vis_masks = eval_env.state.minimap[explore_idx, 2]       # [G, D, D] visibility mask (ch2)
                 pos_g = eval_env.state.position[explore_idx]              # [G, 2]
                 world_rows = (pos_g[:, 0].view(G, 1, 1) + dy_grid).clamp(0, H - 1)  # [G, D, D]
                 world_cols = (pos_g[:, 1].view(G, 1, 1) + dx_grid).clamp(0, W - 1)  # [G, D, D]

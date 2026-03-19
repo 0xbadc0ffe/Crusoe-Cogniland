@@ -114,7 +114,7 @@ def render_trajectory(world_map, positions, target, reached_target, env_idx,
 
     # Fog-of-war: darken cells the agent never observed
     if observed_mask is not None:
-        fog = np.where(observed_mask[:, :, None], 1.0, 0.55).astype(np.float32)
+        fog = np.where(observed_mask[:, :, None], 1.0, 0.70).astype(np.float32)
         rgb = rgb * fog
 
     fig, ax = plt.subplots(figsize=(14, 14), dpi=150)
