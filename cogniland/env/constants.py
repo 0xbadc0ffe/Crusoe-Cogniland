@@ -18,14 +18,14 @@ palette = {
 # Terrain levels: 0=ocean .. 8=mountains
 # Each entry: name, height threshold, movement cost, palette key
 TERRAIN_LEVELS = {
-    0: {"name": "ocean", "threshold": 0.007, "cost": 1.0, "color": "deepocean"},
-    1: {"name": "deep_water", "threshold": 0.025, "cost": 1.25, "color": "ocean"},
-    2: {"name": "water", "threshold": 0.05, "cost": 1.5, "color": "blue"},
-    3: {"name": "beach", "threshold": 0.06, "cost": 1.75, "color": "beach"},
-    4: {"name": "sandy", "threshold": 0.1, "cost": 2.0, "color": "sandy"},
-    5: {"name": "grassland", "threshold": 0.25, "cost": 2.25, "color": "green"},
-    6: {"name": "forest", "threshold": 0.6, "cost": 3.0, "color": "darkgreen"},
-    7: {"name": "rocky", "threshold": 0.7, "cost": 3.5, "color": "mountain"},
+    0: {"name": "ocean", "threshold": 0.01, "cost": 1.0, "color": "deepocean"},
+    1: {"name": "deep_water", "threshold": 0.035, "cost": 1.25, "color": "ocean"},
+    2: {"name": "water", "threshold": 0.08, "cost": 1.5, "color": "blue"},
+    3: {"name": "beach", "threshold": 0.10, "cost": 1.75, "color": "beach"},
+    4: {"name": "sandy", "threshold": 0.13, "cost": 2.0, "color": "sandy"},
+    5: {"name": "grassland", "threshold": 0.17, "cost": 2.25, "color": "green"},
+    6: {"name": "forest", "threshold": 0.21, "cost": 3.0, "color": "darkgreen"},
+    7: {"name": "rocky", "threshold": 0.45, "cost": 3.5, "color": "mountain"},
     8: {"name": "mountains", "threshold": 1.0, "cost": 4.0, "color": "snow"},
 }
 
