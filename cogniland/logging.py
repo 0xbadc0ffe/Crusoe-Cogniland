@@ -91,9 +91,19 @@ class WandBLogger:
         # Per-namespace row lists for terrain distribution; grow across eval steps
         self._terrain_history: dict[str, list] = {}
 
+    _SUMMARY_SUFFIXES = ("_std", "_max", "_min")
+
     def log(self, data: dict[str, Any], step: int | None = None) -> None:
-        if self.enabled and self._run is not None:
-            self._run.log(data, step=step)
+        """Log scalars. Keys ending in _std/_max/_min go to run summary only
+        (no time-series plot); all other keys are logged normally."""
+        if not self.enabled or self._run is None:
+            return
+        summary = {k: v for k, v in data.items() if k.endswith(self._SUMMARY_SUFFIXES)}
+        series  = {k: v for k, v in data.items() if k not in summary}
+        if series:
+            self._run.log(series, step=step)
+        if summary:
+            self._run.summary.update(summary)
 
     def log_trajectory_images(
         self, figures: list, captions: list[str], env_indices: list[int], step: int,
