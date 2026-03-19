@@ -18,6 +18,7 @@ Controls during playback:
 """
 
 import os
+import math
 import re
 import sys
 from pathlib import Path
@@ -71,10 +72,21 @@ ENV_MAP_SIZE = _env_cfg.get("size", 250)
 # ---------------------------------------------------------------------------
 WINDOW_W, WINDOW_H = 1200, 800
 MAP_DISPLAY_SIZE = 550          # pixels for the big map
-MINIMAP_DISPLAY_SIZE = 180
+MINIMAP_DISPLAY_SIZE = 220
 ACTION_NAMES = {0: "↑", 1: "↓", 2: "→", 3: "←", 4: "•"}
 
 # Colors
+def draw_star(surface, cx, cy, r_outer, r_inner, color=(255, 215, 0), n_points=5):
+    """Draw a filled n-pointed star centred at (cx, cy)."""
+    pts = []
+    for i in range(2 * n_points):
+        r = r_outer if i % 2 == 0 else r_inner
+        angle = math.pi * i / n_points - math.pi / 2
+        pts.append((cx + r * math.cos(angle), cy + r * math.sin(angle)))
+    pygame.draw.polygon(surface, color, pts)
+    pygame.draw.polygon(surface, (0, 0, 0), pts, 1)
+
+
 COLORS = {k: tuple(v) for k, v in palette.items()}
 COLORS.update({
     "player":   (255,  50,  50),
@@ -370,8 +382,7 @@ def screen_pick_positions(screen, clock, env_config,
             pygame.draw.circle(screen, COLORS["white"], (sx, sy), 7, 1)
         if target is not None:
             tx, ty = world_to_screen(*target)
-            pygame.draw.circle(screen, COLORS["target"], (tx, ty), 7)
-            pygame.draw.circle(screen, COLORS["white"], (tx, ty), 7, 1)
+            draw_star(screen, tx, ty, r_outer=9, r_inner=4)
 
         # Side panel — terrain legend
         panel_x = MAP_X + MAP_DISPLAY_SIZE + 30
@@ -448,7 +459,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
     _dy, _dx = np.meshgrid(np.arange(_D) - _max_ray, np.arange(_D) - _max_ray, indexing="ij")
 
     def update_seen(st):
-        vis = st.minimap[0, 1].numpy()
+        vis = st.minimap[0, 2].numpy()
         cy, cx = int(st.position[0, 0].item()), int(st.position[0, 1].item())
         rows = np.clip(cy + _dy, 0, map_size - 1)
         cols = np.clip(cx + _dx, 0, map_size - 1)
@@ -579,8 +590,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
         # Target marker
         tr, tc = target_rc
         tx, ty = world_to_screen(tr, tc)
-        pygame.draw.circle(screen, COLORS["target"], (tx, ty), 7)
-        pygame.draw.circle(screen, COLORS["white"], (tx, ty), 7, 1)
+        draw_star(screen, tx, ty, r_outer=9, r_inner=4)
 
         # Player marker
         pr, pc = state.position[0].cpu().tolist()
@@ -600,8 +610,8 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
         # ── Minimap ──
         mm_x = MAP_X + MAP_DISPLAY_SIZE + 30
         mm_y = MAP_Y
-        mm_label = font_med.render("Agent Minimap", True, COLORS["panel_fg"])
-        screen.blit(mm_label, (mm_x, mm_y - 22))
+        mm_label = font_small.render("Agent view  (\u25b2 = target)", True, COLORS["panel_fg"])
+        screen.blit(mm_label, (mm_x, mm_y - 16))
 
         minimap_data = state.minimap[0, 0]  # [H, W]
         mm_surf = heightmap_to_surface(minimap_data, MINIMAP_DISPLAY_SIZE)
@@ -610,6 +620,28 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
         cx = mm_x + MINIMAP_DISPLAY_SIZE // 2
         cy = mm_y + MINIMAP_DISPLAY_SIZE // 2
         pygame.draw.circle(screen, COLORS["player"], (cx, cy), 3)
+
+        # Compass arrow pointing toward target
+        compass = state.compass[0]
+        dy_dir = -float(compass[0])
+        dx_dir = -float(compass[1])
+        mag = (dx_dir ** 2 + dy_dir ** 2) ** 0.5
+        if mag > 1e-6:
+            dx_dir /= mag
+            dy_dir /= mag
+            arrow_len = 35
+            ex = int(cx + dx_dir * arrow_len)
+            ey = int(cy + dy_dir * arrow_len)
+            arrow_color = (255, 220, 50)
+            pygame.draw.line(screen, arrow_color, (cx, cy), (ex, ey), 2)
+            head_len = 9
+            angle = math.atan2(dy_dir, dx_dir)
+            back = angle + math.pi
+            for side in (math.pi / 5, -math.pi / 5):
+                hx = int(ex + head_len * math.cos(back + side))
+                hy = int(ey + head_len * math.sin(back + side))
+                pygame.draw.line(screen, arrow_color, (ex, ey), (hx, hy), 2)
+
         pygame.draw.rect(screen, COLORS["white"], (mm_x, mm_y, MINIMAP_DISPLAY_SIZE, MINIMAP_DISPLAY_SIZE), 1)
 
         # ── Stats panel ──
@@ -644,20 +676,15 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
             screen.blit(val, (stats_x + 90, stats_y - 2))
             stats_y += 28
 
-        # Controls hint
-        stats_y += 15
-        controls = [
-            "+/- : Speed",
-            "P   : Pause",
-            "R   : Reset",
-            "ESC : Quit",
-        ]
+        # Controls — right column
+        ctrl_x = mm_x + MINIMAP_DISPLAY_SIZE + 20
+        ctrl_y = MAP_Y
         ctrl_title = font_med.render("CONTROLS", True, COLORS["blue_ui"])
-        screen.blit(ctrl_title, (stats_x, stats_y)); stats_y += 26
-        for ctrl in controls:
+        screen.blit(ctrl_title, (ctrl_x, ctrl_y)); ctrl_y += 26
+        for ctrl in ["+/- : Speed", "P   : Pause", "R   : Reset", "ESC : Quit"]:
             ct = font_small.render(ctrl, True, COLORS["gray"])
-            screen.blit(ct, (stats_x, stats_y))
-            stats_y += 20
+            screen.blit(ct, (ctrl_x, ctrl_y))
+            ctrl_y += 20
 
         # ── Game over overlay ──
         if game_over:

@@ -305,6 +305,7 @@ class EvalRunner:
                 "directness": directness[i].item(),
                 "risk_exposure": risk_exposure[i].item(),
                 "exploration": exploration[i].item(),
+                "terrain_cost": final_cost[i].item(),
             }
             for j, name in enumerate(_TERRAIN_NAMES):
                 metrics[f"terrain_visit_{name}"] = terrain_visit_frac[i, j].item()

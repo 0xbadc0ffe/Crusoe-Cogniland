@@ -398,6 +398,12 @@ class PPOAgent:
         ent_coef = cfg.models.training.entropy_bonus_weight
         max_grad_norm = cfg.models.training.max_grad_norm
 
+        # Compute explained variance and return estimation variance from rollout values
+        rollout_values = flat_data["values"].reshape(-1)
+        y_var = returns.var()
+        explained_variance = (1.0 - (returns - rollout_values).var() / (y_var + 1e-8)).item()
+        return_estimation_variance = rollout_values.var().item()
+
         adv = advantages
         if adv.std() > 0:
             adv = (adv - adv.mean()) / (adv.std() + 1e-8)
@@ -458,6 +464,8 @@ class PPOAgent:
             "train/model/ppo/entropy": total_entropy / n_updates,
             "train/model/ppo/clipfrac": total_clipfrac / n_updates,
             "train/model/ppo/approx_kl": total_approx_kl / n_updates,
+            "train/model/ppo/explained_variance": explained_variance,
+            "train/model/ppo/return_estimation_variance": return_estimation_variance,
         }
 
     def _run_eval(self, cfg, logger=None, global_step: int = 0, split: str = "val"):
@@ -532,7 +540,11 @@ class PPOAgent:
                     observed_mask=ep.observed_mask,
                 )
                 figures.append(fig)
-                captions.append(f"env{i} {ep.outcome} {ep.episode_length} moves")
+                captions.append(
+                    f"{ep.outcome.upper()} ({ep.episode_length} moves) "
+                    f"- Time: {ep.metrics['terrain_cost']:.1f}  "
+                    f"Return: {ep.total_return:.1f}"
+                )
                 env_indices.append(i)
 
             if figures:
@@ -540,11 +552,11 @@ class PPOAgent:
                 for fig in figures:
                     plt.close(fig)
 
-            # Per-metric charts, terrain scalars, and eval tables per mode
+            # Terrain distribution (val only) and per-episode tables
             for result in [det_result, sto_result]:
                 ns = f"{result.split}_{result.mode}"
-                logger.log_eval_charts(summarizer.per_episode_metrics(result), ns, step=global_step)
-                logger.log_terrain_scalars(summarizer.terrain_pcts(result), step=global_step, namespace=ns)
+                if split == "val":
+                    logger.log_terrain_scalars(summarizer.terrain_pcts(result), step=global_step, namespace=ns)
                 columns, rows = summarizer.eval_table_rows(result)
                 logger.log_eval_table(columns, rows, step=global_step, namespace=ns)
 
