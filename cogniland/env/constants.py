@@ -31,7 +31,7 @@ TERRAIN_LEVELS = {
 
 # Visibility ranges for minimap based on terrain
 VISIBILITY_RANGES = {
-    0: 10, 1: 8, 2: 6,  # water levels
+    0: 16, 1: 12, 2: 8,  # water levels
     3: 5, 4: 5,          # beach, sandy
     5: 5,                # grassland
     6: 3,                # forest — limited canopy visibility

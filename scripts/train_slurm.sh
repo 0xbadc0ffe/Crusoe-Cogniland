@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=cogniland_ppo
+#SBATCH --job-name=train_crusoe
 #SBATCH -D ./
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=fiwang@ethz.ch
@@ -9,10 +9,12 @@
 #SBATCH --time=12:00:00     
 #SBATCH --output=logs/cogniland_%j.log
 #SBATCH --error=logs/cogniland_%j.err
+#SBATCH --export=ALL,SRC_DIR=/cluster/raid/home/fwang
 
-# ── Environment ──────────────────────────────────────────────────────────────
-export PATH="/cluster/software/anaconda3/bin:$PATH"
-source activate /cluster/raid/home/fwang/.conda/envs/crusoe
+# Use conda environment directly
+CONDA_ENV="/cluster/raid/home/fwang/.conda/envs/crusoe"
+export PATH="$CONDA_ENV/bin:$PATH"
+export CONDA_PREFIX="$CONDA_ENV"
 
 PROJECT_DIR="/cluster/raid/home/fwang/Crusoe-Cogniland"
 cd "$PROJECT_DIR"
