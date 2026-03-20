@@ -14,7 +14,7 @@ import torch.optim as optim
 
 from cogniland.env.constants import NUM_ACTIONS
 from cogniland.env.dataset import MapDataset
-from cogniland.env.types import CurriculumStage, EnvConfig
+from cogniland.env.types import CurriculumStage, EnvConfig, RewardConfig
 from cogniland.env.wrappers import BatchedIslandEnv
 from cogniland.eval import CognilandSummarizer, EvalRunner
 from cogniland.logging import WandBLogger, log_rollout_stats
@@ -220,7 +220,7 @@ class PPOAgent:
 
     def train(self, cfg):
         """Full PPO training loop: rollout → GAE → update → eval → checkpoint."""
-        set_reproducibility(cfg.env.seed)
+        set_reproducibility(cfg.env.map_generation.seed)
         device = self.device
         model = self.model
 
@@ -228,8 +228,23 @@ class PPOAgent:
         print(f"Device: {device}")
         print(f"Model: ppo")
 
+        rw_cfg = cfg.models.get("reward", {})
+        reward_config = RewardConfig(
+            lambda_p=rw_cfg.get("lambda_p", 0.1),
+            lambda_t=rw_cfg.get("lambda_t", 60.0),
+            lambda_d=rw_cfg.get("lambda_d", 0.6),
+            reach_bonus=rw_cfg.get("reach_bonus", 100.0),
+        )
+
+        training_cfg = cfg.get("training", {})
+        map_pool_size = training_cfg.get("map_pool_size", 16)
+        
+        dataset_cfg = training_cfg.get("dataset", {})
+        dataset_path = dataset_cfg.get("path", "")
+        curriculum_switch_steps = dataset_cfg.get("curriculum_switch_steps", 0)
+        curriculum_easy_radius = dataset_cfg.get("curriculum_easy_radius", 40)
+
         # Load map dataset if configured (train/val/test splits)
-        dataset_path = self.env_config.dataset_path
         dataset: MapDataset | None = None
         if dataset_path:
             print(f"Loading MapDataset from {dataset_path} ...")
@@ -241,6 +256,9 @@ class PPOAgent:
             self.env_config,
             num_envs=cfg.models.training.parallel_envs,
             world_maps=dataset.train_maps if dataset else None,
+            map_pool_size=map_pool_size,
+            reward_config=reward_config,
+            curriculum_easy_radius=curriculum_easy_radius,
         )
         optimizer = optim.Adam(model.parameters(), lr=cfg.models.training.learning_rate, eps=1e-5)
 
@@ -254,13 +272,12 @@ class PPOAgent:
         print(f"Total updates: {num_updates}, Moves per update: {num_envs * rollout_steps}")
 
         # Curriculum setup
-        curriculum_switch_steps = self.env_config.curriculum_switch_steps
         curriculum_active = curriculum_switch_steps > 0
         if curriculum_active:
             env.set_curriculum_stage(CurriculumStage.EASY)
             print(f"Curriculum: EASY stage until global_step={curriculum_switch_steps}")
 
-        obs = env.reset(seed=cfg.env.seed)
+        obs = env.reset(seed=cfg.env.map_generation.seed)
         global_step = 0
         start_update = 1
 
@@ -273,7 +290,7 @@ class PPOAgent:
 
         # Pre-generate and cache the evaluation environment (val split maps)
         eval_cfg = cfg.logging.get("eval", {})
-        eval_seed = cfg.env.seed + eval_cfg.get("eval_seed_offset", 1000)
+        eval_seed = cfg.env.map_generation.seed + eval_cfg.get("eval_seed_offset", 1000)
         n_eps_det = eval_cfg.get("deterministic_episodes", cfg.models.training.eval_episodes)
         n_eps_sto = eval_cfg.get("stochastic_episodes", cfg.models.training.eval_episodes)
         max_eval_eps = max(n_eps_det, n_eps_sto)
@@ -282,6 +299,9 @@ class PPOAgent:
             self.env_config,
             num_envs=max_eval_eps,
             world_maps=dataset.val_maps if dataset else None,
+            map_pool_size=map_pool_size,
+            reward_config=reward_config,
+            curriculum_easy_radius=curriculum_easy_radius,
         )
         self.eval_env.reset(seed=eval_seed)
 
@@ -474,12 +494,11 @@ class PPOAgent:
             "train/model/ppo/return_estimation_variance": return_estimation_variance,
         }
 
-    def _run_eval(self, cfg, logger=None, global_step: int = 0, split: str = "val"):
+    def _run_eval(self, cfg, logger=None, global_step: int = 0, split: str = "val", rw_cfg: RewardConfig|None=None, c_rad: int=40, mp_size: int=16):
         """Orchestrator: run deterministic + stochastic eval, merge metrics, log."""
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        from cogniland.env.constants import TERRAIN_LEVELS, palette
 
         eval_cfg = cfg.logging.get("eval", {})
         n_eps_det = eval_cfg.get("deterministic_episodes", cfg.models.training.eval_episodes)
@@ -495,6 +514,9 @@ class PPOAgent:
                 self.env_config,
                 num_envs=self._max_eval_eps,
                 world_maps=self._test_maps,
+                map_pool_size=mp_size,
+                reward_config=rw_cfg,
+                curriculum_easy_radius=c_rad,
             )
             test_env.reset(seed=self._eval_seed + 1000)
             runner = EvalRunner(test_env, self.env_config, self.device)
@@ -542,7 +564,7 @@ class PPOAgent:
                 fig = render_trajectory(
                     world_map_i, ep.trajectory,
                     targets[i], ep.outcome == "success", i,
-                    TERRAIN_LEVELS, palette,
+                    eval_env.compiled,
                     observed_mask=ep.observed_mask,
                 )
                 figures.append(fig)

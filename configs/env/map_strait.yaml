@@ -1,8 +1,9 @@
 defaults:
   - default
 
-map_name: "the_strait"
-spawn_r: 10
-spawn_c: 2
-target_r: 10
-target_c: 18
+custom_map:
+  map_name: "the_strait"
+  spawn_r: 10
+  spawn_c: 2
+  target_r: 10
+  target_c: 18

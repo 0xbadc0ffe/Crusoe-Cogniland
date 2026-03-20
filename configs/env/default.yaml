@@ -1,53 +1,130 @@
-# Island generation
-size: 250
-scale: 0.33
-octaves: 6
-persistence: 0.5
-lacunarity: 2.0
-seed: 42
-filtering: "square"
-sink_mode: 1
+# ── Island generation ──
+map_generation:
+  size: 250
+  scale: 0.33
+  octaves: 6
+  persistence: 0.5
+  lacunarity: 2.0
+  seed: 42
+  filtering: "square"
+  sink_mode: 1
 
-# Agent parameters
-init_hp: 100.0
-max_hp: 100.0
-init_resources: 50.0
-max_resources: 100.0
+# ── Agent parameters ──
+agent:
+  init_hp: 100.0
+  max_hp: 100.0
+  init_resources: 50.0
+  max_resources: 100.0
+  land_to_water_resource_cost: 20.0   # Boat construction cost
+  no_res_hp_multiplier: 2.0           # HP lost per missing resource unit
 
-# Terrain effects
-land_to_water_resource_cost: 20.0     # Boat construction cost
-land_resource_drain: 1.5              # Beach, sandy, grassland drain per step
-no_res_hp_multiplier: 2.0             # HP lost per missing resource unit
-forest_hp_gain: 8.0                   # Healing per step when below max HP
-forest_resource_gain: 5.0             # Resources per step when at max HP
-sea_resource_costs: [0.7, 0.5, 0.3]  # Ocean, deep_water, water
-mountain_resource_costs: [2.0, 5.0]  # Rocky, mountains
+# ── Minimap ──
+minimap:
+  max_ray: 22                  # CNN spatial dim = 2*max_ray+1 = 45
+  occlude: true
+  clear_tolerance: 0.1
 
-# Minimap
-minimap_max_ray: 22               # CNN spatial dim = 2*max_ray+1 = 45
-minimap_occlude: true
-minimap_clear_tolerance: 0.1
-
-# Episode limits
+# ── Episode limits ──
 max_steps: 1000
 
-# Reward coefficients
-lambda_p: 0.1                  # progress reward weight (Manhattan distance approach)
-lambda_t: 60.0                 # time-efficiency bonus weight at success
-lambda_d: 0.6                  # death penalty = lambda_d * reward_reach_bonus
-reward_reach_bonus: 100.0
+# ── Custom map support (empty = procedurally generated) ──
+custom_map:
+  map_name: ""
+  spawn_r: -1
+  spawn_c: -1
+  target_r: -1
+  target_c: -1
 
-# Map pool (Level Replay) — number of procedural maps to pre-generate
-map_pool_size: 16
+# ── Terrain definitions (single source of truth) ──
+# Each entry fully defines one terrain level.
+# Tags drive engine logic: "water" triggers boat costs, "forest" triggers healing/gathering.
+terrains:
+  - name: ocean
+    threshold: 0.007
+    move_cost: 1.0
+    res_drain: 0.7
+    hp_gain: 0.0
+    res_gain: 0.0
+    visibility: 10
+    color: [5, 35, 225]
+    tags: [water]
 
-# Custom map support (empty = procedurally generated)
-map_name: ""
-spawn_r: -1
-spawn_c: -1
-target_r: -1
-target_c: -1
+  - name: deep_water
+    threshold: 0.025
+    move_cost: 1.25
+    res_drain: 0.5
+    hp_gain: 0.0
+    res_gain: 0.0
+    visibility: 8
+    color: [25, 65, 225]
+    tags: [water]
 
-# Dataset and curriculum (optional)
-dataset_path: "data/maps_seed42_train128_val16_test16.pt"  # path to .pt file from scripts/generate_dataset.py; "" = procedural
-curriculum_switch_steps: 1_000_000     # 0 = disabled; switch EASY → NORMAL at this global_step
-curriculum_easy_radius: 40     # radius (cells) around map center for EASY spawn/target
+  - name: water
+    threshold: 0.05
+    move_cost: 1.5
+    res_drain: 0.3
+    hp_gain: 0.0
+    res_gain: 0.0
+    visibility: 6
+    color: [65, 105, 225]
+    tags: [water]
+
+  - name: beach
+    threshold: 0.06
+    move_cost: 1.75
+    res_drain: 1.5
+    hp_gain: 0.0
+    res_gain: 0.0
+    visibility: 5
+    color: [238, 214, 175]
+    tags: [land]
+
+  - name: sandy
+    threshold: 0.1
+    move_cost: 2.0
+    res_drain: 1.5
+    hp_gain: 0.0
+    res_gain: 0.0
+    visibility: 5
+    color: [210, 180, 140]
+    tags: [land]
+
+  - name: grassland
+    threshold: 0.25
+    move_cost: 2.25
+    res_drain: 1.5
+    hp_gain: 0.0
+    res_gain: 0.0
+    visibility: 5
+    color: [34, 139, 34]
+    tags: [land]
+
+  - name: forest
+    threshold: 0.6
+    move_cost: 3.0
+    res_drain: 0.0
+    hp_gain: 8.0
+    res_gain: 5.0
+    visibility: 3
+    color: [0, 100, 0]
+    tags: [land, forest]
+
+  - name: rocky
+    threshold: 0.7
+    move_cost: 3.5
+    res_drain: 2.0
+    hp_gain: 0.0
+    res_gain: 0.0
+    visibility: 10
+    color: [139, 137, 137]
+    tags: [land]
+
+  - name: mountains
+    threshold: 1.0
+    move_cost: 4.0
+    res_drain: 5.0
+    hp_gain: 0.0
+    res_gain: 0.0
+    visibility: 22
+    color: [255, 250, 250]
+    tags: [land]

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import torch
 
-from cogniland.env.types import EnvConfig, EnvState
+from cogniland.env.types import EnvState, RewardConfig
 
 
 def compute_reward(
@@ -16,7 +16,7 @@ def compute_reward(
     reached: torch.Tensor,
     dist_to_target: torch.Tensor,
     prev_dist: torch.Tensor,
-    config: EnvConfig,
+    reward_config: RewardConfig,
 ) -> torch.Tensor:
     """Compute per-environment reward.  Pure function.
 
@@ -26,20 +26,21 @@ def compute_reward(
         r_death    — sparse: proportional penalty for dying
     """
     device = state.hp.device
+    rw = reward_config
 
-    r_progress = config.lambda_p * (prev_dist - dist_to_target)
+    r_progress = rw.lambda_p * (prev_dist - dist_to_target)
 
     # Time-efficiency ratio: optimal time / actual time, clamped to [0, 1]
     time_ratio = torch.clamp(state.dijkstra_cost / (state.cost + 1e-6), 0.0, 1.0)
 
     r_success = torch.where(
         reached,
-        torch.tensor(config.reward_reach_bonus, device=device) + config.lambda_t * time_ratio,
+        torch.tensor(rw.reach_bonus, device=device) + rw.lambda_t * time_ratio,
         torch.zeros(1, device=device),
     )
     r_death = torch.where(
         ~alive,
-        torch.tensor(-config.lambda_d * config.reward_reach_bonus, device=device),
+        torch.tensor(-rw.lambda_d * rw.reach_bonus, device=device),
         torch.zeros(1, device=device),
     )
 
