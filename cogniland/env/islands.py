@@ -16,7 +16,7 @@ import torch
 
 from cogniland.env.core import compute_minimap_batch, compute_terrain_levels, env_step
 from cogniland.env.pathfinding import batch_dijkstra_from_sources
-from cogniland.env.types import CompiledTerrainData, CurriculumStage, EnvConfig, EnvState, RewardConfig, StepResult
+from cogniland.env.types import CompiledTerrainData, CurriculumStage, EnvConfig, EnvState, StepResult
 
 
 def generate_island(config: EnvConfig) -> torch.Tensor:
@@ -118,7 +118,6 @@ class Islands:
         config: EnvConfig | None = None,
         world_maps: torch.Tensor | None = None,
         map_pool_size: int = 16,
-        reward_config: RewardConfig | None = None,
         curriculum_easy_radius: int = 40,
         **kwargs,
     ):
@@ -126,7 +125,6 @@ class Islands:
             config = EnvConfig(**kwargs)
         self.config = config
         self.map_pool_size = map_pool_size
-        self.reward_config = reward_config
         self.curriculum_easy_radius = curriculum_easy_radius
         self._device = config.resolved_device()
 
@@ -321,7 +319,6 @@ class Islands:
             target_pos,
             self.config,
             self._compiled,
-            reward_config=self.reward_config,
         )
 
     # ------------------------------------------------------------------
