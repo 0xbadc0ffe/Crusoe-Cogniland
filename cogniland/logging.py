@@ -81,8 +81,8 @@ class WandBLogger:
             self._run = wandb.init(
                 project=log_cfg.project,
                 entity=log_cfg.get("entity", None),
-                name=_make_run_name(cfg),
-                group=_make_group_name(cfg),
+                name=log_cfg.get("name") or _make_run_name(cfg),
+                group=log_cfg.get("group") or _make_group_name(cfg),
                 mode=log_cfg.mode,
                 config=_flatten_cfg(cfg),
                 tags=[cfg.models.name, f"env_{cfg.env.get('hard_mode', False)}"],
