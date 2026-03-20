@@ -32,7 +32,7 @@ minimap_clear_tolerance: 0.1
 max_steps: 1000
 
 # Reward coefficients
-lambda_p: 0.1                  # progress reward weight (Manhattan distance approach)
+lambda_p: 0.2                  # progress reward weight (Manhattan distance approach)
 lambda_t: 60.0                 # time-efficiency bonus weight at success
 lambda_d: 0.6                  # death penalty = lambda_d * reward_reach_bonus
 reward_reach_bonus: 100.0
@@ -49,5 +49,5 @@ target_c: -1
 
 # Dataset and curriculum (optional)
 dataset_path: "data/maps_seed42_train128_val16_test16.pt"  # path to .pt file from scripts/generate_dataset.py; "" = procedural
-curriculum_switch_steps: 1_000_000     # 0 = disabled; switch EASY → NORMAL at this global_step
-curriculum_easy_radius: 40     # radius (cells) around map center for EASY spawn/target
+curriculum_switch_steps: 8_000_000     # 0 = disabled; switch EASY → NORMAL at this global_step
+curriculum_easy_radius: 50     # radius (cells) around map center for EASY spawn/target

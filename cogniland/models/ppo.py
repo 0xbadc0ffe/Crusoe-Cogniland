@@ -36,9 +36,9 @@ class ActorCritic(nn.Module):
 
     def __init__(
         self,
-        scalar_dim: int = 7,
+        scalar_dim: int = 5,
         minimap_channels: int = 3,
-        hidden_dim: int = 128,
+        hidden_dim: int = 256,
         action_dim: int = 5,
         cnn_channels: int = 32,
         cnn_out_spatial: int = 4,
@@ -46,15 +46,17 @@ class ActorCritic(nn.Module):
     ):
         super().__init__()
         self.cnn = nn.Sequential(
-            _layer_init(nn.Conv2d(minimap_channels, cnn_channels // 2, 3, padding=1)),
+            _layer_init(nn.Conv2d(minimap_channels, cnn_channels // 2, 3, padding=1)), # 3→16 ch, 43x43
             nn.ReLU(),
-            nn.MaxPool2d(2),
-            _layer_init(nn.Conv2d(cnn_channels // 2, cnn_channels, 3, padding=1)),
+            nn.MaxPool2d(2), # 43x43 → 21x21
+            _layer_init(nn.Conv2d(cnn_channels // 2, cnn_channels, 3, padding=1)), # 16→32 ch, 21x21
             nn.ReLU(),
-            nn.AdaptiveAvgPool2d(cnn_out_spatial),
-            nn.Flatten(),
+            _layer_init(nn.Conv2d(cnn_channels, cnn_channels, 3, padding=1)), # 32→32 ch, 21x21
+            nn.ReLU(),
+            nn.AdaptiveMaxPool2d(cnn_out_spatial), # 21x21 → 4x4
+            nn.Flatten(), # 32*4*4 = 512
         )
-        cnn_out = cnn_channels * cnn_out_spatial * cnn_out_spatial
+        cnn_out = cnn_channels * cnn_out_spatial * cnn_out_spatial # 32*4*4 = 512
 
         self.scalar_net = nn.Sequential(
             _layer_init(nn.Linear(scalar_dim, scalar_hidden)),
@@ -62,9 +64,9 @@ class ActorCritic(nn.Module):
         )
 
         self.trunk = nn.Sequential(
-            _layer_init(nn.Linear(cnn_out + scalar_hidden, hidden_dim)),
+            _layer_init(nn.Linear(cnn_out + scalar_hidden, hidden_dim)), # 512+64 = 576 -> 256
             nn.ReLU(),
-            _layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            _layer_init(nn.Linear(hidden_dim, hidden_dim)), # 256→256
             nn.ReLU(),
         )
 

@@ -18,15 +18,15 @@ palette = {
 # Terrain levels: 0=ocean .. 8=mountains
 # Each entry: name, height threshold, movement cost, palette key
 TERRAIN_LEVELS = {
-    0: {"name": "ocean", "threshold": 0.007, "cost": 1.0, "color": "deepocean"},
-    1: {"name": "deep_water", "threshold": 0.03, "cost": 1.25, "color": "ocean"},
-    2: {"name": "water", "threshold": 0.07, "cost": 1.5, "color": "blue"},
-    3: {"name": "beach", "threshold": 0.09, "cost": 1.75, "color": "beach"},
-    4: {"name": "sandy", "threshold": 0.13, "cost": 2.0, "color": "sandy"},
-    5: {"name": "grassland", "threshold": 0.35, "cost": 2.25, "color": "green"},
-    6: {"name": "forest", "threshold": 0.6, "cost": 3.0, "color": "darkgreen"},
-    7: {"name": "rocky", "threshold": 0.75, "cost": 3.5, "color": "mountain"},
-    8: {"name": "mountains", "threshold": 1.0, "cost": 4.0, "color": "snow"},
+    0: {"name": "ocean", "threshold": 0.007, "cost": 1.0/5, "color": "deepocean"},
+    1: {"name": "deep_water", "threshold": 0.03, "cost": 1.25/5, "color": "ocean"},
+    2: {"name": "water", "threshold": 0.07, "cost": 1.5/5, "color": "blue"},
+    3: {"name": "beach", "threshold": 0.09, "cost": 1.75/5, "color": "beach"},
+    4: {"name": "sandy", "threshold": 0.13, "cost": 2.0/5, "color": "sandy"},
+    5: {"name": "grassland", "threshold": 0.35, "cost": 2.25/5, "color": "green"},
+    6: {"name": "forest", "threshold": 0.6, "cost": 3.0/5, "color": "darkgreen"},
+    7: {"name": "rocky", "threshold": 0.75, "cost": 3.5/5, "color": "mountain"},
+    8: {"name": "mountains", "threshold": 1.0, "cost": 4.0/5, "color": "snow"},
 }
 
 # Visibility ranges for minimap based on terrain
