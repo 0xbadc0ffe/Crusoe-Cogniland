@@ -31,14 +31,11 @@ from omegaconf import OmegaConf
 from cogniland.env.constants import (
     ACTIONS,
     NUM_ACTIONS,
-    TERRAIN_LEVELS,
-    VISIBILITY_RANGES,
-    palette,
 )
 from cogniland.env.core import compute_minimap_batch, compute_terrain_levels
 from cogniland.env.custom_maps import list_maps, get_spawn, get_target
 from cogniland.env.islands import Islands
-from cogniland.env.types import EnvConfig, EnvState
+from cogniland.env.types import CustomMapConfig, EnvConfig, EnvState, MapGenConfig
 
 # ---------------------------------------------------------------------------
 # Load model (lightweight — only needs ActorCritic, no Hydra / PPOAgent)
@@ -62,10 +59,12 @@ MODEL_CNN_OUT_SPATIAL = _model_cfg.get("cnn_out_spatial", 4)
 MODEL_SCALAR_HIDDEN = _model_cfg.get("scalar_hidden", 64)
 
 # Env params (from default.yaml)
-ENV_MINIMAP_MAX_RAY = _env_cfg.get("minimap_max_ray", 22)
-ENV_MINIMAP_OCCLUDE = _env_cfg.get("minimap_occlude", True)
-ENV_MINIMAP_CLEAR_TOL = _env_cfg.get("minimap_clear_tolerance", 0.1)
-ENV_MAP_SIZE = _env_cfg.get("size", 250)
+_env_mm = _env_cfg.get("minimap", _env_cfg)
+ENV_MINIMAP_MAX_RAY = _env_mm.get("max_ray", _env_cfg.get("minimap_max_ray", 22))
+ENV_MINIMAP_OCCLUDE = _env_mm.get("occlude", _env_cfg.get("minimap_occlude", True))
+ENV_MINIMAP_CLEAR_TOL = _env_mm.get("clear_tolerance", _env_cfg.get("minimap_clear_tolerance", 0.1))
+_env_mg = _env_cfg.get("map_generation", _env_cfg)
+ENV_MAP_SIZE = _env_mg.get("size", _env_cfg.get("size", 250))
 
 # ---------------------------------------------------------------------------
 # UI constants
@@ -87,8 +86,7 @@ def draw_star(surface, cx, cy, r_outer, r_inner, color=(255, 215, 0), n_points=5
     pygame.draw.polygon(surface, (0, 0, 0), pts, 1)
 
 
-COLORS = {k: tuple(v) for k, v in palette.items()}
-COLORS.update({
+COLORS = {
     "player":   (255,  50,  50),
     "target":   ( 50, 255,  50),
     "trail":    (255, 200,  50),
@@ -101,7 +99,7 @@ COLORS.update({
     "blue_ui":  ( 80, 140, 255),
     "panel_bg": ( 25,  25,  35),
     "panel_fg": (200, 200, 210),
-})
+}
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -145,42 +143,45 @@ def load_actor_critic(ckpt_path, device="cpu"):
     return model
 
 
-def build_obs(state: EnvState, env_config: EnvConfig):
+def build_obs(state: EnvState, env_config: EnvConfig, compiled):
     """Replicate BatchedIslandEnv.get_obs() — 5 scalars (compass×2, terrain, resources, hp)."""
     s = state
+    num_terrains = compiled.num_terrains
     scalars = torch.stack([
         s.compass[:, 0],
         s.compass[:, 1],
-        s.terrain_idx / 8.0,
+        s.terrain_idx / max(num_terrains - 1, 1),
         s.resources / env_config.max_resources,
         s.hp / env_config.max_hp,
     ], dim=1)
     return {"scalars": scalars, "minimap": s.minimap}
 
 
-def terrain_level_for_height(height_val):
-    for level in range(9):
-        if height_val <= TERRAIN_LEVELS[level]["threshold"]:
+def terrain_level_for_height(height_val, compiled):
+    thresholds = compiled.thresholds.cpu()
+    for level in range(compiled.num_terrains):
+        if height_val <= thresholds[level].item():
             return level
-    return 8
+    return compiled.num_terrains - 1
 
 
-def terrain_color(level):
-    info = TERRAIN_LEVELS.get(int(level))
-    if info is None:
-        return COLORS["white"]
-    return COLORS.get(info["color"], COLORS["white"])
+def terrain_color(level, compiled):
+    idx = int(level)
+    if 0 <= idx < compiled.num_terrains:
+        c = compiled.color_lut[idx].cpu().tolist()
+        return (c[0], c[1], c[2])
+    return COLORS["white"]
 
 
-def heightmap_to_surface(world_map, display_size):
+def heightmap_to_surface(world_map, display_size, compiled):
     """Render a 2D heightmap tensor → pygame.Surface."""
     H, W = world_map.shape[:2]
     surf = pygame.Surface((W, H))
     for y in range(H):
         for x in range(W):
             h = world_map[y, x].item() if world_map.dim() == 2 else world_map[y, x, 0].item()
-            lev = terrain_level_for_height(h)
-            surf.set_at((x, y), terrain_color(lev))
+            lev = terrain_level_for_height(h, compiled)
+            surf.set_at((x, y), terrain_color(lev, compiled))
     return pygame.transform.scale(surf, (display_size, display_size))
 
 
@@ -307,8 +308,9 @@ def screen_pick_positions(screen, clock, env_config,
     Returns (spawn_rc, target_rc) as integer (row, col) tuples, or None on quit.
     """
     env = Islands(env_config)
+    _compiled = env.compiled
     world_map = env.world_map
-    map_surface = heightmap_to_surface(world_map, MAP_DISPLAY_SIZE)
+    map_surface = heightmap_to_surface(world_map, MAP_DISPLAY_SIZE, _compiled)
     map_size = world_map.shape[0]
 
     font_large = pygame.font.Font(None, 36)
@@ -331,8 +333,8 @@ def screen_pick_positions(screen, clock, env_config,
         return max(0, min(r, map_size - 1)), max(0, min(c, map_size - 1))
 
     def is_land(r, c):
-        from cogniland.env.constants import TERRAIN_THRESHOLDS
-        return world_map[r, c].item() > TERRAIN_THRESHOLDS[2].item()
+        land_threshold = _compiled.land_threshold
+        return world_map[r, c].item() > land_threshold
 
     while True:
         for ev in pygame.event.get():
@@ -389,11 +391,12 @@ def screen_pick_positions(screen, clock, env_config,
         py = MAP_Y
         legend_title = font_med.render("TERRAIN LEGEND", True, COLORS["panel_fg"])
         screen.blit(legend_title, (panel_x, py)); py += 30
-        for lev, info in TERRAIN_LEVELS.items():
-            col = terrain_color(lev)
+        for lev in range(_compiled.num_terrains):
+            col = terrain_color(lev, _compiled)
             pygame.draw.rect(screen, col, (panel_x, py, 14, 14))
             pygame.draw.rect(screen, COLORS["white"], (panel_x, py, 14, 14), 1)
-            txt = font_small.render(f"  {info['name'].capitalize()} (cost {info['cost']})", True, COLORS["panel_fg"])
+            cost = _compiled.move_costs[lev].item()
+            txt = font_small.render(f"  {_compiled.terrain_names[lev].capitalize()} (cost {cost:.1f})", True, COLORS["panel_fg"])
             screen.blit(txt, (panel_x + 18, py))
             py += 20
 
@@ -426,30 +429,31 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
     print(f"Loaded model from {ckpt_path}")
 
     # Build env config — start from caller's base (preserves map_name)
-    from dataclasses import asdict
-    base = asdict(env_config_base) if env_config_base is not None else {}
-    base.update(
-        seed=42,
-        minimap_max_ray=ENV_MINIMAP_MAX_RAY,
-        minimap_occlude=ENV_MINIMAP_OCCLUDE,
-        minimap_clear_tolerance=ENV_MINIMAP_CLEAR_TOL,
-        map_pool_size=1,
-        spawn_r=spawn_rc[0], spawn_c=spawn_rc[1],
-        target_r=target_rc[0], target_c=target_rc[1],
+    from cogniland.env.types import CustomMapConfig, MapGenConfig, MinimapConfig
+    env_config = EnvConfig(
+        map_generation=MapGenConfig(seed=42),
+        minimap=MinimapConfig(
+            max_ray=ENV_MINIMAP_MAX_RAY,
+            occlude=ENV_MINIMAP_OCCLUDE,
+            clear_tolerance=ENV_MINIMAP_CLEAR_TOL,
+        ),
+        custom_map=CustomMapConfig(
+            map_name=env_config_base.map_name if env_config_base else "",
+            spawn_r=spawn_rc[0], spawn_c=spawn_rc[1],
+            target_r=target_rc[0], target_c=target_rc[1],
+        ),
     )
-    env_config = EnvConfig(**base)
-    env = Islands(env_config)
+    env = Islands(env_config, map_pool_size=1)
+    _compiled = env.compiled
     state, target_pos = env.reset(batch_size=1, seed=42)
 
     map_size = env.world_map.shape[0]
 
     # Precompute base map RGB once
     _wm = env.world_map.numpy()
-    _thresholds = np.array([TERRAIN_LEVELS[i]["threshold"] for i in range(9)])
-    _terrain_map = np.searchsorted(_thresholds, _wm).clip(0, 8)
-    _color_lut = np.array([
-        tuple(v) for v in [palette[TERRAIN_LEVELS[i]["color"]] for i in range(9)]
-    ], dtype=np.uint8)
+    _thresholds = _compiled.thresholds.cpu().numpy()
+    _terrain_map = np.searchsorted(_thresholds, _wm).clip(0, _compiled.num_terrains - 1)
+    _color_lut = _compiled.color_lut.cpu().numpy()
     base_map_rgb = _color_lut[_terrain_map]  # [H, W, 3]
 
     # Seen mask and minimap offset grid for fog of war
@@ -475,12 +479,6 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
         return pygame.transform.scale(surf, (MAP_DISPLAY_SIZE, MAP_DISPLAY_SIZE))
 
     # Risk exposure tracking
-    ec = env_config
-    _terrain_res_drains = [
-        ec.sea_resource_costs[0], ec.sea_resource_costs[1], ec.sea_resource_costs[2],
-        ec.land_resource_drain, ec.land_resource_drain, ec.land_resource_drain,
-        0.0, ec.mountain_resource_costs[0], ec.mountain_resource_costs[1],
-    ]
     risk_sum = 0.0
     risk_count = 0
 
@@ -529,7 +527,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
             if frame_counter >= frames_per_step:
                 frame_counter = 0
 
-                obs = build_obs(state, env_config)
+                obs = build_obs(state, env_config, _compiled)
                 with torch.no_grad():
                     action = model.get_deterministic_action(obs)
 
@@ -537,7 +535,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
 
                 # Track risk before step
                 t_idx = int(state.terrain_idx[0].item())
-                drain = _terrain_res_drains[t_idx]
+                drain = _compiled.res_drain[t_idx].item()
                 res = state.resources[0].item()
                 hp = state.hp[0].item()
                 risk_sum += drain / (res + hp / 2.0 + 1e-6)
@@ -614,7 +612,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
         screen.blit(mm_label, (mm_x, mm_y - 16))
 
         minimap_data = state.minimap[0, 0]  # [H, W]
-        mm_surf = heightmap_to_surface(minimap_data, MINIMAP_DISPLAY_SIZE)
+        mm_surf = heightmap_to_surface(minimap_data, MINIMAP_DISPLAY_SIZE, _compiled)
         screen.blit(mm_surf, (mm_x, mm_y))
         # Center dot
         cx = mm_x + MINIMAP_DISPLAY_SIZE // 2
@@ -665,7 +663,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
             ("Risk Exp.", f"{risk_mean:.3f}", COLORS["red"] if risk_mean > 0.5 else COLORS["panel_fg"]),
             ("Explored", f"{explored_pct:.1f}%", COLORS["panel_fg"]),
             ("Distance", f"{dist_val:.1f}", COLORS["panel_fg"]),
-            ("Terrain", TERRAIN_LEVELS[int(s.terrain_idx[0].item())]["name"].capitalize(), COLORS["panel_fg"]),
+            ("Terrain", _compiled.terrain_names[int(s.terrain_idx[0].item())].capitalize(), COLORS["panel_fg"]),
             ("Position", f"({int(pr)}, {int(pc)})", COLORS["panel_fg"]),
         ]
 
@@ -740,7 +738,10 @@ def main():
         map_name, default_spawn, default_target = map_result
 
         # Build base env config (carries map_name through the pipeline)
-        env_config = EnvConfig(seed=42, map_name=map_name, map_pool_size=1)
+        env_config = EnvConfig(
+            map_generation=MapGenConfig(seed=42),
+            custom_map=CustomMapConfig(map_name=map_name),
+        )
 
         while True:
             # Phase 2: position picking (with optional pre-filled positions)

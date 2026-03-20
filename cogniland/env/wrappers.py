@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 
 from cogniland.env.islands import Islands
-from cogniland.env.types import CurriculumStage, EnvConfig, EnvState
+from cogniland.env.types import CompiledTerrainData, CurriculumStage, EnvConfig, EnvState, RewardConfig
 
 
 class BatchedIslandEnv:
@@ -20,10 +20,20 @@ class BatchedIslandEnv:
         config: EnvConfig,
         num_envs: int,
         world_maps: torch.Tensor | None = None,
+        map_pool_size: int = 16,
+        reward_config: RewardConfig | None = None,
+        curriculum_easy_radius: int = 40,
     ):
         self.config = config
         self.num_envs = num_envs
-        self.env = Islands(config, world_maps=world_maps)
+        self.env = Islands(
+            config,
+            world_maps=world_maps,
+            map_pool_size=map_pool_size,
+            reward_config=reward_config,
+            curriculum_easy_radius=curriculum_easy_radius,
+        )
+        self.compiled = self.env.compiled
         self.state: EnvState | None = None
         self.target_pos: torch.Tensor | None = None
         self.step_count: torch.Tensor | None = None
@@ -89,10 +99,11 @@ class BatchedIslandEnv:
             ``"minimap"``: [B, 2, H, W]
         """
         s = self.state
+        num_terrains = self.compiled.num_terrains
         scalars = torch.stack([
             s.compass[:, 0],
             s.compass[:, 1],
-            s.terrain_idx / 8.0,
+            s.terrain_idx / max(num_terrains - 1, 1),
             s.resources / self.config.max_resources,
             s.hp / self.config.max_hp,
         ], dim=1)  # [B, 5]

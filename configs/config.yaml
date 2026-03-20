@@ -9,6 +9,14 @@ device: auto
 # Resume training from a checkpoint path (null = start fresh)
 resume: null
 
+# ── Training pipeline ──
+training:
+  map_pool_size: 16
+  dataset:
+    path: "data/maps_seed42_train128_val16_test16.pt"
+    curriculum_switch_steps: 1_000_000   # 0 = disabled; switch EASY → NORMAL at this global_step
+    curriculum_easy_radius: 40           # radius (cells) around map center for EASY spawn/target
+
 # Logging
 logging:
   wandb:

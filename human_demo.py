@@ -17,16 +17,15 @@ import torch
 import math
 import sys
 
-from cogniland.env.constants import ACTIONS, TERRAIN_LEVELS, VISIBILITY_RANGES, palette
-from cogniland.env.types import EnvConfig
+from cogniland.env.constants import ACTIONS
+from cogniland.env.types import EnvConfig, MapGenConfig, MinimapConfig
 from cogniland.env.islands import Islands
 
 # Initialize Pygame
 pygame.init()
 
-# Build color lookup from canonical palette + UI-only extras
-COLORS = {k: tuple(v) for k, v in palette.items()}
-COLORS.update({
+# UI-only colors
+COLORS = {
     'player': (255, 0, 0),
     'target': (0, 255, 0),
     'black': (0, 0, 0),
@@ -35,7 +34,7 @@ COLORS.update({
     'red': (255, 0, 0),
     'green_ui': (0, 255, 0),
     'blue_ui': (0, 0, 255),
-})
+}
 
 
 def draw_star(surface, cx, cy, r_outer, r_inner, color=(255, 215, 0), n_points=5):
@@ -72,13 +71,11 @@ class IslandGameDemo:
     def reset_environment(self):
         seed = torch.randint(1, 1000, (1,)).item()
         config = EnvConfig(
-            seed=seed,
-            minimap_max_ray=15,
-            minimap_occlude=True,
-            minimap_clear_tolerance=0.1,
-            map_pool_size=1,
+            map_generation=MapGenConfig(seed=seed),
+            minimap=MinimapConfig(max_ray=15, occlude=True, clear_tolerance=0.1),
         )
-        self.env = Islands(config)
+        self.env = Islands(config, map_pool_size=1)
+        self._compiled = self.env.compiled
 
         while True:
             self.state, self.target_pos = self.env.reset(batch_size=1, seed=seed)
@@ -95,11 +92,10 @@ class IslandGameDemo:
 
         # Precompute base map RGB image [H, W, 3] uint8
         wm = self.env.world_map.numpy()
-        thresholds = np.array([TERRAIN_LEVELS[i]["threshold"] for i in range(9)])
-        terrain_map = np.searchsorted(thresholds, wm).clip(0, 8)
-        color_lut = np.array([
-            COLORS.get(TERRAIN_LEVELS[i]["color"], (200, 200, 200)) for i in range(9)
-        ], dtype=np.uint8)
+        compiled = self._compiled
+        thresholds = compiled.thresholds.cpu().numpy()
+        terrain_map = np.searchsorted(thresholds, wm).clip(0, compiled.num_terrains - 1)
+        color_lut = compiled.color_lut.cpu().numpy()
         self._base_map_rgb = color_lut[terrain_map]  # [H, W, 3]
 
         self.game_over = False
@@ -155,15 +151,9 @@ class IslandGameDemo:
             return
 
         # Compute per-terrain drain for risk tracking before step
-        ec = self.env.config
-        terrain_res_drains = [
-            ec.sea_resource_costs[0], ec.sea_resource_costs[1], ec.sea_resource_costs[2],
-            ec.land_resource_drain, ec.land_resource_drain, ec.land_resource_drain,
-            0.0,
-            ec.mountain_resource_costs[0], ec.mountain_resource_costs[1],
-        ]
+        compiled = self._compiled
         terrain_idx = int(self.state.terrain_idx[0].item())
-        drain = terrain_res_drains[terrain_idx]
+        drain = compiled.res_drain[terrain_idx].item()
         res = self.state.resources[0].item()
         hp = self.state.hp[0].item()
         risk = drain / (res + hp / 2.0 + 1e-6)
@@ -187,10 +177,12 @@ class IslandGameDemo:
             self.won = True
 
     def terrain_level_to_color(self, level):
-        info = TERRAIN_LEVELS.get(int(level))
-        if info is None:
-            return COLORS['white']
-        return COLORS.get(info['color'], COLORS['white'])
+        compiled = self._compiled
+        idx = int(level)
+        if 0 <= idx < compiled.num_terrains:
+            c = compiled.color_lut[idx].cpu().tolist()
+            return (c[0], c[1], c[2])
+        return COLORS['white']
 
     def draw_map(self):
         """Draw world map with fog-of-war darkening for unseen cells."""
@@ -227,9 +219,11 @@ class IslandGameDemo:
         for y in range(height):
             for x in range(width):
                 h_val = minimap_data[y, x].item()
-                t_level = 8
-                for level in range(9):
-                    if h_val <= TERRAIN_LEVELS[level]["threshold"]:
+                compiled = self._compiled
+                thresholds = compiled.thresholds.cpu()
+                t_level = compiled.num_terrains - 1
+                for level in range(compiled.num_terrains):
+                    if h_val <= thresholds[level].item():
                         t_level = level
                         break
                 surf.set_at((x, y), self.terrain_level_to_color(t_level))
@@ -294,8 +288,8 @@ class IslandGameDemo:
             (f"Pos:    ({s.position[0][0]}, {s.position[0][1]})", self.font_small, COLORS['black']),
             (f"Target: ({self.target_pos[0][0]}, {self.target_pos[0][1]})", self.font_small, COLORS['black']),
             (f"Dist:   {(s.position[0].float() - self.target_pos[0].float()).abs().sum():.1f}", self.font_small, COLORS['black']),
-            (f"Terrain: {TERRAIN_LEVELS[int(s.terrain_idx[0])]['name']}", self.font_small, COLORS['black']),
-            (f"Visibility: {VISIBILITY_RANGES[int(s.terrain_idx[0])]}", self.font_small, COLORS['black']),
+            (f"Terrain: {self._compiled.terrain_names[int(s.terrain_idx[0])]}", self.font_small, COLORS['black']),
+            (f"Visibility: {self._compiled.visibility[int(s.terrain_idx[0])].item()}", self.font_small, COLORS['black']),
         ]
 
         y_offset = ui_y
@@ -322,11 +316,12 @@ class IslandGameDemo:
         legend_title = self.font_medium.render("Terrain Legend", True, COLORS['black'])
         self.screen.blit(legend_title, (right_x, y))
         y += 26
-        for i, info in TERRAIN_LEVELS.items():
+        for i, name in enumerate(self._compiled.terrain_names):
             color = self.terrain_level_to_color(i)
             pygame.draw.rect(self.screen, color, (right_x, y, 14, 14))
             pygame.draw.rect(self.screen, COLORS['black'], (right_x, y, 14, 14), 1)
-            label = f"{info['name'].capitalize()} (cost {info['cost']})"
+            cost = self._compiled.move_costs[i].item()
+            label = f"{name.capitalize()} (cost {cost:.1f})"
             surf = self.font_small.render(label, True, COLORS['black'])
             self.screen.blit(surf, (right_x + 18, y))
             y += 20
