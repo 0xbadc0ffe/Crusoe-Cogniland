@@ -83,6 +83,7 @@ class EnvConfig:
     lambda_t: float = 60.0          # time-efficiency bonus weight
     lambda_d: float = 0.6           # death penalty coefficient (fraction of reach bonus)
     reward_reach_bonus: float = 100.0
+    time_penalty: float = 0.01      # subtracted every step to discourage idling
 
     # Custom map support
     map_name: str = ""
@@ -134,6 +135,7 @@ class EnvConfig:
             lambda_t=env.get("lambda_t", 60.0),
             lambda_d=env.get("lambda_d", 0.6),
             reward_reach_bonus=env.reward_reach_bonus,
+            time_penalty=env.get("time_penalty", 0.01),
             map_name=env.get("map_name", ""),
             spawn_r=env.get("spawn_r", -1),
             spawn_c=env.get("spawn_c", -1),

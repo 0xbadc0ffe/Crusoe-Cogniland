@@ -22,12 +22,14 @@ def compute_reward(
 
     Components:
         r_progress — dense: encourages moving toward target (Manhattan distance)
+        r_time     — dense: small per-step penalty to discourage idling
         r_success  — sparse: reach bonus + time-efficiency bonus
         r_death    — sparse: proportional penalty for dying
     """
     device = state.hp.device
 
     r_progress = config.lambda_p * (prev_dist - dist_to_target)
+    r_time = -config.time_penalty
 
     # Time-efficiency ratio: optimal time / actual time, clamped to [0, 1]
     time_ratio = torch.clamp(state.dijkstra_cost / (state.cost + 1e-6), 0.0, 1.0)
@@ -43,4 +45,4 @@ def compute_reward(
         torch.zeros(1, device=device),
     )
 
-    return r_progress + r_success + r_death
+    return r_progress + r_time + r_success + r_death

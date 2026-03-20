@@ -90,8 +90,8 @@ class BatchedIslandEnv:
         """
         s = self.state
         scalars = torch.stack([
-            s.compass[:, 0],
-            s.compass[:, 1],
+            -s.compass[:, 0],   # EnvState.compass = (pos - target), so negate to point toward target
+            -s.compass[:, 1],
             s.terrain_idx / 8.0,
             s.resources / self.config.max_resources,
             s.hp / self.config.max_hp,
