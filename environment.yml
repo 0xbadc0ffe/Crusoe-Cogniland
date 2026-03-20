@@ -14,7 +14,7 @@ dependencies:
     - gymnasium>=0.29.0
     - hydra-core>=1.3.0
     - omegaconf>=2.3.0
-    - wandb[media]>=0.16.0
+    - wandb[workspaces,media]>=0.16.0
     - chardet>=3.0.2,<6
     - charset-normalizer>=2.0,<4
     - pygame>=2.0.0

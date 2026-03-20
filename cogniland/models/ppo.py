@@ -459,6 +459,7 @@ class PPOAgent:
         model.eval()
         test_metrics = self._run_eval(cfg, logger=logger, global_step=global_step, split="test")
         model.train()
+        test_metrics["test_det/env/best_ckpt_path"] = best_ckpt_path
         logger.log(test_metrics, step=num_updates + 1)
         test_sr = test_metrics.get("test_det/env/success_rate", 0.0)
         print(f"  test deterministic success: {test_sr:.3f}")
