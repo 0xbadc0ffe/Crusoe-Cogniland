@@ -142,14 +142,6 @@ class MinimapConfig:
 
 
 @dataclass(frozen=True)
-class RewardConfig:
-    lambda_p: float = 0.1
-    lambda_t: float = 60.0
-    lambda_d: float = 0.6
-    reach_bonus: float = 100.0
-
-
-@dataclass(frozen=True)
 class CustomMapConfig:
     map_name: str = ""
     spawn_r: int = -1

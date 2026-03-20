@@ -13,7 +13,7 @@ import functools
 import torch
 
 from cogniland.env.constants import ACTIONS, ACTION_DELTAS
-from cogniland.env.types import CompiledTerrainData, EnvConfig, EnvState, RewardConfig, StepResult
+from cogniland.env.types import CompiledTerrainData, EnvConfig, EnvState, StepResult
 
 
 # ---------------------------------------------------------------------------
@@ -27,13 +27,11 @@ def env_step(
     target_pos: torch.Tensor,
     config: EnvConfig,
     compiled: CompiledTerrainData,
-    reward_config: RewardConfig | None = None,
 ) -> StepResult:
     """Execute one batched step.  Pure function — no side effects.
 
     world_map: either [H, W] (shared) or [B, H, W] (per-env Level Replay).
     """
-    from cogniland.env.reward import compute_reward
 
     old_terrain = state.terrain_idx.clone()  # needed for land-to-water transition
     prev_dist = (state.position - target_pos).float().abs().sum(dim=1)
@@ -74,13 +72,8 @@ def env_step(
     reached = dist_to_target < 1.0
     done = ~alive | reached
 
-    # 10. Reward
-    if reward_config is not None:
-        reward = compute_reward(
-            new_state, alive, reached, dist_to_target, prev_dist, reward_config
-        )
-    else:
-        reward = torch.zeros(state.hp.shape[0], device=state.hp.device)
+    # 10. Reward (delegated to model wrapper via info)
+    reward = torch.zeros(state.hp.shape[0], device=state.hp.device)
 
     info = {
         "alive": alive,
