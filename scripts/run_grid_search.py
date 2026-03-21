@@ -51,7 +51,7 @@ def generate_commands(group_name: str, test_mode: bool) -> list[tuple[str, list[
         
         # Apply reward overrides
         for k, v in params.items():
-            cmd.append(f"models.reward.{k}={v}")
+            cmd.append(f"env.reward.{k}={v}")
 
         if test_mode:
             print(f"Adding test mode overrides for {name}")

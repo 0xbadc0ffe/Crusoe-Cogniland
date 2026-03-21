@@ -157,6 +157,15 @@ class DatasetConfig:
     curriculum_easy_radius: int = 50
 
 
+@dataclass(frozen=True)
+class RewardConfig:
+    """Reward shaping parameters — part of the environment specification."""
+    lambda_p: float = 0.1       # progress reward weight (Manhattan distance approach)
+    lambda_t: float = 60.0      # time-efficiency bonus weight at success
+    lambda_d: float = 0.6       # death penalty = lambda_d * reach_bonus
+    reach_bonus: float = 100.0
+
+
 # ---------------------------------------------------------------------------
 # Top-level environment config
 # ---------------------------------------------------------------------------
@@ -182,6 +191,7 @@ class EnvConfig:
     agent: AgentConfig = field(default_factory=AgentConfig)
     minimap: MinimapConfig = field(default_factory=MinimapConfig)
     custom_map: CustomMapConfig = field(default_factory=CustomMapConfig)
+    reward: RewardConfig = field(default_factory=RewardConfig)
     
     max_steps: int = 1000
 
@@ -346,11 +356,20 @@ class EnvConfig:
             target_c=cm_cfg.get("target_c", -1),
         )
 
+        rw_cfg = env.get("reward", {})
+        reward = RewardConfig(
+            lambda_p=rw_cfg.get("lambda_p", 0.1),
+            lambda_t=rw_cfg.get("lambda_t", 60.0),
+            lambda_d=rw_cfg.get("lambda_d", 0.6),
+            reach_bonus=rw_cfg.get("reach_bonus", 100.0),
+        )
+
         return cls(
             map_generation=map_gen,
             agent=agent,
             minimap=minimap_cfg,
             custom_map=custom_map,
+            reward=reward,
             max_steps=env.get("max_steps", 1000),
             terrains=terrains,
             device=cfg.device,

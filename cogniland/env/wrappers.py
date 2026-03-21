@@ -6,7 +6,6 @@ import torch
 
 from cogniland.env.islands import Islands
 from cogniland.env.types import CompiledTerrainData, CurriculumStage, EnvConfig, EnvState
-from typing import Callable
 
 
 class BatchedIslandEnv:
@@ -22,12 +21,10 @@ class BatchedIslandEnv:
         num_envs: int,
         world_maps: torch.Tensor | None = None,
         map_pool_size: int = 16,
-        reward_fn: Callable[[EnvState, dict], torch.Tensor] | None = None,
         curriculum_easy_radius: int = 40,
     ):
         self.config = config
         self.num_envs = num_envs
-        self.reward_fn = reward_fn
         self.env = Islands(
             config,
             world_maps=world_maps,
@@ -59,18 +56,11 @@ class BatchedIslandEnv:
 
     def step(self, action: torch.Tensor) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor, dict]:
         """Returns (obs, reward, done, info)."""
-        prev_pos = self.state.position
         result = self.env.step(self.state, action, self.target_pos)
         self.state = result.state
         self.step_count += 1
-        
-        info = dict(result.info)
-        info["prev_dist"] = (prev_pos - self.target_pos).float().abs().sum(dim=1)
-        
-        if self.reward_fn is not None:
-            reward = self.reward_fn(self.state, info)
-        else:
-            reward = torch.zeros(self.num_envs, device=self._device)
+
+        reward = result.reward
 
         # Track episode stats
         self.episode_rewards += reward
@@ -100,6 +90,7 @@ class BatchedIslandEnv:
             self.step_count[done] = 0
 
         return self.get_obs(), reward, done, info
+
 
     def get_obs(self) -> dict[str, torch.Tensor]:
         """Build observation dict from current state.
