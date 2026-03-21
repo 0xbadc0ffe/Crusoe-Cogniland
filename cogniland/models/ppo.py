@@ -21,45 +21,6 @@ from cogniland.logging import WandBLogger, log_rollout_stats
 from cogniland.utils import load_checkpoint, render_trajectory, save_checkpoint, set_reproducibility
 
 
-@dataclass(frozen=True)
-class RewardConfig:
-    lambda_p: float = 0.1
-    lambda_t: float = 60.0
-    lambda_d: float = 0.6
-    reach_bonus: float = 100.0
-
-
-def ppo_compute_reward(
-    cost: torch.Tensor,
-    dijkstra_cost: torch.Tensor,
-    alive: torch.Tensor,
-    reached: torch.Tensor,
-    dist_to_target: torch.Tensor,
-    prev_dist: torch.Tensor,
-    rw: RewardConfig,
-) -> torch.Tensor:
-    """PPO-specific reward computation. Pure function."""
-    device = alive.device
-
-    r_progress = rw.lambda_p * (prev_dist - dist_to_target)
-
-    # Time-efficiency ratio: optimal time / actual time, clamped to [0, 1]
-    time_ratio = torch.clamp(dijkstra_cost / (cost + 1e-6), 0.0, 1.0)
-
-    r_success = torch.where(
-        reached,
-        torch.tensor(rw.reach_bonus, device=device) + rw.lambda_t * time_ratio,
-        torch.zeros(1, device=device),
-    )
-    r_death = torch.where(
-        ~alive,
-        torch.tensor(-rw.lambda_d * rw.reach_bonus, device=device),
-        torch.zeros(1, device=device),
-    )
-
-    return r_progress + r_success + r_death
-
-
 
 # ---------------------------------------------------------------------------
 # Neural network
@@ -268,14 +229,6 @@ class PPOAgent:
         print(f"Device: {device}")
         print(f"Model: ppo")
 
-        rw_cfg = cfg.models.get("reward", {})
-        reward_config = RewardConfig(
-            lambda_p=rw_cfg.get("lambda_p", 0.1),
-            lambda_t=rw_cfg.get("lambda_t", 60.0),
-            lambda_d=rw_cfg.get("lambda_d", 0.6),
-            reach_bonus=rw_cfg.get("reach_bonus", 100.0),
-        )
-
         training_cfg = cfg.get("training", {})
         map_pool_size = training_cfg.get("map_pool_size", 16)
         
@@ -291,24 +244,12 @@ class PPOAgent:
             dataset = MapDataset.load(dataset_path)
             print(f"  train={dataset.n_train} val={dataset.n_val} test={dataset.n_test} maps")
 
-        def reward_fn(new_state, info):
-            return ppo_compute_reward(
-                cost=new_state.cost,
-                dijkstra_cost=new_state.dijkstra_cost,
-                alive=info["alive"],
-                reached=info["reached"],
-                dist_to_target=info["dist_to_target"],
-                prev_dist=info["prev_dist"],
-                rw=reward_config,
-            )
-
         # Train environment — uses train split maps if dataset loaded, else procedural
         env = BatchedIslandEnv(
             self.env_config,
             num_envs=cfg.models.training.parallel_envs,
             world_maps=dataset.train_maps if dataset else None,
             map_pool_size=map_pool_size,
-            reward_fn=reward_fn,
             curriculum_easy_radius=curriculum_easy_radius,
         )
         optimizer = optim.Adam(model.parameters(), lr=cfg.models.training.learning_rate, eps=1e-5)
@@ -351,7 +292,6 @@ class PPOAgent:
             num_envs=max_eval_eps,
             world_maps=dataset.val_maps if dataset else None,
             map_pool_size=map_pool_size,
-            reward_fn=reward_fn,
             curriculum_easy_radius=curriculum_easy_radius,
         )
         self.eval_env.reset(seed=eval_seed)
@@ -546,7 +486,7 @@ class PPOAgent:
             "train/model/ppo/return_estimation_variance": return_estimation_variance,
         }
 
-    def _run_eval(self, cfg, logger=None, global_step: int = 0, split: str = "val", rw_cfg: RewardConfig|None=None, c_rad: int=40, mp_size: int=16):
+    def _run_eval(self, cfg, logger=None, global_step: int = 0, split: str = "val", c_rad: int=40, mp_size: int=16):
         """Orchestrator: run deterministic + stochastic eval, merge metrics, log."""
         import matplotlib
         matplotlib.use("Agg")
@@ -567,7 +507,6 @@ class PPOAgent:
                 num_envs=self._max_eval_eps,
                 world_maps=self._test_maps,
                 map_pool_size=mp_size,
-                reward_fn=lambda state, info: ppo_compute_reward(state.cost, state.dijkstra_cost, info["alive"], info["reached"], info["dist_to_target"], info["prev_dist"], rw_cfg) if rw_cfg else torch.zeros(self._max_eval_eps, device=self.device),
                 curriculum_easy_radius=c_rad,
             )
             test_env.reset(seed=self._eval_seed + 1000)

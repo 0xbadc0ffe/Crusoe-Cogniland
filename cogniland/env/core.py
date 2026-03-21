@@ -13,7 +13,7 @@ import functools
 import torch
 
 from cogniland.env.constants import ACTIONS, ACTION_DELTAS
-from cogniland.env.types import CompiledTerrainData, EnvConfig, EnvState, StepResult
+from cogniland.env.types import CompiledTerrainData, EnvConfig, EnvState, RewardConfig, StepResult
 
 
 # ---------------------------------------------------------------------------
@@ -72,15 +72,59 @@ def env_step(
     reached = dist_to_target < 1.0
     done = ~alive | reached
 
-    # 10. Reward (delegated to model wrapper via info)
-    reward = torch.zeros(state.hp.shape[0], device=state.hp.device)
+    # 10. Reward (computed natively from env config)
+    reward = compute_reward(
+        cost=new_state.cost,
+        dijkstra_cost=new_state.dijkstra_cost,
+        alive=alive,
+        reached=reached,
+        dist_to_target=dist_to_target,
+        prev_dist=prev_dist,
+        rw=config.reward,
+    )
 
     info = {
         "alive": alive,
         "reached": reached,
         "dist_to_target": dist_to_target,
+        "prev_dist": prev_dist,
     }
     return StepResult(state=new_state, reward=reward, done=done, info=info)
+
+
+# ---------------------------------------------------------------------------
+# Reward (pure function — part of the environment specification)
+# ---------------------------------------------------------------------------
+
+def compute_reward(
+    cost: torch.Tensor,
+    dijkstra_cost: torch.Tensor,
+    alive: torch.Tensor,
+    reached: torch.Tensor,
+    dist_to_target: torch.Tensor,
+    prev_dist: torch.Tensor,
+    rw: RewardConfig,
+) -> torch.Tensor:
+    """Compute shaped reward. Pure function, no side effects."""
+    device = alive.device
+
+    r_progress = rw.lambda_p * (prev_dist - dist_to_target)
+
+    # Time-efficiency ratio: optimal time / actual time, clamped to [0, 1]
+    time_ratio = torch.clamp(dijkstra_cost / (cost + 1e-6), 0.0, 1.0)
+
+    r_success = torch.where(
+        reached,
+        torch.tensor(rw.reach_bonus, device=device) + rw.lambda_t * time_ratio,
+        torch.zeros(1, device=device),
+    )
+    r_death = torch.where(
+        ~alive,
+        torch.tensor(-rw.lambda_d * rw.reach_bonus, device=device),
+        torch.zeros(1, device=device),
+    )
+
+    return r_progress + r_success + r_death
 
 
 # ---------------------------------------------------------------------------

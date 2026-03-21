@@ -128,3 +128,10 @@ terrains:
     visibility: 22
     color: [255, 250, 250]
     tags: [land]
+
+# ── Reward shaping ──
+reward:
+  lambda_p: 0.1                  # Progress reward weight (Manhattan distance approach)
+  lambda_t: 60.0                 # Time-efficiency bonus weight at success
+  lambda_d: 0.6                  # Death penalty = lambda_d * reach_bonus
+  reach_bonus: 100.0
