@@ -108,23 +108,19 @@ def colorize(world_map: torch.Tensor, compiled: CompiledTerrainData) -> torch.Te
 class Islands:
     """Batched island navigation environment with Level Replay.
 
-    In procedural mode (map_name == ""), pre-generates a pool of N maps at init.
-    Each environment in the batch may be on a different map. On episode reset,
-    a new map is randomly sampled from the pool and spawn/target are re-sampled.
+    In procedural mode (map_name == ""), generates a single random map at init.
     """
 
     def __init__(
         self,
         config: EnvConfig | None = None,
         world_maps: torch.Tensor | None = None,
-        map_pool_size: int = 16,
         curriculum_easy_radius: int = 40,
         **kwargs,
     ):
         if config is None:
             config = EnvConfig(**kwargs)
         self.config = config
-        self.map_pool_size = map_pool_size
         self.curriculum_easy_radius = curriculum_easy_radius
         self._device = config.resolved_device()
 
@@ -149,18 +145,9 @@ class Islands:
             self._fixed_spawn = cm.get_spawn(config.map_name)
             self._fixed_target = cm.get_target(config.map_name)
         else:
-            # Procedural pool — generate N maps with different seeds
-            pool_size = self.map_pool_size
-            print(f"Generating {pool_size} procedural maps ({config.size}×{config.size}) ...")
-            maps = []
-            for i in range(pool_size):
-                seed_i = config.seed + i
-                torch.manual_seed(seed_i)
-                random.seed(seed_i)
-                np.random.seed(seed_i)
-                maps.append(generate_island(config))
-            self.world_maps = torch.stack(maps).to(self._device)  # [N, H, W]
-            print(f"Map pool ready: {self.world_maps.shape}")
+            # Procedural — generate a single random map
+            print(f"Generating random map ({config.size}×{config.size}) ...")
+            self.world_maps = generate_island(config).unsqueeze(0).to(self._device)  # [1, H, W]
             self._fixed_spawn = None
             self._fixed_target = None
 

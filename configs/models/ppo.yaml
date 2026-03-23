@@ -12,7 +12,6 @@ action_dim: 5            # Output actions (up, down, right, left, stay)
 training:
 
   # ── Data pipeline ──
-  map_pool_size: 16
   dataset:
     path: "data/maps_seed42_train128_val16_test16.pt"
     curriculum_switch_steps: 1_000_000   # 0 = disabled; switch EASY → NORMAL at this global_step

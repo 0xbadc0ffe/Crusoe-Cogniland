@@ -230,8 +230,6 @@ class PPOAgent:
         print(f"Model: ppo")
 
         training_cfg = cfg.models.training
-        map_pool_size = training_cfg.get("map_pool_size", 16)
-        
         dataset_cfg = training_cfg.get("dataset", {})
         dataset_path = dataset_cfg.get("path", "")
         curriculum_switch_steps = dataset_cfg.get("curriculum_switch_steps", 0)
@@ -249,7 +247,6 @@ class PPOAgent:
             self.env_config,
             num_envs=cfg.models.training.parallel_envs,
             world_maps=dataset.train_maps if dataset else None,
-            map_pool_size=map_pool_size,
             curriculum_easy_radius=curriculum_easy_radius,
         )
         optimizer = optim.Adam(model.parameters(), lr=cfg.models.training.learning_rate, eps=1e-5)
@@ -291,7 +288,6 @@ class PPOAgent:
             self.env_config,
             num_envs=max_eval_eps,
             world_maps=dataset.val_maps if dataset else None,
-            map_pool_size=map_pool_size,
             curriculum_easy_radius=curriculum_easy_radius,
         )
         self.eval_env.reset(seed=eval_seed)
@@ -486,7 +482,7 @@ class PPOAgent:
             "train/model/ppo/return_estimation_variance": return_estimation_variance,
         }
 
-    def _run_eval(self, cfg, logger=None, global_step: int = 0, split: str = "val", c_rad: int=40, mp_size: int=16):
+    def _run_eval(self, cfg, logger=None, global_step: int = 0, split: str = "val", c_rad: int=40):
         """Orchestrator: run deterministic + stochastic eval, merge metrics, log."""
         import matplotlib
         matplotlib.use("Agg")
@@ -506,7 +502,6 @@ class PPOAgent:
                 self.env_config,
                 num_envs=self._max_eval_eps,
                 world_maps=self._test_maps,
-                map_pool_size=mp_size,
                 curriculum_easy_radius=c_rad,
             )
             test_env.reset(seed=self._eval_seed + 1000)
