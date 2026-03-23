@@ -1,9 +1,4 @@
-"""MapDataset — pre-generated map pool with guaranteed train/val/test splits.
-
-The dataset is a single .pt file containing three disjoint sets of island maps.
-Seed assignment ensures no overlap: train=[base, base+n_train),
-val=[base+n_train, base+n_train+n_val), test=[base+n_train+n_val, ...).
-"""
+"""MapDataset utilities for train/val/test island map splits."""
 
 from __future__ import annotations
 
@@ -58,13 +53,48 @@ class MapDataset:
             path,
         )
 
-    @classmethod
-    def load(cls, path: str | Path) -> "MapDataset":
+    @staticmethod
+    def _load_split_file(path: str | Path) -> tuple[Tensor, int, int]:
         data = torch.load(str(path), map_location="cpu", weights_only=True)
+        return data["maps"], int(data["seed"]), int(data["map_size"])
+
+    @classmethod
+    def from_split_files(
+        cls,
+        train_path: str | Path,
+        val_path: str | Path,
+        test_path: str | Path,
+    ) -> "MapDataset":
+        train_maps, train_seed, train_size = cls._load_split_file(train_path)
+        val_maps, val_seed, val_size = cls._load_split_file(val_path)
+        test_maps, test_seed, test_size = cls._load_split_file(test_path)
+
+        if len({train_size, val_size, test_size}) != 1:
+            raise ValueError(
+                "Train/val/test dataset splits must have the same map_size: "
+                f"train={train_size}, val={val_size}, test={test_size}"
+            )
+
         return cls(
-            train_maps=data["train_maps"],
-            val_maps=data["val_maps"],
-            test_maps=data["test_maps"],
-            seed=data["seed"],
-            map_size=data["map_size"],
+            train_maps=train_maps,
+            val_maps=val_maps,
+            test_maps=test_maps,
+            seed=train_seed,
+            map_size=train_size,
         )
+
+    @classmethod
+    def load_from_config(cls, dataset_cfg) -> "MapDataset | None":
+        train_path = dataset_cfg.get("train_path", "")
+        val_path = dataset_cfg.get("val_path", "")
+        test_path = dataset_cfg.get("test_path", "")
+
+        if not (train_path or val_path or test_path):
+            return None
+
+        if not (train_path and val_path and test_path):
+            raise ValueError(
+                "Dataset config must provide all of train_path, val_path, and test_path."
+            )
+
+        return cls.from_split_files(train_path, val_path, test_path)

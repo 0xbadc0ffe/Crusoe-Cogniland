@@ -233,15 +233,21 @@ class PPOAgent:
 
         training_cfg = cfg.models.training
         dataset_cfg = training_cfg.get("dataset", {})
-        dataset_path = dataset_cfg.get("path", "")
         curriculum_switch_steps = dataset_cfg.get("curriculum_switch_steps", 0)
         curriculum_easy_radius = dataset_cfg.get("curriculum_easy_radius", 40)
 
         # Load map dataset if configured (train/val/test splits)
         dataset: MapDataset | None = None
-        if dataset_path:
-            print(f"Loading MapDataset from {dataset_path} ...")
-            dataset = MapDataset.load(dataset_path)
+        if dataset_cfg:
+            dataset = MapDataset.load_from_config(dataset_cfg)
+        if dataset is not None:
+            train_path = dataset_cfg.get("train_path", "")
+            val_path = dataset_cfg.get("val_path", "")
+            test_path = dataset_cfg.get("test_path", "")
+            print("Loading MapDataset from split files:")
+            print(f"  train={train_path}")
+            print(f"  val={val_path}")
+            print(f"  test={test_path}")
             print(f"  train={dataset.n_train} val={dataset.n_val} test={dataset.n_test} maps")
 
         # Train environment — uses train split maps if dataset loaded, else procedural
