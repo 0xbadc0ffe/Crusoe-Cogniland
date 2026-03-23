@@ -608,7 +608,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=
                 last_action = action.item()
 
                 t_idx = int(state.terrain_idx[0].item())
-                drain = _compiled.res_drain[t_idx].item()
+                drain = max(0.0, -_compiled.res_rate[t_idx].item())
                 res   = state.resources[0].item()
                 hp    = state.hp[0].item()
                 risk_sum   += drain / (res + hp / 2.0 + 1e-6)
@@ -805,7 +805,7 @@ class HumanDemo:
         if self.game_over:
             return
         t_idx = int(self.state.terrain_idx[0].item())
-        drain = self._compiled.res_drain[t_idx].item()
+        drain = max(0.0, -self._compiled.res_rate[t_idx].item())
         res   = self.state.resources[0].item()
         hp    = self.state.hp[0].item()
         self._risk_sum   += drain / (res + hp / 2.0 + 1e-6)

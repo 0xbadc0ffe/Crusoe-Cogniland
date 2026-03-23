@@ -47,13 +47,17 @@ class StepResult(NamedTuple):
 
 @dataclass(frozen=True)
 class TerrainDef:
-    """Single terrain level — mirrors one entry in default.yaml terrains: list."""
+    """Single terrain level — mirrors one entry in default.yaml terrains: list.
+
+    res_rate: signed resource rate per step. Negative = drain (most terrains),
+              positive = gain (forest when at full HP).
+    hp_rate:  signed HP rate per step. Positive = heal (forest when below max HP).
+    """
     name: str
     threshold: float
     move_cost: float
-    res_drain: float
-    hp_gain: float
-    res_gain: float
+    res_rate: float
+    hp_rate: float
     visibility: int
     color: tuple[int, int, int]
     tags: tuple[str, ...]
@@ -80,14 +84,11 @@ class CompiledTerrainData:
         self.move_costs = torch.tensor(
             [t.move_cost for t in terrains], dtype=torch.float32, device=device
         )
-        self.res_drain = torch.tensor(
-            [t.res_drain for t in terrains], dtype=torch.float32, device=device
+        self.res_rate = torch.tensor(
+            [t.res_rate for t in terrains], dtype=torch.float32, device=device
         )
-        self.hp_gain = torch.tensor(
-            [t.hp_gain for t in terrains], dtype=torch.float32, device=device
-        )
-        self.res_gain = torch.tensor(
-            [t.res_gain for t in terrains], dtype=torch.float32, device=device
+        self.hp_rate = torch.tensor(
+            [t.hp_rate for t in terrains], dtype=torch.float32, device=device
         )
         self.visibility = torch.tensor(
             [t.visibility for t in terrains], dtype=torch.long, device=device
@@ -171,15 +172,16 @@ class RewardConfig:
 # ---------------------------------------------------------------------------
 
 _DEFAULT_TERRAINS = (
-    TerrainDef("ocean",      0.007, 1.0,  0.7, 0.0, 0.0, 10, (5,35,225),    ("water",)),
-    TerrainDef("deep_water", 0.025, 1.25, 0.5, 0.0, 0.0,  8, (25,65,225),   ("water",)),
-    TerrainDef("water",      0.05,  1.5,  0.3, 0.0, 0.0,  6, (65,105,225),  ("water",)),
-    TerrainDef("beach",      0.06,  1.75, 1.5, 0.0, 0.0,  5, (238,214,175), ("land",)),
-    TerrainDef("sandy",      0.1,   2.0,  1.5, 0.0, 0.0,  5, (210,180,140), ("land",)),
-    TerrainDef("grassland",  0.25,  2.25, 1.5, 0.0, 0.0,  5, (34,139,34),   ("land",)),
-    TerrainDef("forest",     0.6,   3.0,  0.0, 8.0, 5.0,  3, (0,100,0),     ("land","forest")),
-    TerrainDef("rocky",      0.7,   3.5,  2.0, 0.0, 0.0, 10, (139,137,137), ("land",)),
-    TerrainDef("mountains",  1.0,   4.0,  5.0, 0.0, 0.0, 22, (255,250,250), ("land",)),
+    #                        thresh  cost  res_rate  hp_rate  vis  color             tags
+    TerrainDef("ocean",      0.007,  1.0,  -0.7,     0.0,    10,  (5,35,225),    ("water",)),
+    TerrainDef("deep_water", 0.025,  1.25, -0.5,     0.0,     8,  (25,65,225),   ("water",)),
+    TerrainDef("water",      0.05,   1.5,  -0.3,     0.0,     6,  (65,105,225),  ("water",)),
+    TerrainDef("beach",      0.06,   1.75, -1.5,     0.0,     5,  (238,214,175), ("land",)),
+    TerrainDef("sandy",      0.1,    2.0,  -1.5,     0.0,     5,  (210,180,140), ("land",)),
+    TerrainDef("grassland",  0.25,   2.25, -1.5,     0.0,     5,  (34,139,34),   ("land",)),
+    TerrainDef("forest",     0.6,    3.0,   5.0,     8.0,     3,  (0,100,0),     ("land","forest")),
+    TerrainDef("rocky",      0.7,    3.5,  -2.0,     0.0,    10,  (139,137,137), ("land",)),
+    TerrainDef("mountains",  1.0,    4.0,  -5.0,     0.0,    22,  (255,250,250), ("land",)),
 )
 
 
@@ -305,9 +307,8 @@ class EnvConfig:
                     name=t["name"],
                     threshold=float(t["threshold"]),
                     move_cost=float(t["move_cost"]),
-                    res_drain=float(t["res_drain"]),
-                    hp_gain=float(t["hp_gain"]),
-                    res_gain=float(t["res_gain"]),
+                    res_rate=float(t["res_rate"]),
+                    hp_rate=float(t["hp_rate"]),
                     visibility=int(t["visibility"]),
                     color=tuple(int(c) for c in t["color"]),
                     tags=tuple(str(tag) for tag in t["tags"]),
