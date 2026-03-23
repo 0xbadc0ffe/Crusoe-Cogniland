@@ -10,23 +10,22 @@ import matplotlib.patches as mpatches
 import numpy as np
 
 # Allow running from project root without installing
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from cogniland.env.custom_maps import _REGISTRY
-from cogniland.env.constants import TERRAIN_LEVELS, palette
+from cogniland.env.types import EnvConfig
 
 OUT_DIR = Path(__file__).resolve().parent.parent / "assets" / "maps"
 
-# Map terrain index → color (float RGB)
-_THRESHOLDS = np.array([TERRAIN_LEVELS[i]["threshold"] for i in range(9)])
-_COLOR_LUT = np.array(
-    [palette[TERRAIN_LEVELS[i]["color"]] for i in range(9)], dtype=np.float32
-) / 255.0
+# Build compiled terrain data from default config
+_config = EnvConfig()
+_compiled = _config.compile_terrain("cpu")
+_THRESHOLDS = _compiled.thresholds.cpu().numpy()
+_COLOR_LUT = _compiled.color_lut.float().cpu().numpy() / 255.0
 
 
 def _terrain_rgb(arr: np.ndarray) -> np.ndarray:
     """Convert a [H, W] heightmap to an [H, W, 3] RGB image."""
-    terrain_idx = np.searchsorted(_THRESHOLDS, arr).clip(0, 8)
+    terrain_idx = np.searchsorted(_THRESHOLDS, arr).clip(0, _compiled.num_terrains - 1)
     return _COLOR_LUT[terrain_idx]
 
 

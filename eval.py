@@ -131,9 +131,8 @@ def main():
 
     # --- EVALUATION ---
     # By default, evaluating the model uses the same validation map it saw during
-    # training (cfg.env.seed + 1000). To evaluate on fully unseen procedural maps
-    # and test true zero-shot generalization, simply override the seed here:
-    # cfg.env.seed = 9999
+    # training (seed + 1000). To evaluate on fully unseen procedural maps and
+    # test true zero-shot generalization, override the seed in cfg.env.map_generation.
 
     print("Running evaluation metrics...")
     from cogniland.env.types import EnvConfig
@@ -143,9 +142,23 @@ def main():
     env_config = EnvConfig.from_hydra(cfg)
     eval_cfg = cfg.logging.get("eval", {}) if hasattr(cfg, "logging") else {}
     n_eps = eval_cfg.get("deterministic_episodes", cfg.models.training.eval_episodes)
-    eval_seed = cfg.env.seed + eval_cfg.get("eval_seed_offset", 1000)
+    # Support both new nested (map_generation.seed) and old flat (seed) config keys
+    _env_cfg = cfg.env
+    base_seed = (_env_cfg.get("map_generation", {}).get("seed", None)
+                 or _env_cfg.get("seed", 42))
+    eval_seed = base_seed + eval_cfg.get("eval_seed_offset", 1000)
 
-    eval_env = BatchedIslandEnv(env_config, num_envs=n_eps)
+    # If a dataset is configured, evaluate on the test split maps. Otherwise use procedural maps.
+    from cogniland.env.dataset import MapDataset
+    _training_cfg = cfg.get("models", {}).get("training", {})
+    dataset_path = _training_cfg.get("dataset", {}).get("path", "")
+    dataset = MapDataset.load(dataset_path) if dataset_path else None
+
+    eval_env = BatchedIslandEnv(
+        env_config,
+        num_envs=n_eps,
+        world_maps=dataset.test_maps if dataset else None,
+    )
     eval_env.reset(seed=eval_seed)
 
     runner = EvalRunner(eval_env, env_config, str(device))

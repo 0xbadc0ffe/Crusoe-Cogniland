@@ -21,6 +21,7 @@ from cogniland.logging import WandBLogger, log_rollout_stats
 from cogniland.utils import load_checkpoint, render_trajectory, save_checkpoint, set_reproducibility
 
 
+
 # ---------------------------------------------------------------------------
 # Neural network
 # ---------------------------------------------------------------------------
@@ -36,9 +37,9 @@ class ActorCritic(nn.Module):
 
     def __init__(
         self,
-        scalar_dim: int = 7,
+        scalar_dim: int = 5,
         minimap_channels: int = 3,
-        hidden_dim: int = 128,
+        hidden_dim: int = 256,
         action_dim: int = 5,
         cnn_channels: int = 32,
         cnn_out_spatial: int = 4,
@@ -46,15 +47,17 @@ class ActorCritic(nn.Module):
     ):
         super().__init__()
         self.cnn = nn.Sequential(
-            _layer_init(nn.Conv2d(minimap_channels, cnn_channels // 2, 3, padding=1)),
+            _layer_init(nn.Conv2d(minimap_channels, cnn_channels // 2, 3, padding=1)),  # 3→16 ch, 45x45
             nn.ReLU(),
-            nn.MaxPool2d(2),
-            _layer_init(nn.Conv2d(cnn_channels // 2, cnn_channels, 3, padding=1)),
+            nn.MaxPool2d(2), # 45x45 → 22x22
+            _layer_init(nn.Conv2d(cnn_channels // 2, cnn_channels, 3, padding=1)), # 16→32 ch, 22x22
             nn.ReLU(),
-            nn.AdaptiveAvgPool2d(cnn_out_spatial),
-            nn.Flatten(),
+            _layer_init(nn.Conv2d(cnn_channels, cnn_channels, 3, padding=1)), # 32→32 ch, 22x22
+            nn.ReLU(),
+            nn.AdaptiveMaxPool2d(cnn_out_spatial),  # 22x22 → 4x4
+            nn.Flatten(), # 32*4*4 = 512
         )
-        cnn_out = cnn_channels * cnn_out_spatial * cnn_out_spatial
+        cnn_out = cnn_channels * cnn_out_spatial * cnn_out_spatial  # 32*4*4 = 512
 
         self.scalar_net = nn.Sequential(
             _layer_init(nn.Linear(scalar_dim, scalar_hidden)),
@@ -62,9 +65,9 @@ class ActorCritic(nn.Module):
         )
 
         self.trunk = nn.Sequential(
-            _layer_init(nn.Linear(cnn_out + scalar_hidden, hidden_dim)),
+            _layer_init(nn.Linear(cnn_out + scalar_hidden, hidden_dim)),  # 512+64 = 576 -> 256
             nn.ReLU(),
-            _layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            _layer_init(nn.Linear(hidden_dim, hidden_dim)),  # 256→256
             nn.ReLU(),
         )
 
@@ -220,7 +223,7 @@ class PPOAgent:
 
     def train(self, cfg):
         """Full PPO training loop: rollout → GAE → update → eval → checkpoint."""
-        set_reproducibility(cfg.env.seed)
+        set_reproducibility(cfg.env.map_generation.seed)
         device = self.device
         model = self.model
 
@@ -228,8 +231,13 @@ class PPOAgent:
         print(f"Device: {device}")
         print(f"Model: ppo")
 
+        training_cfg = cfg.models.training
+        dataset_cfg = training_cfg.get("dataset", {})
+        dataset_path = dataset_cfg.get("path", "")
+        curriculum_switch_steps = dataset_cfg.get("curriculum_switch_steps", 0)
+        curriculum_easy_radius = dataset_cfg.get("curriculum_easy_radius", 40)
+
         # Load map dataset if configured (train/val/test splits)
-        dataset_path = self.env_config.dataset_path
         dataset: MapDataset | None = None
         if dataset_path:
             print(f"Loading MapDataset from {dataset_path} ...")
@@ -241,6 +249,7 @@ class PPOAgent:
             self.env_config,
             num_envs=cfg.models.training.parallel_envs,
             world_maps=dataset.train_maps if dataset else None,
+            curriculum_easy_radius=curriculum_easy_radius,
         )
         optimizer = optim.Adam(model.parameters(), lr=cfg.models.training.learning_rate, eps=1e-5)
 
@@ -254,13 +263,12 @@ class PPOAgent:
         print(f"Total updates: {num_updates}, Moves per update: {num_envs * rollout_steps}")
 
         # Curriculum setup
-        curriculum_switch_steps = self.env_config.curriculum_switch_steps
         curriculum_active = curriculum_switch_steps > 0
         if curriculum_active:
             env.set_curriculum_stage(CurriculumStage.EASY)
             print(f"Curriculum: EASY stage until global_step={curriculum_switch_steps}")
 
-        obs = env.reset(seed=cfg.env.seed)
+        obs = env.reset(seed=cfg.env.map_generation.seed)
         global_step = 0
         start_update = 1
 
@@ -273,7 +281,7 @@ class PPOAgent:
 
         # Pre-generate and cache the evaluation environment (val split maps)
         eval_cfg = cfg.logging.get("eval", {})
-        eval_seed = cfg.env.seed + eval_cfg.get("eval_seed_offset", 1000)
+        eval_seed = cfg.env.map_generation.seed + eval_cfg.get("eval_seed_offset", 1000)
         n_eps_det = eval_cfg.get("deterministic_episodes", cfg.models.training.eval_episodes)
         n_eps_sto = eval_cfg.get("stochastic_episodes", cfg.models.training.eval_episodes)
         max_eval_eps = max(n_eps_det, n_eps_sto)
@@ -282,6 +290,7 @@ class PPOAgent:
             self.env_config,
             num_envs=max_eval_eps,
             world_maps=dataset.val_maps if dataset else None,
+            curriculum_easy_radius=curriculum_easy_radius,
         )
         self.eval_env.reset(seed=eval_seed)
 
@@ -359,8 +368,9 @@ class PPOAgent:
                     save_checkpoint(model, optimizer, global_step, path=best_ckpt_path)
                     print(f"  New best val success rate {det_sr:.3f} — saved {best_ckpt_path}")
 
-            # Periodic checkpoint
-            if update % cfg.models.training.checkpoint_every_n_updates == 0:
+            # Periodic checkpoint (0 = disabled, save best-only)
+            ckpt_interval = cfg.models.training.checkpoint_every_n_updates
+            if ckpt_interval > 0 and update % ckpt_interval == 0:
                 import os
                 run_id = logger._run.id if logger.enabled and logger._run else "local"
                 ckpt_dir = f"artifacts/{run_id}"
@@ -388,7 +398,9 @@ class PPOAgent:
         model.eval()
         test_metrics = self._run_eval(cfg, logger=logger, global_step=global_step, split="test")
         model.train()
+        test_metrics["test_det/env/best_ckpt_path"] = best_ckpt_path
         logger.log(test_metrics, step=num_updates + 1)
+        logger.log_final_test_summary(test_metrics)
         test_sr = test_metrics.get("test_det/env/success_rate", 0.0)
         print(f"  test deterministic success: {test_sr:.3f}")
 
@@ -474,12 +486,11 @@ class PPOAgent:
             "train/model/ppo/return_estimation_variance": return_estimation_variance,
         }
 
-    def _run_eval(self, cfg, logger=None, global_step: int = 0, split: str = "val"):
+    def _run_eval(self, cfg, logger=None, global_step: int = 0, split: str = "val", c_rad: int=40):
         """Orchestrator: run deterministic + stochastic eval, merge metrics, log."""
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        from cogniland.env.constants import TERRAIN_LEVELS, palette
 
         eval_cfg = cfg.logging.get("eval", {})
         n_eps_det = eval_cfg.get("deterministic_episodes", cfg.models.training.eval_episodes)
@@ -495,6 +506,7 @@ class PPOAgent:
                 self.env_config,
                 num_envs=self._max_eval_eps,
                 world_maps=self._test_maps,
+                curriculum_easy_radius=c_rad,
             )
             test_env.reset(seed=self._eval_seed + 1000)
             runner = EvalRunner(test_env, self.env_config, self.device)
@@ -542,7 +554,7 @@ class PPOAgent:
                 fig = render_trajectory(
                     world_map_i, ep.trajectory,
                     targets[i], ep.outcome == "success", i,
-                    TERRAIN_LEVELS, palette,
+                    eval_env.compiled,
                     observed_mask=ep.observed_mask,
                 )
                 figures.append(fig)

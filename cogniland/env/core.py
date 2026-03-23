@@ -8,16 +8,12 @@ swap `torch.*` -> `jnp.*` and these functions become jit-compilable.
 
 from __future__ import annotations
 
+import functools
+
 import torch
 
-from cogniland.env.constants import (
-    ACTIONS,
-    ACTION_DELTAS,
-    TERRAIN_COSTS,
-    TERRAIN_THRESHOLDS,
-    TERRAIN_VISIBILITY,
-)
-from cogniland.env.types import EnvConfig, EnvState, StepResult
+from cogniland.env.constants import ACTIONS, ACTION_DELTAS
+from cogniland.env.types import CompiledTerrainData, EnvConfig, EnvState, RewardConfig, StepResult
 
 
 # ---------------------------------------------------------------------------
@@ -30,12 +26,12 @@ def env_step(
     world_map: torch.Tensor,
     target_pos: torch.Tensor,
     config: EnvConfig,
+    compiled: CompiledTerrainData,
 ) -> StepResult:
     """Execute one batched step.  Pure function — no side effects.
 
     world_map: either [H, W] (shared) or [B, H, W] (per-env Level Replay).
     """
-    from cogniland.env.reward import compute_reward
 
     old_terrain = state.terrain_idx.clone()  # needed for land-to-water transition
     prev_dist = (state.position - target_pos).float().abs().sum(dim=1)
@@ -44,26 +40,26 @@ def env_step(
     new_state = apply_movement(state, action, config.size)
 
     # 2. Compass update — unit direction (pos − target), magnitude dropped
-    compass_raw = (new_state.position - target_pos).float()           # [B, 2]
+    compass_raw = (target_pos - new_state.position).float()           # [B, 2] — points toward target
     compass_euclidean = torch.norm(compass_raw, dim=1, keepdim=True).clamp(min=1e-8)
     compass_unit = compass_raw / compass_euclidean                     # [B, 2]
     new_state = new_state._replace(compass=compass_unit)
 
     # 3. Terrain level (needed by minimap visibility)
-    terrain_idx = compute_terrain_levels(world_map, new_state.position)
+    terrain_idx = compute_terrain_levels(world_map, new_state.position, compiled)
     new_state = new_state._replace(terrain_idx=terrain_idx)
 
     # 4. Minimap update
     minimap = compute_minimap_batch(
         world_map, new_state.position, config.minimap_max_ray,
         terrain_idx, config.minimap_occlude, config.minimap_clear_tolerance,
-        target_pos=target_pos,
+        compiled, target_pos=target_pos,
     )
     new_state = new_state._replace(minimap=minimap)
 
     # 5. Movement costs & terrain effects
-    new_state = apply_movement_costs(new_state, action, config)
-    new_state = apply_terrain_effects(new_state, old_terrain, action, config)
+    new_state = apply_movement_costs(new_state, action, config, compiled)
+    new_state = apply_terrain_effects(new_state, old_terrain, action, config, compiled)
 
     # 8. Clamp
     hp = torch.clamp(new_state.hp, 0.0, config.max_hp)
@@ -76,15 +72,59 @@ def env_step(
     reached = dist_to_target < 1.0
     done = ~alive | reached
 
-    # 10. Reward
-    reward = compute_reward(new_state, alive, reached, dist_to_target, prev_dist, config)
+    # 10. Reward (computed natively from env config)
+    reward = compute_reward(
+        cost=new_state.cost,
+        dijkstra_cost=new_state.dijkstra_cost,
+        alive=alive,
+        reached=reached,
+        dist_to_target=dist_to_target,
+        prev_dist=prev_dist,
+        rw=config.reward,
+    )
 
     info = {
         "alive": alive,
         "reached": reached,
         "dist_to_target": dist_to_target,
+        "prev_dist": prev_dist,
     }
     return StepResult(state=new_state, reward=reward, done=done, info=info)
+
+
+# ---------------------------------------------------------------------------
+# Reward (pure function — part of the environment specification)
+# ---------------------------------------------------------------------------
+
+def compute_reward(
+    cost: torch.Tensor,
+    dijkstra_cost: torch.Tensor,
+    alive: torch.Tensor,
+    reached: torch.Tensor,
+    dist_to_target: torch.Tensor,
+    prev_dist: torch.Tensor,
+    rw: RewardConfig,
+) -> torch.Tensor:
+    """Compute shaped reward. Pure function, no side effects."""
+    device = alive.device
+
+    r_progress = rw.lambda_p * (prev_dist - dist_to_target)
+
+    # Time-efficiency ratio: optimal time / actual time, clamped to [0, 1]
+    time_ratio = torch.clamp(dijkstra_cost / (cost + 1e-6), 0.0, 1.0)
+
+    r_success = torch.where(
+        reached,
+        torch.tensor(rw.reach_bonus, device=device) + rw.lambda_t * time_ratio,
+        torch.zeros(1, device=device),
+    )
+    r_death = torch.where(
+        ~alive,
+        torch.tensor(-rw.lambda_d * rw.reach_bonus, device=device),
+        torch.zeros(1, device=device),
+    )
+
+    return r_progress + r_success + r_death
 
 
 # ---------------------------------------------------------------------------
@@ -103,17 +143,22 @@ def apply_movement(state: EnvState, action: torch.Tensor, map_size: int) -> EnvS
 # Terrain queries  (vectorised — no Python loops)
 # ---------------------------------------------------------------------------
 
-def compute_terrain_levels(world_map: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
+def compute_terrain_levels(
+    world_map: torch.Tensor,
+    positions: torch.Tensor,
+    compiled: CompiledTerrainData,
+) -> torch.Tensor:
     """Vectorised terrain-level lookup using searchsorted.
 
     Args:
         world_map: [H, W] shared or [B, H, W] per-env heightmap.
         positions: [B, 2] (row, col) positions.
+        compiled: pre-built terrain tensors.
 
-    Returns: [B] float terrain level indices (0-8).
+    Returns: [B] float terrain level indices (0..N-1).
     """
     device = positions.device
-    thresholds = TERRAIN_THRESHOLDS.to(device)
+    thresholds = compiled.thresholds.to(device)
     if world_map.dim() == 3:
         # Per-env maps: index [b, row, col]
         b_idx = torch.arange(positions.shape[0], device=device)
@@ -122,7 +167,7 @@ def compute_terrain_levels(world_map: torch.Tensor, positions: torch.Tensor) -> 
         # Shared map
         height_values = world_map[positions[:, 0], positions[:, 1]]
     levels = torch.searchsorted(thresholds, height_values)
-    levels = torch.clamp(levels, 0, 8).float()
+    levels = torch.clamp(levels, 0, compiled.num_terrains - 1).float()
     return levels
 
 
@@ -132,7 +177,8 @@ def compute_terrain_levels(world_map: torch.Tensor, positions: torch.Tensor) -> 
 # ---------------------------------------------------------------------------
 
 def apply_movement_costs(
-    state: EnvState, action: torch.Tensor, config: EnvConfig
+    state: EnvState, action: torch.Tensor,
+    config: EnvConfig, compiled: CompiledTerrainData,
 ) -> EnvState:
     """Apply base movement costs based on terrain (vectorised).
 
@@ -140,7 +186,7 @@ def apply_movement_costs(
     not a free pause. Only the land-to-water transition is gated on actual movement.
     """
     device = state.position.device
-    costs = TERRAIN_COSTS.to(device)
+    costs = compiled.move_costs.to(device)
     terrain_idx = state.terrain_idx.long()
     step_cost = costs[terrain_idx]  # [B]
 
@@ -152,7 +198,9 @@ def apply_movement_costs(
 # ---------------------------------------------------------------------------
 
 def apply_terrain_effects(
-    state: EnvState, old_terrain: torch.Tensor, action: torch.Tensor, config: EnvConfig
+    state: EnvState, old_terrain: torch.Tensor,
+    action: torch.Tensor, config: EnvConfig,
+    compiled: CompiledTerrainData,
 ) -> EnvState:
     """Apply forest, sea, mountain, and hard-mode effects (vectorised)."""
     device = state.position.device
@@ -160,40 +208,37 @@ def apply_terrain_effects(
     hp = state.hp.clone()
     resources = state.resources.clone()
 
-    # --- Per-terrain resource drain (every step, no free window) ---
-    # 0=ocean, 1=deep_water, 2=water, 3=beach, 4=sandy, 5=grassland,
-    # 6=forest (handled separately), 7=rocky, 8=mountains
-    terrain_res_costs = torch.tensor([
-        config.sea_resource_costs[0],       # ocean
-        config.sea_resource_costs[1],       # deep_water
-        config.sea_resource_costs[2],       # water
-        config.land_resource_drain,         # beach
-        config.land_resource_drain,         # sandy
-        config.land_resource_drain,         # grassland
-        0.0,                               # forest
-        config.mountain_resource_costs[0], # rocky
-        config.mountain_resource_costs[1], # mountains
-    ], device=device)
-    res_drain = terrain_res_costs[terrain.long()]       # [B]
-    actual_drain = torch.min(resources, res_drain)
+    # --- Per-terrain resource drain (negative res_rate) ---
+    res_rate_table = compiled.res_rate.to(device)
+    res_rate = res_rate_table[terrain.long()]             # [B], negative = drain
+    drain = (-res_rate).clamp(min=0)                     # positive drain amount
+    actual_drain = torch.min(resources, drain)
     resources = resources - actual_drain
-    hp = hp - (res_drain - actual_drain) * config.no_res_hp_multiplier
+    hp = hp - (drain - actual_drain) * config.agent.no_res_hp_multiplier
 
-    # --- Forest: HP-first priority mechanic ---
-    forest = terrain == 6
+    # --- Forest: HP-first priority mechanic (positive res_rate / hp_rate) ---
+    is_forest = compiled.is_forest.to(device)
+    forest = is_forest[terrain.long()]
+    hp_rate_table  = compiled.hp_rate.to(device)
+    res_rate_gain  = res_rate.clamp(min=0)               # positive gain for forest
+
     at_max_hp = hp >= config.max_hp
     # Heal if below max HP
-    hp = hp + forest.float() * (~at_max_hp).float() * config.forest_hp_gain
+    hp = hp + forest.float() * (~at_max_hp).float() * hp_rate_table[terrain.long()]
     # Only collect resources when at full HP
-    resources = resources + forest.float() * at_max_hp.float() * config.forest_resource_gain
+    resources = resources + forest.float() * at_max_hp.float() * res_rate_gain
 
-    # --- Land-to-water transition: costs resources; shortfall converts to HP via no_res_hp_multiplier ---
+    # --- Land-to-water transition: costs resources; shortfall converts to HP ---
+    is_water = compiled.is_water.to(device)
     moving = action != ACTIONS["stay"]
-    land_to_water = (old_terrain > 2) & (terrain <= 2) & moving
-    resources_available = torch.clamp(resources, 0.0, config.land_to_water_resource_cost)
-    resources_missing = config.land_to_water_resource_cost - resources_available
+    old_is_water = is_water[old_terrain.long()]
+    new_is_water = is_water[terrain.long()]
+    land_to_water = (~old_is_water) & new_is_water & moving
+
+    resources_available = torch.clamp(resources, 0.0, config.agent.land_to_water_resource_cost)
+    resources_missing = config.agent.land_to_water_resource_cost - resources_available
     resources = resources - land_to_water.float() * resources_available
-    hp = hp - land_to_water.float() * resources_missing * config.no_res_hp_multiplier
+    hp = hp - land_to_water.float() * resources_missing * config.agent.no_res_hp_multiplier
 
     return state._replace(hp=hp, resources=resources)
 
@@ -201,9 +246,6 @@ def apply_terrain_effects(
 # ---------------------------------------------------------------------------
 # Minimap (batched)
 # ---------------------------------------------------------------------------
-
-import functools
-
 
 @functools.lru_cache(maxsize=None)
 def _bresenham_rays(max_ray: int) -> torch.Tensor:
@@ -333,12 +375,14 @@ def compute_minimap_batch(
     terrain_indices: torch.Tensor,
     occlude: bool,
     min_clear_lv: float,
+    compiled: CompiledTerrainData,
     target_pos: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Compute minimap with terrain-dependent visibility for a batch of positions.
 
     Args:
         world_map: [H, W] shared or [B, H, W] per-env heightmap.
+        compiled: pre-built terrain tensors (visibility table).
         target_pos: optional [B, 2] int tensor of target positions.
 
     Returns: [B, 3, 2*max_ray+1, 2*max_ray+1] channel-first float tensor.
@@ -382,7 +426,7 @@ def compute_minimap_batch(
     dist_grid = torch.sqrt(dy_grid ** 2 + dx_grid ** 2)  # [D, D]
 
     # Batch distance visibility mask
-    vis_radii = TERRAIN_VISIBILITY.to(device)[terrain_indices.long()]  # [B]
+    vis_radii = compiled.visibility.to(device)[terrain_indices.long()]  # [B]
     dist_masks = (dist_grid.unsqueeze(0) <= vis_radii.view(B, 1, 1)).float()  # [B, D, D]
 
     # Batch occlusion mask
@@ -402,7 +446,12 @@ def compute_minimap_batch(
             patch_y = int(ty - cy + max_ray)
             patch_x = int(tx - cx + max_ray)
             if 0 <= patch_y < diameter and 0 <= patch_x < diameter:
-                target_mask[b, patch_y, patch_x] = 1.0
+                # Draw a 3x3 block to prevent the signal from fading during CNN Pooling
+                y_start = max(0, patch_y - 1)
+                y_end   = min(diameter, patch_y + 2)
+                x_start = max(0, patch_x - 1)
+                x_end   = min(diameter, patch_x + 2)
+                target_mask[b, y_start:y_end, x_start:x_end] = 1.0
 
     # Combine
     maps[:, 0] = patches * final_masks

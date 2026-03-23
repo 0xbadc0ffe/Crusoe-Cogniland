@@ -10,14 +10,16 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from cogniland.env.constants import TERRAIN_THRESHOLDS, TERRAIN_COSTS
-
 
 # ---------------------------------------------------------------------------
 # Dijkstra (scipy-based)
 # ---------------------------------------------------------------------------
 
-def _build_grid_graph(wm: np.ndarray, costs_np: np.ndarray) -> "csr_matrix":
+def _build_grid_graph(
+    wm: np.ndarray,
+    thresholds_np: np.ndarray,
+    costs_np: np.ndarray,
+) -> "csr_matrix":
     """Build a 4-connected CSR sparse graph for Dijkstra.
 
     Edge cost = terrain cost of the **destination** cell.
@@ -26,7 +28,6 @@ def _build_grid_graph(wm: np.ndarray, costs_np: np.ndarray) -> "csr_matrix":
     from scipy.sparse import csr_matrix
 
     H, W = wm.shape
-    thresholds_np = TERRAIN_THRESHOLDS.cpu().numpy()
 
     # Vectorized terrain level assignment: level = first threshold index where wm < threshold
     terrain = np.searchsorted(thresholds_np, wm.ravel(), side="left").reshape(H, W)
@@ -58,6 +59,7 @@ def dijkstra_from_source(
     world_map: torch.Tensor,    # [H, W] CPU
     terrain_costs: torch.Tensor,
     source: torch.Tensor,       # [2] long
+    terrain_thresholds: torch.Tensor | None = None,
 ) -> np.ndarray:                # [H, W] float64, distance from source to every cell
     """Run scipy Dijkstra once from source. Returns full distance map.
 
@@ -69,7 +71,13 @@ def dijkstra_from_source(
     wm = world_map.cpu().numpy()
     costs_np = terrain_costs.cpu().numpy()
 
-    graph = _build_grid_graph(wm, costs_np)
+    if terrain_thresholds is not None:
+        thresholds_np = terrain_thresholds.cpu().numpy()
+    else:
+        # Fallback: caller must provide thresholds
+        raise ValueError("terrain_thresholds is required")
+
+    graph = _build_grid_graph(wm, thresholds_np, costs_np)
 
     sr, sc = int(source[0].item()), int(source[1].item())
     source_idx = sr * W + sc
@@ -86,6 +94,7 @@ def batch_dijkstra_from_sources(
     world_maps: torch.Tensor,   # [B, H, W]
     terrain_costs: torch.Tensor,
     sources: torch.Tensor,      # [B, 2]
+    terrain_thresholds: torch.Tensor | None = None,
     n_workers: int | None = None,
 ) -> list[np.ndarray]:          # list of B arrays, each [H, W]
     """Parallel Dijkstra across a batch using ThreadPoolExecutor.
@@ -98,7 +107,7 @@ def batch_dijkstra_from_sources(
 
     B = sources.shape[0]
     args = [
-        (world_maps[i].cpu(), terrain_costs.cpu(), sources[i].cpu())
+        (world_maps[i].cpu(), terrain_costs.cpu(), sources[i].cpu(), terrain_thresholds.cpu())
         for i in range(B)
     ]
 

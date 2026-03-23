@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 
@@ -63,9 +64,84 @@ def _make_group_name(cfg) -> str:
     return f"{model}_{env_mode}_{lr_str}"
 
 
+def _make_run_config(cfg) -> dict:
+    """Slim config for WandB — all hyperparams needed for reproducibility and run comparison.
+
+    Grouped into sections that appear as collapsible prefixes in the WandB UI.
+    The full config is also archived as a JSON string in ``run.config["_full_config"]``
+    so it is accessible via the API without polluting the column list.
+    """
+    env = cfg.env
+    rw  = env.get("reward", {})
+    mg  = env.get("map_generation", env)  # fallback to flat keys for old configs
+    tr  = cfg.models.get("training", {})
+    ds  = tr.get("dataset", {})
+
+    slim = {
+        # ── Reward shaping (sweep axes + shaping weights) ──────────────────
+        "reward/lambda_p":     rw.get("lambda_p", env.get("lambda_p")),
+        "reward/lambda_t":     rw.get("lambda_t"),
+        "reward/lambda_d":     rw.get("lambda_d"),
+        "reward/reach_bonus":  rw.get("reach_bonus"),
+        "reward/time_penalty": env.get("time_penalty"),   # flat sweep override
+
+        # ── PPO optimisation ────────────────────────────────────────────────
+        "ppo/lr":              tr.get("learning_rate"),
+        "ppo/anneal_lr":       tr.get("anneal_lr"),
+        "ppo/clip_range":      tr.get("policy_clip_range"),
+        "ppo/value_coef":      tr.get("value_loss_weight"),
+        "ppo/entropy_coef":    tr.get("entropy_bonus_weight"),
+        "ppo/max_grad_norm":   tr.get("max_grad_norm"),
+        "ppo/epochs":          tr.get("epochs_per_update"),
+        "ppo/minibatch":       tr.get("minibatch_size"),
+
+        # ── GAE / returns ───────────────────────────────────────────────────
+        "gae/gamma":           tr.get("discount_factor"),
+        "gae/lambda":          tr.get("gae_lambda"),
+
+        # ── Rollout ─────────────────────────────────────────────────────────
+        "rollout/parallel_envs":   tr.get("parallel_envs"),
+        "rollout/moves_per_update": tr.get("moves_per_rollout"),
+        "rollout/total_moves":     tr.get("total_env_moves"),
+
+        # ── Curriculum ──────────────────────────────────────────────────────
+        "curriculum/switch_steps":  ds.get("curriculum_switch_steps"),
+        "curriculum/easy_radius":   ds.get("curriculum_easy_radius"),
+        "curriculum/dataset":       ds.get("path"),
+
+        # ── Model architecture ──────────────────────────────────────────────
+        "model/name":          cfg.models.get("name"),
+        "model/hidden_dim":    cfg.models.get("hidden_dim"),
+        "model/scalar_dim":    cfg.models.get("scalar_dim"),
+        "model/cnn_channels":  cfg.models.get("cnn_channels"),
+
+        # ── Environment ─────────────────────────────────────────────────────
+        "env/map_size":   mg.get("size"),
+        "env/max_steps":  env.get("max_steps"),
+        "env/seed":       mg.get("seed", env.get("seed")),
+    }
+    return {k: v for k, v in slim.items() if v is not None}
+
+
 def _flatten_cfg(cfg) -> dict:
     from omegaconf import OmegaConf
     return OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False)
+
+
+# Metrics shown in the final test summary table (in display order)
+# Each entry: (metric_suffix, is_plain_rate)
+# is_plain_rate=True  → logged as "{prefix}/{suffix}"      (no _mean)
+# is_plain_rate=False → logged as "{prefix}/{suffix}_mean" (with _std)
+_TEST_SUMMARY_METRICS: list[tuple[str, bool]] = [
+    ("success_rate",   True),
+    ("return",         False),
+    ("episode_length", False),
+    ("directness",     False),
+    ("exploration",    False),
+    ("risk_exposure",  False),
+    ("final_hp",       False),
+    ("final_resources",False),
+]
 
 
 class WandBLogger:
@@ -81,13 +157,28 @@ class WandBLogger:
             self._run = wandb.init(
                 project=log_cfg.project,
                 entity=log_cfg.get("entity", None),
-                name=_make_run_name(cfg),
-                group=_make_group_name(cfg),
+                name=log_cfg.get("name") or _make_run_name(cfg),
+                group=log_cfg.get("group") or _make_group_name(cfg),
                 mode=log_cfg.mode,
-                config=_flatten_cfg(cfg),
-                tags=[cfg.models.name, f"env_{cfg.env.get('hard_mode', False)}"],
-                save_code=True,
+                config=_make_run_config(cfg),
+                tags=[cfg.models.name],
+                save_code=False,   # git is the source of truth; avoids artifact clutter
             )
+            # Archive full config as a JSON string — accessible via run.config["_full_config"]
+            # but stored as a single opaque value so it doesn't add columns.
+            self._run.config.update(
+                {"_full_config": json.dumps(_flatten_cfg(cfg))},
+                allow_val_change=True,
+            )
+            # Pre-initialize key eval metrics in summary so they appear as columns
+            # in the runs table from the start (filled in during/after training).
+            self._run.summary.update({
+                "test_det/env/success_rate":      None,
+                "test_det/env/return_mean":       None,
+                "test_det/env/directness_mean":   None,
+                "test_det/env/exploration_mean":  None,
+                "test_det/env/risk_exposure_mean":None,
+            })
         # Per-namespace row lists for terrain distribution; grow across eval steps
         self._terrain_history: dict[str, list] = {}
 
@@ -208,6 +299,60 @@ class WandBLogger:
         )
         artifact.add_file(path)
         self._run.log_artifact(artifact, aliases=aliases)
+
+    def log_final_test_summary(self, metrics: dict[str, float]) -> None:
+        """Push all test metrics to run.summary and log a readable summary table.
+
+        Call this once at the end of training after the final test evaluation.
+        Two things happen:
+        1. Every test metric is pushed to ``run.summary`` so it appears as a
+           selectable column in the WandB runs table.
+        2. A ``wandb.Table`` with rows [metric | det mean | det std | stoch mean | stoch std]
+           is logged under ``test/summary_table`` for at-a-glance comparison.
+        """
+        if not self.enabled or self._run is None:
+            return
+        import wandb
+
+        # Push everything to summary (makes all test metrics available as columns)
+        self._run.summary.update(metrics)
+
+        # Build a clean two-column (det / stoch) table for the important metrics
+        rows = []
+        for metric, is_rate in _TEST_SUMMARY_METRICS:
+            if is_rate:
+                det   = metrics.get(f"test_det/env/{metric}")
+                stoch = metrics.get(f"test_stoch/env/{metric}")
+                if det is None and stoch is None:
+                    continue
+                rows.append([
+                    metric,
+                    f"{det:.3f}"   if det   is not None else "—",
+                    "—",
+                    f"{stoch:.3f}" if stoch is not None else "—",
+                    "—",
+                ])
+            else:
+                det_m  = metrics.get(f"test_det/env/{metric}_mean")
+                det_s  = metrics.get(f"test_det/env/{metric}_std")
+                sto_m  = metrics.get(f"test_stoch/env/{metric}_mean")
+                sto_s  = metrics.get(f"test_stoch/env/{metric}_std")
+                if det_m is None and sto_m is None:
+                    continue
+                rows.append([
+                    metric,
+                    f"{det_m:.3f}" if det_m is not None else "—",
+                    f"{det_s:.3f}" if det_s is not None else "—",
+                    f"{sto_m:.3f}" if sto_m is not None else "—",
+                    f"{sto_s:.3f}" if sto_s is not None else "—",
+                ])
+
+        if rows:
+            table = wandb.Table(
+                columns=["metric", "det_mean", "det_std", "stoch_mean", "stoch_std"],
+                data=rows,
+            )
+            self._run.log({"test/summary_table": table})
 
     def finish(self) -> None:
         if self.enabled and self._run is not None:

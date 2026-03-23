@@ -14,10 +14,9 @@ import random
 import numpy as np
 import torch
 
-from cogniland.env.constants import TERRAIN_COSTS, TERRAIN_THRESHOLDS
 from cogniland.env.core import compute_minimap_batch, compute_terrain_levels, env_step
 from cogniland.env.pathfinding import batch_dijkstra_from_sources
-from cogniland.env.types import CurriculumStage, EnvConfig, EnvState, StepResult
+from cogniland.env.types import CompiledTerrainData, CurriculumStage, EnvConfig, EnvState, StepResult
 
 
 def generate_island(config: EnvConfig) -> torch.Tensor:
@@ -88,22 +87,19 @@ def generate_island(config: EnvConfig) -> torch.Tensor:
     return world
 
 
-def colorize(world_map: torch.Tensor, config: EnvConfig) -> torch.Tensor:
+def colorize(world_map: torch.Tensor, compiled: CompiledTerrainData) -> torch.Tensor:
     """Convert heightmap to [H, W, 3] uint8 color tensor for visualisation."""
-    from cogniland.env.constants import palette, TERRAIN_LEVELS
-
-    threshold = 0.02 if config.sink_mode == 1 else (0.1 if config.sink_mode == 2 else 0.2)
-
-    # Derive color order from canonical TERRAIN_LEVELS
-    color_order = [(TERRAIN_LEVELS[i]["color"], TERRAIN_LEVELS[i]["threshold"]) for i in range(9)]
+    thresholds = compiled.thresholds.cpu()
+    color_lut = compiled.color_lut.float().cpu()
+    num_terrains = compiled.num_terrains
 
     color_world = torch.zeros(*world_map.shape, 3)
     for i in range(world_map.shape[0]):
         for j in range(world_map.shape[1]):
             val = world_map[i, j].item()
-            for name, t in color_order:
-                if val < threshold + t:
-                    color_world[i, j] = torch.tensor(palette[name], dtype=torch.float32)
+            for k in range(num_terrains):
+                if val < thresholds[k].item():
+                    color_world[i, j] = color_lut[k]
                     break
 
     return color_world
@@ -112,21 +108,24 @@ def colorize(world_map: torch.Tensor, config: EnvConfig) -> torch.Tensor:
 class Islands:
     """Batched island navigation environment with Level Replay.
 
-    In procedural mode (map_name == ""), pre-generates a pool of N maps at init.
-    Each environment in the batch may be on a different map. On episode reset,
-    a new map is randomly sampled from the pool and spawn/target are re-sampled.
+    In procedural mode (map_name == ""), generates a single random map at init.
     """
 
     def __init__(
         self,
         config: EnvConfig | None = None,
         world_maps: torch.Tensor | None = None,
+        curriculum_easy_radius: int = 40,
         **kwargs,
     ):
         if config is None:
             config = EnvConfig(**kwargs)
         self.config = config
+        self.curriculum_easy_radius = curriculum_easy_radius
         self._device = config.resolved_device()
+
+        # Compile terrain data once
+        self._compiled = config.compile_terrain(self._device)
 
         # Seed all RNGs — SimplexNoise uses Python's random module internally
         torch.manual_seed(config.seed)
@@ -146,18 +145,9 @@ class Islands:
             self._fixed_spawn = cm.get_spawn(config.map_name)
             self._fixed_target = cm.get_target(config.map_name)
         else:
-            # Procedural pool — generate N maps with different seeds
-            pool_size = config.map_pool_size
-            print(f"Generating {pool_size} procedural maps ({config.size}×{config.size}) ...")
-            maps = []
-            for i in range(pool_size):
-                seed_i = config.seed + i
-                torch.manual_seed(seed_i)
-                random.seed(seed_i)
-                np.random.seed(seed_i)
-                maps.append(generate_island(config))
-            self.world_maps = torch.stack(maps).to(self._device)  # [N, H, W]
-            print(f"Map pool ready: {self.world_maps.shape}")
+            # Procedural — generate a single random map
+            print(f"Generating random map ({config.size}×{config.size}) ...")
+            self.world_maps = generate_island(config).unsqueeze(0).to(self._device)  # [1, H, W]
             self._fixed_spawn = None
             self._fixed_target = None
 
@@ -174,6 +164,11 @@ class Islands:
 
         # Per-env map assignment (set during reset)
         self._env_map_idx: torch.Tensor | None = None
+
+    @property
+    def compiled(self) -> CompiledTerrainData:
+        """Access compiled terrain data."""
+        return self._compiled
 
     # ------------------------------------------------------------------
     # Reset
@@ -197,7 +192,7 @@ class Islands:
         # Assign each env a random map from the pool
         self._env_map_idx = torch.randint(0, N, (batch_size,), device=self._device)
 
-        land_threshold = TERRAIN_THRESHOLDS[2].item()  # must be above water
+        land_threshold = self._compiled.land_threshold
 
         # Sample or use fixed spawn/target positions (per env, on its assigned map)
         if self._fixed_spawn is not None:
@@ -219,12 +214,13 @@ class Islands:
         # Build per-env world maps for batched ops: [B, H, W]
         per_env_maps = self.world_maps[self._env_map_idx]  # [B, H, W]
 
-        terrain_idx = compute_terrain_levels(per_env_maps, spawn_pos)
+        terrain_idx = compute_terrain_levels(per_env_maps, spawn_pos, self._compiled)
         minimap = compute_minimap_batch(
             per_env_maps, spawn_pos,
             self.config.minimap_max_ray, terrain_idx,
             self.config.minimap_occlude,
             self.config.minimap_clear_tolerance,
+            self._compiled,
             target_pos=target_pos,
         )
         compass_raw = (spawn_pos - target_pos).float()
@@ -232,7 +228,8 @@ class Islands:
 
         # Precompute optimal time cost spawn→target via Dijkstra (episode constant)
         dist_maps = batch_dijkstra_from_sources(
-            per_env_maps.cpu(), TERRAIN_COSTS, spawn_pos.cpu()
+            per_env_maps.cpu(), self._compiled.move_costs.cpu(), spawn_pos.cpu(),
+            terrain_thresholds=self._compiled.thresholds.cpu(),
         )
         dijkstra_cost = torch.tensor([
             dist_maps[i][target_pos[i, 0].item(), target_pos[i, 1].item()]
@@ -270,7 +267,7 @@ class Islands:
 
         if curriculum_stage == CurriculumStage.EASY:
             center = size // 2
-            radius = self.config.curriculum_easy_radius
+            radius = self.curriculum_easy_radius
             r_lo = max(0, center - radius)
             r_hi = min(size - 1, center + radius)
             c_lo = max(0, center - radius)
@@ -297,12 +294,19 @@ class Islands:
     # ------------------------------------------------------------------
 
     def step(self, state: EnvState, action: torch.Tensor, target_pos: torch.Tensor) -> StepResult:
-        """Single batched step — delegates to core.env_step.
+        """Call env_step. Reward is only computed if self.reward_config is set."""
+        from cogniland.env.core import env_step
 
-        Passes per-env maps [B, H, W] so each env steps on its own map.
-        """
+        # Passes per-env maps [B, H, W] so each env steps on its own map.
         per_env_maps = self.world_maps[self._env_map_idx]  # [B, H, W]
-        return env_step(state, action, per_env_maps, target_pos, self.config)
+        return env_step(
+            state,
+            action,
+            per_env_maps,
+            target_pos,
+            self.config,
+            self._compiled,
+        )
 
     # ------------------------------------------------------------------
     # Auto-reset helper
@@ -325,7 +329,7 @@ class Islands:
 
         n_done = int(done.sum().item())
         N = self.world_maps.shape[0]
-        land_threshold = TERRAIN_THRESHOLDS[2].item()
+        land_threshold = self._compiled.land_threshold
 
         # Assign new random map for each done env
         new_map_idx = torch.randint(0, N, (n_done,), device=self._device)
@@ -351,12 +355,13 @@ class Islands:
         done_maps = self.world_maps[new_map_idx]   # [n_done, H, W]
 
         # Build replacement state fields
-        new_terrain = compute_terrain_levels(done_maps, new_spawn)
+        new_terrain = compute_terrain_levels(done_maps, new_spawn, self._compiled)
         new_minimap = compute_minimap_batch(
             done_maps, new_spawn,
             self.config.minimap_max_ray, new_terrain,
             self.config.minimap_occlude,
             self.config.minimap_clear_tolerance,
+            self._compiled,
             target_pos=new_target,
         )
         new_compass_raw = (new_spawn - new_target).float()
@@ -364,7 +369,8 @@ class Islands:
 
         # Precompute optimal time cost for done envs
         done_dist_maps = batch_dijkstra_from_sources(
-            done_maps.cpu(), TERRAIN_COSTS, new_spawn.cpu()
+            done_maps.cpu(), self._compiled.move_costs.cpu(), new_spawn.cpu(),
+            terrain_thresholds=self._compiled.thresholds.cpu(),
         )
         new_dijkstra_cost_np = torch.tensor([
             done_dist_maps[i][new_target[i, 0].item(), new_target[i, 1].item()]
