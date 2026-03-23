@@ -153,18 +153,28 @@ Maps are 250×250 grids generated via simplex noise with square island filtering
 Use `scripts/generate_dataset.py` to pre-generate a dataset with guaranteed train/val/test splits:
 
 ```bash
-python scripts/generate_dataset.py --seed 42 --train 128 --val 16 --test 16 \
-    --output data/maps_seed42_train128_val16_test16.pt
+python scripts/generate_dataset.py --seed 42 --train 128 --val 16 --test 16
 ```
 
-Pass to training with `env.dataset_path=data/maps_seed42_...pt`.
+Pass to training with:
+
+```bash
+python train.py \
+  models.training.dataset.train_path=data/train_seed42_n128.pt \
+  models.training.dataset.val_path=data/val_seed42_n16.pt \
+  models.training.dataset.test_path=data/test_seed42_n16.pt
+```
 
 ### Curriculum
 
-When `env.curriculum_switch_steps > 0`, training starts in **EASY** mode: spawn and target are both sampled within a radius-50 circle around the map center, ensuring shorter distances and land-heavy terrain. After `curriculum_switch_steps` global environment steps the env switches automatically to **NORMAL** mode (full-map sampling).
+When `models.training.dataset.curriculum_switch_steps > 0`, training starts in **EASY** mode: spawn and target are both sampled within a radius-50 circle around the map center, ensuring shorter distances and land-heavy terrain. After `curriculum_switch_steps` global environment steps the env switches automatically to **NORMAL** mode (full-map sampling).
 
 ```bash
-python train.py env.dataset_path=... env.curriculum_switch_steps=750000
+python train.py \
+  models.training.dataset.train_path=data/train_seed42_n128.pt \
+  models.training.dataset.val_path=data/val_seed42_n16.pt \
+  models.training.dataset.test_path=data/test_seed42_n16.pt \
+  models.training.dataset.curriculum_switch_steps=750000
 ```
 
 ---
@@ -198,6 +208,6 @@ All environment parameters live in `configs/env/default.yaml`. Key groups:
 | Agent | `init_hp`, `max_hp`, `init_resources`, `max_resources` |
 | Terrain effects | `land_resource_drain`, `sea_resource_costs`, `mountain_resource_costs`, `forest_hp_gain`, `forest_resource_gain`, `no_res_hp_multiplier` |
 | Water transition | `land_to_water_resource_cost`, `land_to_water_hp_per_missing_res` |
-| Reward | `reward_dist_coef`, `reward_reach_bonus`, `reward_death_penalty`, `reward_time_penalty`, `reward_hp_coef`, `reward_resource_coef` |
+| Reward | `reward.lambda_p`, `reward.time_penalty`, `reward.lambda_t`, `reward.lambda_d`, `reward.reach_bonus` |
 | Curriculum | `dataset_path`, `curriculum_switch_steps`, `curriculum_easy_radius` |
 | Episode | `max_steps` |
