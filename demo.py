@@ -668,7 +668,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=
         pygame.draw.circle(screen, COLORS["player"], (cx_mm, cy_mm), 3)
 
         compass = state.compass[0]
-        dyd, dxd = -float(compass[0]), -float(compass[1])
+        dyd, dxd = float(compass[0]), float(compass[1])
         mag = (dyd**2 + dxd**2)**0.5
         if mag > 1e-6:
             dyd /= mag; dxd /= mag
@@ -852,7 +852,7 @@ class HumanDemo:
 
         compass = self.state.compass[0]
         cx_mm, cy_mm = mm_rect.center
-        dyd, dxd = -float(compass[0]), -float(compass[1])
+        dyd, dxd = float(compass[0]), float(compass[1])
         mag = (dyd**2 + dxd**2)**0.5
         if mag > 1e-6:
             dyd /= mag; dxd /= mag
