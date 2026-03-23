@@ -40,7 +40,7 @@ def env_step(
     new_state = apply_movement(state, action, config.size)
 
     # 2. Compass update — unit direction (pos − target), magnitude dropped
-    compass_raw = (new_state.position - target_pos).float()           # [B, 2]
+    compass_raw = (target_pos - new_state.position).float()           # [B, 2] — points toward target
     compass_euclidean = torch.norm(compass_raw, dim=1, keepdim=True).clamp(min=1e-8)
     compass_unit = compass_raw / compass_euclidean                     # [B, 2]
     new_state = new_state._replace(compass=compass_unit)
