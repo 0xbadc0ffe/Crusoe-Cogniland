@@ -162,6 +162,7 @@ class DatasetConfig:
 class RewardConfig:
     """Reward shaping parameters — part of the environment specification."""
     lambda_p: float = 0.1       # progress reward weight (Manhattan distance approach)
+    time_penalty: float = 0.0   # per-step penalty applied every move
     lambda_t: float = 60.0      # time-efficiency bonus weight at success
     lambda_d: float = 0.6       # death penalty = lambda_d * reach_bonus
     reach_bonus: float = 100.0
@@ -360,6 +361,7 @@ class EnvConfig:
         rw_cfg = env.get("reward", {})
         reward = RewardConfig(
             lambda_p=rw_cfg.get("lambda_p", 0.1),
+            time_penalty=rw_cfg.get("time_penalty", 0.0),
             lambda_t=rw_cfg.get("lambda_t", 60.0),
             lambda_d=rw_cfg.get("lambda_d", 0.6),
             reach_bonus=rw_cfg.get("reach_bonus", 100.0),
