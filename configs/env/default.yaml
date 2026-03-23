@@ -36,98 +36,20 @@ custom_map:
   target_c: -1
 
 # ── Terrain definitions (single source of truth) ──
-# Each entry fully defines one terrain level.
+# res_rate: signed resource rate per step — negative = drain, positive = gain (forest)
+# hp_rate:  signed HP rate per step      — positive = heal (forest when below max HP)
 # Tags drive engine logic: "water" triggers boat costs, "forest" triggers healing/gathering.
 terrains:
-  - name: ocean
-    threshold: 0.007
-    move_cost: 1.0
-    res_drain: 0.7
-    hp_gain: 0.0
-    res_gain: 0.0
-    visibility: 10
-    color: [5, 35, 225]
-    tags: [water]
-
-  - name: deep_water
-    threshold: 0.025
-    move_cost: 1.25
-    res_drain: 0.5
-    hp_gain: 0.0
-    res_gain: 0.0
-    visibility: 8
-    color: [25, 65, 225]
-    tags: [water]
-
-  - name: water
-    threshold: 0.05
-    move_cost: 1.5
-    res_drain: 0.3
-    hp_gain: 0.0
-    res_gain: 0.0
-    visibility: 6
-    color: [65, 105, 225]
-    tags: [water]
-
-  - name: beach
-    threshold: 0.06
-    move_cost: 1.75
-    res_drain: 1.5
-    hp_gain: 0.0
-    res_gain: 0.0
-    visibility: 5
-    color: [238, 214, 175]
-    tags: [land]
-
-  - name: sandy
-    threshold: 0.1
-    move_cost: 2.0
-    res_drain: 1.5
-    hp_gain: 0.0
-    res_gain: 0.0
-    visibility: 5
-    color: [210, 180, 140]
-    tags: [land]
-
-  - name: grassland
-    threshold: 0.25
-    move_cost: 2.25
-    res_drain: 1.5
-    hp_gain: 0.0
-    res_gain: 0.0
-    visibility: 5
-    color: [34, 139, 34]
-    tags: [land]
-
-  - name: forest
-    threshold: 0.6
-    move_cost: 3.0
-    res_drain: 0.0
-    hp_gain: 8.0
-    res_gain: 5.0
-    visibility: 3
-    color: [0, 100, 0]
-    tags: [land, forest]
-
-  - name: rocky
-    threshold: 0.7
-    move_cost: 3.5
-    res_drain: 2.0
-    hp_gain: 0.0
-    res_gain: 0.0
-    visibility: 10
-    color: [139, 137, 137]
-    tags: [land]
-
-  - name: mountains
-    threshold: 1.0
-    move_cost: 4.0
-    res_drain: 5.0
-    hp_gain: 0.0
-    res_gain: 0.0
-    visibility: 22
-    color: [255, 250, 250]
-    tags: [land]
+  #                    threshold  move_cost  res_rate  hp_rate  visibility  color              tags
+  - { name: ocean,      threshold: 0.007, move_cost: 1.0,  res_rate: -0.7, hp_rate: 0.0, visibility: 10, color: [5, 35, 225],      tags: [water] }
+  - { name: deep_water, threshold: 0.025, move_cost: 1.25, res_rate: -0.5, hp_rate: 0.0, visibility:  8, color: [25, 65, 225],     tags: [water] }
+  - { name: water,      threshold: 0.05,  move_cost: 1.5,  res_rate: -0.3, hp_rate: 0.0, visibility:  6, color: [65, 105, 225],    tags: [water] }
+  - { name: beach,      threshold: 0.06,  move_cost: 1.75, res_rate: -1.5, hp_rate: 0.0, visibility:  5, color: [238, 214, 175],   tags: [land] }
+  - { name: sandy,      threshold: 0.1,   move_cost: 2.0,  res_rate: -1.5, hp_rate: 0.0, visibility:  5, color: [210, 180, 140],   tags: [land] }
+  - { name: grassland,  threshold: 0.25,  move_cost: 2.25, res_rate: -1.5, hp_rate: 0.0, visibility:  5, color: [34, 139, 34],     tags: [land] }
+  - { name: forest,     threshold: 0.6,   move_cost: 3.0,  res_rate:  5.0, hp_rate: 8.0, visibility:  3, color: [0, 100, 0],       tags: [land, forest] }
+  - { name: rocky,      threshold: 0.7,   move_cost: 3.5,  res_rate: -2.0, hp_rate: 0.0, visibility: 10, color: [139, 137, 137],   tags: [land] }
+  - { name: mountains,  threshold: 1.0,   move_cost: 4.0,  res_rate: -5.0, hp_rate: 0.0, visibility: 22, color: [255, 250, 250],   tags: [land] }
 
 # ── Reward shaping ──
 reward:

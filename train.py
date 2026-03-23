@@ -3,8 +3,7 @@
 
 Usage:
     python train.py                                                    # PPO default
-    python train.py env=hard models.training.learning_rate=1e-4        # hard mode
-    python train.py models.training.total_env_moves=5000 logging.wandb.mode=disabled
+    python train.py models.training.total_env_moves=2000 logging.wandb.mode=disabled
 """
 
 import hydra

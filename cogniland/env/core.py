@@ -208,24 +208,25 @@ def apply_terrain_effects(
     hp = state.hp.clone()
     resources = state.resources.clone()
 
-    # --- Per-terrain resource drain (fully data-driven from config) ---
-    res_drain_table = compiled.res_drain.to(device)
-    res_drain = res_drain_table[terrain.long()]           # [B]
-    actual_drain = torch.min(resources, res_drain)
+    # --- Per-terrain resource drain (negative res_rate) ---
+    res_rate_table = compiled.res_rate.to(device)
+    res_rate = res_rate_table[terrain.long()]             # [B], negative = drain
+    drain = (-res_rate).clamp(min=0)                     # positive drain amount
+    actual_drain = torch.min(resources, drain)
     resources = resources - actual_drain
-    hp = hp - (res_drain - actual_drain) * config.agent.no_res_hp_multiplier
+    hp = hp - (drain - actual_drain) * config.agent.no_res_hp_multiplier
 
-    # --- Forest: HP-first priority mechanic (tag-driven) ---
+    # --- Forest: HP-first priority mechanic (positive res_rate / hp_rate) ---
     is_forest = compiled.is_forest.to(device)
     forest = is_forest[terrain.long()]
-    hp_gain_table = compiled.hp_gain.to(device)
-    res_gain_table = compiled.res_gain.to(device)
+    hp_rate_table  = compiled.hp_rate.to(device)
+    res_rate_gain  = res_rate.clamp(min=0)               # positive gain for forest
 
     at_max_hp = hp >= config.max_hp
     # Heal if below max HP
-    hp = hp + forest.float() * (~at_max_hp).float() * hp_gain_table[terrain.long()]
+    hp = hp + forest.float() * (~at_max_hp).float() * hp_rate_table[terrain.long()]
     # Only collect resources when at full HP
-    resources = resources + forest.float() * at_max_hp.float() * res_gain_table[terrain.long()]
+    resources = resources + forest.float() * at_max_hp.float() * res_rate_gain
 
     # --- Land-to-water transition: costs resources; shortfall converts to HP ---
     is_water = compiled.is_water.to(device)

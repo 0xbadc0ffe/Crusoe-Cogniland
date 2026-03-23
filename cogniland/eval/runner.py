@@ -59,8 +59,8 @@ class EvalRunner:
         self.device = device
         self._compiled = eval_env.compiled
 
-        # Per-terrain resource drain lookup (from compiled config)
-        self._terrain_res_drains = self._compiled.res_drain
+        # Per-terrain resource rate lookup (negative = drain)
+        self._terrain_res_rates = self._compiled.res_rate
         self._terrain_names = self._compiled.terrain_names
 
     def run(
@@ -89,7 +89,7 @@ class EvalRunner:
         device = self.device
         H = W = env_config.size
 
-        terrain_res_drains = self._terrain_res_drains.to(device)
+        terrain_res_rates = self._terrain_res_rates.to(device)
 
         obs = eval_env.reset()
         initial_spawns = eval_env.state.position.clone()   # [n_eps, 2]
@@ -208,8 +208,8 @@ class EvalRunner:
             running_idx = torch.where(still_running)[0]
             terrain_visits[running_idx, pre_move_terrain[running_idx].long()] += 1
 
-            # Risk exposure: drain_t / (resources_t + hp_t / 2)
-            drain_t = terrain_res_drains[eval_env.state.terrain_idx.long()]  # [n_eps]
+            # Risk exposure: drain / (resources + hp / 2)
+            drain_t = (-terrain_res_rates[eval_env.state.terrain_idx.long()]).clamp(min=0)
             risk_t = drain_t / (current_resources + current_hp / 2.0 + 1e-6)
             risk_sum[still_running] += risk_t[still_running]
             risk_count[still_running] += 1
