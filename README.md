@@ -50,6 +50,12 @@ python train.py env=hard
 
 # Override hyperparameters (Hydra syntax)
 python train.py models.training.learning_rate=3e-4 models.training.parallel_envs=64
+
+# Train from explicit train/val/test split files
+python train.py \
+  models.training.dataset.train_path=data/train_seed42_n128.pt \
+  models.training.dataset.val_path=data/val_seed42_n16.pt \
+  models.training.dataset.test_path=data/test_seed42_n16.pt
 ```
 
 All config lives in `configs/`. Any value can be overridden from the CLI:
@@ -120,6 +126,9 @@ Crusoe-Cogniland/
 │   ├── simplexnoise/           # Bundled noise library for island generation
 │   ├── logging.py              # WandBLogger + log_rollout_stats()
 │   └── utils.py                # Checkpoints, render_trajectory, set_reproducibility
+├── notebooks/                  # Analysis and prototype notebooks
+│   ├── forest_patch_prototype.ipynb
+│   └── sweep_analysis.ipynb
 ├── train.py                    # Hydra entry point
 ├── eval.py                     # Standalone evaluation by WandB run ID
 ├── human_demo.py               # Interactive PyGame demo
