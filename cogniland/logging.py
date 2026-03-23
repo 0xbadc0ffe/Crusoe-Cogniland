@@ -85,7 +85,7 @@ class WandBLogger:
                 group=log_cfg.get("group") or _make_group_name(cfg),
                 mode=log_cfg.mode,
                 config=_flatten_cfg(cfg),
-                tags=[cfg.models.name, f"env_{cfg.env.get('hard_mode', False)}"],
+                tags=[cfg.models.name],
                 save_code=True,
             )
         # Per-namespace row lists for terrain distribution; grow across eval steps
