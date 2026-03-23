@@ -3,16 +3,15 @@
 
 Usage:
     python train.py                                                    # PPO default
-    python train.py models=compass                                     # compass baseline
     python train.py env=hard models.training.learning_rate=1e-4        # hard mode
-    python train.py models.training.total_timesteps=5000 logging.wandb.mode=disabled
+    python train.py models.training.total_env_moves=5000 logging.wandb.mode=disabled
 """
 
 import hydra
 from omegaconf import DictConfig
 
 
-@hydra.main(version_base=None, config_path="configs", config_name="config")
+@hydra.main(version_base=None, config_path="configs", config_name="main")
 def main(cfg: DictConfig) -> None:
     from cogniland.models import build_model
     model = build_model(cfg)

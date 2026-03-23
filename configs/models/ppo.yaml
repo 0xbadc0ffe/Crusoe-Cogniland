@@ -11,15 +11,22 @@ action_dim: 5            # Output actions (up, down, right, left, stay)
 
 training:
 
+  # ── Data pipeline ──
+  map_pool_size: 16
+  dataset:
+    path: "data/maps_seed42_train128_val16_test16.pt"
+    curriculum_switch_steps: 1_000_000   # 0 = disabled; switch EASY → NORMAL at this global_step
+    curriculum_easy_radius: 40           # radius (cells) around map center for EASY spawn/target
+
   # ── Rollout collection ──
   parallel_envs: 32             # How many environments run in parallel during rollout
   moves_per_rollout: 256        # How many moves each env makes before the model learns
-  total_env_moves: 5_000_000      # Total moves budget across all envs for the entire training
+  total_env_moves: 5_000_000    # Total moves budget across all envs for the entire training
 
   # ── PPO optimisation ──
   epochs_per_update: 2          # How many times the model re-studies each rollout's data
   minibatch_size: 256           # Transitions per gradient step
-  learning_rate: 3e-4          # Adam optimiser initial learning rate
+  learning_rate: 3e-4           # Adam optimiser initial learning rate
   anneal_lr: true               # Linearly decay LR to 0 over training
 
   # ── Advantage estimation (GAE) ──
@@ -33,6 +40,6 @@ training:
   max_grad_norm: 0.5            # Gradient clipping threshold for stability
 
   # ── Evaluation & checkpointing ──
-  eval_every_n_updates: 10     # Run evaluation every N training updates
+  eval_every_n_updates: 10      # Run evaluation every N training updates
   eval_episodes: 16             # Number of full episodes per evaluation
   checkpoint_every_n_updates: 100 # Save model checkpoint every N training updates

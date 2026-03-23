@@ -1,9 +1,0 @@
-defaults:
-  - default
-
-custom_map:
-  map_name: "river_delta"
-  spawn_r: 10
-  spawn_c: 5
-  target_r: 18
-  target_c: 5
