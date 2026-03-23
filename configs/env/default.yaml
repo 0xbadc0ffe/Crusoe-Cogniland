@@ -40,7 +40,6 @@ custom_map:
 # hp_rate:  signed HP rate per step      — positive = heal (forest when below max HP)
 # Tags drive engine logic: "water" triggers boat costs, "forest" triggers healing/gathering.
 terrains:
-  #                    threshold  move_cost  res_rate  hp_rate  visibility  color              tags
   - { name: ocean,      threshold: 0.007, move_cost: 1.0,  res_rate: -0.7, hp_rate: 0.0, visibility: 10, color: [5, 35, 225],      tags: [water] }
   - { name: deep_water, threshold: 0.025, move_cost: 1.25, res_rate: -0.5, hp_rate: 0.0, visibility:  8, color: [25, 65, 225],     tags: [water] }
   - { name: water,      threshold: 0.05,  move_cost: 1.5,  res_rate: -0.3, hp_rate: 0.0, visibility:  6, color: [65, 105, 225],    tags: [water] }
@@ -53,7 +52,7 @@ terrains:
 
 # ── Reward shaping ──
 reward:
-  lambda_p: 0.1                  # Progress reward weight (Manhattan distance approach)
+  lambda_p: 0.2                  # Progress reward weight (Manhattan distance approach)
   lambda_t: 60.0                 # Time-efficiency bonus weight at success
   lambda_d: 0.6                  # Death penalty = lambda_d * reach_bonus
   reach_bonus: 100.0
