@@ -151,8 +151,8 @@ def main():
     # If a dataset is configured, evaluate on the test split maps. Otherwise use procedural maps.
     from cogniland.env.dataset import MapDataset
     _training_cfg = cfg.get("models", {}).get("training", {})
-    dataset_path = _training_cfg.get("dataset", {}).get("path", "")
-    dataset = MapDataset.load(dataset_path) if dataset_path else None
+    dataset_cfg = _training_cfg.get("dataset", {})
+    dataset = MapDataset.load_from_config(dataset_cfg) if dataset_cfg else None
 
     eval_env = BatchedIslandEnv(
         env_config,
