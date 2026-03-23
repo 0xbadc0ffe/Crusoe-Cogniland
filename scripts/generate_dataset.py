@@ -32,10 +32,9 @@ import torch
 # Make sure the package is importable when run from project root
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from cogniland.env.constants import TERRAIN_THRESHOLDS
 from cogniland.env.dataset import MapDataset
 from cogniland.env.islands import colorize, generate_island
-from cogniland.env.types import CurriculumStage, EnvConfig
+from cogniland.env.types import CurriculumStage, EnvConfig, MapGenConfig
 
 
 def _generate_maps(base_seed: int, count: int, config: EnvConfig) -> torch.Tensor:
@@ -87,7 +86,8 @@ def _make_preview(
     import matplotlib.patches as mpatches
     import matplotlib.pyplot as plt
 
-    land_threshold = TERRAIN_THRESHOLDS[2].item()
+    compiled = config.compile_terrain("cpu")
+    land_threshold = compiled.land_threshold
     center = config.size // 2
     radius = config.curriculum_easy_radius
     rng = random.Random(0)
@@ -97,7 +97,7 @@ def _make_preview(
 
     for col in range(n_maps):
         wm = train_maps[col]
-        rgb = colorize(wm, config).numpy().astype("uint8")
+        rgb = colorize(wm, compiled).numpy().astype("uint8")
 
         for row in range(2):
             ax = axes[row, col]
@@ -155,7 +155,7 @@ def main() -> None:
     preview_dir = output_path.parent
 
     # Build a minimal EnvConfig (default params, just needs island generation settings)
-    config = EnvConfig(seed=base_seed)
+    config = EnvConfig(map_generation=MapGenConfig(seed=base_seed))
 
     total = n_train + n_val + n_test
     print(f"Generating {total} maps ({config.size}×{config.size}) with base seed {base_seed}")

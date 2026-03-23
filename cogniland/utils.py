@@ -81,7 +81,7 @@ def load_checkpoint(
 # ---------------------------------------------------------------------------
 
 def render_trajectory(world_map, positions, target, reached_target, env_idx,
-                      terrain_levels, color_palette, observed_mask=None):
+                      compiled, observed_mask=None):
     """Render agent trajectory on top of the island map.
 
     Args:
@@ -90,8 +90,7 @@ def render_trajectory(world_map, positions, target, reached_target, env_idx,
         target: [2] tensor — target position.
         reached_target: bool — whether the agent reached its goal.
         env_idx: int — episode index (for title).
-        terrain_levels: TERRAIN_LEVELS dict from constants.
-        color_palette: palette dict from constants.
+        compiled: CompiledTerrainData instance.
         observed_mask: optional [H, W] bool array — cells seen during episode.
             Unseen cells are rendered darker (fog of war halo).
 
@@ -103,13 +102,10 @@ def render_trajectory(world_map, positions, target, reached_target, env_idx,
     import matplotlib.pyplot as plt
 
     wm = world_map.cpu().numpy()
-    thresholds = np.array([terrain_levels[i]["threshold"] for i in range(9)])
-    terrain_map = np.searchsorted(thresholds, wm).clip(0, 8)
+    thresholds = compiled.thresholds.cpu().numpy()
+    terrain_map = np.searchsorted(thresholds, wm).clip(0, compiled.num_terrains - 1)
 
-    color_lut = np.array(
-        [color_palette[terrain_levels[i]["color"]] for i in range(9)],
-        dtype=np.float32,
-    ) / 255.0
+    color_lut = compiled.color_lut.float().cpu().numpy() / 255.0
     rgb = color_lut[terrain_map]
 
     # Fog-of-war: darken cells the agent never observed

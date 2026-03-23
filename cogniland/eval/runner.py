@@ -13,7 +13,6 @@ from typing import Callable
 import numpy as np
 import torch
 
-from cogniland.env.constants import TERRAIN_COSTS
 from cogniland.env.pathfinding import batch_dijkstra_from_sources
 from cogniland.env.types import EnvConfig
 from cogniland.env.wrappers import BatchedIslandEnv
@@ -25,11 +24,6 @@ from cogniland.eval.metrics import (
     compute_terrain_visit_fractions,
     read_dijkstra_to_final,
 )
-
-_TERRAIN_NAMES = [
-    "ocean", "deep_water", "water", "beach", "sandy",
-    "grassland", "forest", "rocky", "mountains",
-]
 
 
 @dataclass
@@ -63,15 +57,11 @@ class EvalRunner:
         self.eval_env = eval_env
         self.env_config = env_config
         self.device = device
+        self._compiled = eval_env.compiled
 
-        # Per-terrain resource drain lookup (for risk exposure computation)
-        ec = env_config
-        self._terrain_res_drains = torch.tensor([
-            ec.sea_resource_costs[0], ec.sea_resource_costs[1], ec.sea_resource_costs[2],
-            ec.land_resource_drain, ec.land_resource_drain, ec.land_resource_drain,
-            0.0,  # forest gains resources, not drains
-            ec.mountain_resource_costs[0], ec.mountain_resource_costs[1],
-        ])
+        # Per-terrain resource rate lookup (negative = drain)
+        self._terrain_res_rates = self._compiled.res_rate
+        self._terrain_names = self._compiled.terrain_names
 
     def run(
         self,
@@ -99,7 +89,7 @@ class EvalRunner:
         device = self.device
         H = W = env_config.size
 
-        terrain_res_drains = self._terrain_res_drains.to(device)
+        terrain_res_rates = self._terrain_res_rates.to(device)
 
         obs = eval_env.reset()
         initial_spawns = eval_env.state.position.clone()   # [n_eps, 2]
@@ -109,7 +99,8 @@ class EvalRunner:
         # Distance to target AND to final position are both read from dist_maps after the loop.
         per_env_maps = eval_env.env.world_maps[eval_env.env._env_map_idx]  # [n_eps, H, W]
         dist_maps = batch_dijkstra_from_sources(
-            per_env_maps.cpu(), TERRAIN_COSTS, initial_spawns.cpu()
+            per_env_maps.cpu(), self._compiled.move_costs.cpu(), initial_spawns.cpu(),
+            terrain_thresholds=self._compiled.thresholds.cpu(),
         )  # list of n_eps arrays [H, W]
 
         # No dijkstra_costs needed (path_efficiency removed; directness uses spawn→final)
@@ -130,7 +121,7 @@ class EvalRunner:
         hp_count = torch.zeros(n_episodes, device=device)
         max_resources = torch.zeros(n_episodes, device=device)
 
-        terrain_visits = torch.zeros(n_episodes, 9, device=device)
+        terrain_visits = torch.zeros(n_episodes, self._compiled.num_terrains, device=device)
 
         # Risk exposure: drain_t / (resources_t + hp_t / 2), mean across episode
         risk_sum = torch.zeros(n_episodes, device=device)
@@ -217,8 +208,8 @@ class EvalRunner:
             running_idx = torch.where(still_running)[0]
             terrain_visits[running_idx, pre_move_terrain[running_idx].long()] += 1
 
-            # Risk exposure: drain_t / (resources_t + hp_t / 2)
-            drain_t = terrain_res_drains[eval_env.state.terrain_idx.long()]  # [n_eps]
+            # Risk exposure: drain / (resources + hp / 2)
+            drain_t = (-terrain_res_rates[eval_env.state.terrain_idx.long()]).clamp(min=0)
             risk_t = drain_t / (current_resources + current_hp / 2.0 + 1e-6)
             risk_sum[still_running] += risk_t[still_running]
             risk_count[still_running] += 1
@@ -307,7 +298,7 @@ class EvalRunner:
                 "exploration": exploration[i].item(),
                 "terrain_cost": final_cost[i].item(),
             }
-            for j, name in enumerate(_TERRAIN_NAMES):
+            for j, name in enumerate(self._terrain_names):
                 metrics[f"terrain_visit_{name}"] = terrain_visit_frac[i, j].item()
 
             episodes.append(EpisodeResult(

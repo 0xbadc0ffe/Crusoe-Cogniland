@@ -214,3 +214,4 @@ CLAUDE.md
 
 .agents/
 artifacts/
+artifacts_sweep/

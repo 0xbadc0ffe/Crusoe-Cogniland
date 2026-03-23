@@ -1,8 +1,0 @@
-defaults:
-  - default
-
-map_name: "archipelago"
-spawn_r: 5
-spawn_c: 5
-target_r: 16
-target_c: 17

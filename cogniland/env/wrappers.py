@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 
 from cogniland.env.islands import Islands
-from cogniland.env.types import CurriculumStage, EnvConfig, EnvState
+from cogniland.env.types import CompiledTerrainData, CurriculumStage, EnvConfig, EnvState
 
 
 class BatchedIslandEnv:
@@ -20,10 +20,16 @@ class BatchedIslandEnv:
         config: EnvConfig,
         num_envs: int,
         world_maps: torch.Tensor | None = None,
+        curriculum_easy_radius: int = 40,
     ):
         self.config = config
         self.num_envs = num_envs
-        self.env = Islands(config, world_maps=world_maps)
+        self.env = Islands(
+            config,
+            world_maps=world_maps,
+            curriculum_easy_radius=curriculum_easy_radius,
+        )
+        self.compiled = self.env.compiled
         self.state: EnvState | None = None
         self.target_pos: torch.Tensor | None = None
         self.step_count: torch.Tensor | None = None
@@ -52,8 +58,10 @@ class BatchedIslandEnv:
         self.state = result.state
         self.step_count += 1
 
+        reward = result.reward
+
         # Track episode stats
-        self.episode_rewards += result.reward
+        self.episode_rewards += reward
         self.episode_lengths += 1
 
         # Truncation check
@@ -79,7 +87,8 @@ class BatchedIslandEnv:
             )
             self.step_count[done] = 0
 
-        return self.get_obs(), result.reward, done, info
+        return self.get_obs(), reward, done, info
+
 
     def get_obs(self) -> dict[str, torch.Tensor]:
         """Build observation dict from current state.
@@ -89,10 +98,11 @@ class BatchedIslandEnv:
             ``"minimap"``: [B, 2, H, W]
         """
         s = self.state
+        num_terrains = self.compiled.num_terrains
         scalars = torch.stack([
             s.compass[:, 0],
             s.compass[:, 1],
-            s.terrain_idx / 8.0,
+            s.terrain_idx / max(num_terrains - 1, 1),
             s.resources / self.config.max_resources,
             s.hp / self.config.max_hp,
         ], dim=1)  # [B, 5]
