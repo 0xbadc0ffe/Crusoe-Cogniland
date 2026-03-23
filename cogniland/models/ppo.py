@@ -37,9 +37,9 @@ class ActorCritic(nn.Module):
 
     def __init__(
         self,
-        scalar_dim: int = 7,
+        scalar_dim: int = 5,
         minimap_channels: int = 3,
-        hidden_dim: int = 128,
+        hidden_dim: int = 256,
         action_dim: int = 5,
         cnn_channels: int = 32,
         cnn_out_spatial: int = 4,
@@ -47,15 +47,17 @@ class ActorCritic(nn.Module):
     ):
         super().__init__()
         self.cnn = nn.Sequential(
-            _layer_init(nn.Conv2d(minimap_channels, cnn_channels // 2, 3, padding=1)),
+            _layer_init(nn.Conv2d(minimap_channels, cnn_channels // 2, 3, padding=1)),  # 3→16 ch, 45x45
             nn.ReLU(),
-            nn.MaxPool2d(2),
-            _layer_init(nn.Conv2d(cnn_channels // 2, cnn_channels, 3, padding=1)),
+            nn.MaxPool2d(2), # 45x45 → 22x22
+            _layer_init(nn.Conv2d(cnn_channels // 2, cnn_channels, 3, padding=1)), # 16→32 ch, 22x22
             nn.ReLU(),
-            nn.AdaptiveAvgPool2d(cnn_out_spatial),
-            nn.Flatten(),
+            _layer_init(nn.Conv2d(cnn_channels, cnn_channels, 3, padding=1)), # 32→32 ch, 22x22
+            nn.ReLU(),
+            nn.AdaptiveMaxPool2d(cnn_out_spatial),  # 22x22 → 4x4
+            nn.Flatten(), # 32*4*4 = 512
         )
-        cnn_out = cnn_channels * cnn_out_spatial * cnn_out_spatial
+        cnn_out = cnn_channels * cnn_out_spatial * cnn_out_spatial  # 32*4*4 = 512
 
         self.scalar_net = nn.Sequential(
             _layer_init(nn.Linear(scalar_dim, scalar_hidden)),
@@ -63,9 +65,9 @@ class ActorCritic(nn.Module):
         )
 
         self.trunk = nn.Sequential(
-            _layer_init(nn.Linear(cnn_out + scalar_hidden, hidden_dim)),
+            _layer_init(nn.Linear(cnn_out + scalar_hidden, hidden_dim)),  # 512+64 = 576 -> 256
             nn.ReLU(),
-            _layer_init(nn.Linear(hidden_dim, hidden_dim)),
+            _layer_init(nn.Linear(hidden_dim, hidden_dim)),  # 256→256
             nn.ReLU(),
         )
 
@@ -366,8 +368,9 @@ class PPOAgent:
                     save_checkpoint(model, optimizer, global_step, path=best_ckpt_path)
                     print(f"  New best val success rate {det_sr:.3f} — saved {best_ckpt_path}")
 
-            # Periodic checkpoint
-            if update % cfg.models.training.checkpoint_every_n_updates == 0:
+            # Periodic checkpoint (0 = disabled, save best-only)
+            ckpt_interval = cfg.models.training.checkpoint_every_n_updates
+            if ckpt_interval > 0 and update % ckpt_interval == 0:
                 import os
                 run_id = logger._run.id if logger.enabled and logger._run else "local"
                 ckpt_dir = f"artifacts/{run_id}"

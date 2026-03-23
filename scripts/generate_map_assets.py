@@ -12,7 +12,6 @@ import numpy as np
 # Allow running from project root without installing
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from cogniland.env.custom_maps import _REGISTRY
 from cogniland.env.types import EnvConfig
 
 OUT_DIR = Path(__file__).resolve().parent.parent / "assets" / "maps"
