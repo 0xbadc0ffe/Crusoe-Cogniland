@@ -229,7 +229,7 @@ class PPOAgent:
         print(f"Device: {device}")
         print(f"Model: ppo")
 
-        training_cfg = cfg.get("training", {})
+        training_cfg = cfg.models.training
         map_pool_size = training_cfg.get("map_pool_size", 16)
         
         dataset_cfg = training_cfg.get("dataset", {})
