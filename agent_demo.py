@@ -33,7 +33,6 @@ from cogniland.env.constants import (
     NUM_ACTIONS,
 )
 from cogniland.env.core import compute_minimap_batch, compute_terrain_levels
-from cogniland.env.custom_maps import list_maps, get_spawn, get_target
 from cogniland.env.islands import Islands
 from cogniland.env.types import CustomMapConfig, EnvConfig, EnvState, MapGenConfig
 
@@ -443,7 +442,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc,
             target_r=target_rc[0], target_c=target_rc[1],
         ),
     )
-    env = Islands(env_config, map_pool_size=1)
+    env = Islands(env_config)
     _compiled = env.compiled
     state, target_pos = env.reset(batch_size=1, seed=42)
 

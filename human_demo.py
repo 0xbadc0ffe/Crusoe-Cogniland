@@ -74,7 +74,7 @@ class IslandGameDemo:
             map_generation=MapGenConfig(seed=seed),
             minimap=MinimapConfig(max_ray=15, occlude=True, clear_tolerance=0.1),
         )
-        self.env = Islands(config, map_pool_size=1)
+        self.env = Islands(config)
         self._compiled = self.env.compiled
 
         while True:

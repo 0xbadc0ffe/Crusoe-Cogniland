@@ -20,7 +20,6 @@ class BatchedIslandEnv:
         config: EnvConfig,
         num_envs: int,
         world_maps: torch.Tensor | None = None,
-        map_pool_size: int = 16,
         curriculum_easy_radius: int = 40,
     ):
         self.config = config
@@ -28,7 +27,6 @@ class BatchedIslandEnv:
         self.env = Islands(
             config,
             world_maps=world_maps,
-            map_pool_size=map_pool_size,
             curriculum_easy_radius=curriculum_easy_radius,
         )
         self.compiled = self.env.compiled

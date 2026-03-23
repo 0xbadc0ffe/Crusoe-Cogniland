@@ -153,13 +153,11 @@ def main():
     _training_cfg = cfg.get("models", {}).get("training", {})
     dataset_path = _training_cfg.get("dataset", {}).get("path", "")
     dataset = MapDataset.load(dataset_path) if dataset_path else None
-    map_pool_size = _training_cfg.get("map_pool_size", 16)
 
     eval_env = BatchedIslandEnv(
         env_config,
         num_envs=n_eps,
         world_maps=dataset.test_maps if dataset else None,
-        map_pool_size=map_pool_size,
     )
     eval_env.reset(seed=eval_seed)
 
