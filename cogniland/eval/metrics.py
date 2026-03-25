@@ -11,19 +11,20 @@ import torch
 
 
 def compute_directness(
-    final_cost: torch.Tensor,           # [N] accumulated terrain cost
-    dijkstra_to_final: torch.Tensor,    # [N] optimal spawn→final_position cost
+    initial_spawns: torch.Tensor,    # [N, 2] spawn positions
+    final_positions: torch.Tensor,   # [N, 2] agent final positions
+    total_moves: torch.Tensor,       # [N] number of steps taken
 ) -> torch.Tensor:
-    """D = C_agent / (C_agent - C_dijkstra_partial), capped at 100.
+    """D = manhattan(spawn, final) / n_steps.
 
-    100 = agent moved as efficiently as possible to wherever it ended up.
-    ~2  = agent used roughly twice the optimal terrain cost.
+    Measures how directly the agent moved toward its final position,
+    independently of terrain costs.  ~1 = nearly straight path,
+    lower values = more detours.
+
+    Range: (0, 1].
     """
-    return torch.where(
-        final_cost > dijkstra_to_final + 1e-6,
-        (final_cost / (final_cost - dijkstra_to_final)).clamp(max=100.0),
-        torch.full_like(final_cost, 100.0),
-    )
+    manhattan = (initial_spawns - final_positions).abs().sum(dim=1).float()
+    return (manhattan / total_moves.clamp(min=1)).clamp(max=1.0)
 
 
 def compute_risk_exposure(
@@ -62,14 +63,3 @@ def compute_terrain_visit_fractions(
     return terrain_visits / visit_totals  # [N, 9]
 
 
-def read_dijkstra_to_final(
-    dist_maps: list[np.ndarray],    # one [H, W] dist map per episode
-    final_positions: torch.Tensor,  # [N, 2]
-    device: str,
-) -> torch.Tensor:
-    """Read spawn→final_position distance from pre-computed Dijkstra dist maps."""
-    final_pos_cpu = final_positions.cpu()
-    return torch.tensor([
-        dist_maps[i][final_pos_cpu[i, 0].item(), final_pos_cpu[i, 1].item()]
-        for i in range(len(dist_maps))
-    ], dtype=torch.float32, device=device)
