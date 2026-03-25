@@ -120,24 +120,32 @@ All coefficients are in `configs/env/default.yaml` and can be overridden via Hyd
 
 | Component | Formula | Default | Purpose |
 |-----------|---------|---------|---------|
-| Approach  | `(dist_prev − dist_t) × coef` | coef = **1.0** | Dense: reward closing distance to target |
-| Reach bonus | `+bonus` on success | **+100.0** | Sparse: primary goal signal |
-| Death penalty | `+penalty` on HP ≤ 0 | **−20.0** | Sparse: death ends the episode and future reward |
-| Time penalty | constant per step | **−0.02** | Dense: discourages dawdling; favours efficient routes |
-| HP shaping | `−coef × max(thresh − hp_t, 0)` | coef = 0.02, thresh = 50 | Soft: encourages staying out of critical HP range |
-| Resource shaping | `−coef × max(thresh − res_t, 0)` | coef = 0.03, thresh = 30 | Soft: encourages resource management; makes forest detours worthwhile |
+| Progress signal | `λ_p (J_{t-1} − J_t)` | λ_p = **0.05** | Dense: reward for reducing Dijkstra cost-to-go |
+| Risk penalty | `−λ_ρ ρ_t` | λ_ρ = **0.5** | Dense: penalises entering draining terrain without resources |
+| Step penalty | `−λ_s` | λ_s = **0.001** | Dense: discourages dawdling |
+| Reach bonus | `r_success + λ_t (time*/time)` | r_success = **100**, λ_t = **40** | Sparse: primary goal + time-efficiency bonus |
+| Death penalty | `−λ_d r_success` | λ_d = **1.0** | Sparse: death ends the episode |
+
+**Cost-to-go J_t** is computed via reverse Dijkstra from the target at episode start with edge cost:
+```
+c(s → s') = τ(s') + β_raft × 1_{land→water}     (β_raft = 10)
+```
+
+**Risk proxy ρ_t:**
+```
+ρ_t = max(0, drain_t) / (res_t + 0.5 hp_t)
+```
 
 **Total per-step reward:**
 ```
-r_t = (dist_prev − dist_t) × 1.0
-    + reach_bonus   (if reached)
-    + death_penalty (if dead)
-    − 0.02
-    − 0.02 × max(50 − hp_t,  0)
-    − 0.03 × max(30 − res_t, 0)
+r_t = 0.05 (J_{t-1} − J_t)
+    − 0.5 ρ_t
+    − 0.001
+    + 1_reached (100 + 40 time*/time)
+    − 1_dead    100
 ```
 
-**Design intent:** The approach reward (1.0/cell) and reach bonus (100) dominate. The resource shaping (max ~0.9/step at zero resources) adds texture: an agent that maintains resources above 30 receives essentially no shaping penalty, but one that repeatedly drains to zero accumulates meaningful losses. This makes forest detours worthwhile without overwhelming the navigation signal.
+**Design intent:** The progress signal uses terrain-aware cost-to-go (not Manhattan distance), so the agent is rewarded for moving along efficient routes that respect terrain costs and water-crossing penalties. The risk penalty discourages entering draining terrain without sufficient resources, making forest detours for recharging worthwhile.
 
 ---
 
@@ -207,6 +215,6 @@ All environment parameters live in `configs/env/default.yaml`. Key groups:
 | Agent | `init_hp`, `max_hp`, `init_resources`, `max_resources` |
 | Terrain effects | `land_resource_drain`, `sea_resource_costs`, `mountain_resource_costs`, `forest_hp_gain`, `forest_resource_gain`, `no_res_hp_multiplier` |
 | Water transition | `land_to_water_resource_cost`, `land_to_water_hp_per_missing_res` |
-| Reward | `reward.lambda_p`, `reward.lambda_t`, `reward.lambda_d`, `reward.reach_bonus` |
+| Reward | `reward.reach_bonus`, `reward.lambda_p`, `reward.lambda_rho`, `reward.lambda_s`, `reward.lambda_t`, `reward.lambda_d`, `reward.beta_raft` |
 | Curriculum | `dataset_path`, `curriculum_switch_steps`, `curriculum_easy_radius` |
 | Episode | `max_steps` |
