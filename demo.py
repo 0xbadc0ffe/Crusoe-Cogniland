@@ -1022,7 +1022,6 @@ class HumanDemo:
                         elif ev.key in (pygame.K_DOWN,  pygame.K_s): action = torch.tensor([ACTIONS["down"]])
                         elif ev.key in (pygame.K_LEFT,  pygame.K_a): action = torch.tensor([ACTIONS["left"]])
                         elif ev.key in (pygame.K_RIGHT, pygame.K_d): action = torch.tensor([ACTIONS["right"]])
-                        elif ev.key == pygame.K_SPACE:               action = torch.tensor([ACTIONS["stay"]])
                         if action is not None:
                             self._move(action)
 

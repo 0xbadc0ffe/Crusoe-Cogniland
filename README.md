@@ -86,7 +86,7 @@ Fetches the exact frozen config and weights from WandB, runs `EvalRunner` with t
 python human_demo.py [hard]
 ```
 
-**Controls:** Arrow keys / WASD to move, Space to stay, R to reset, ESC to quit.
+**Controls:** Arrow keys / WASD to move, R to reset, ESC to quit.
 
 ### Agent Demo (AI Playback)
 
