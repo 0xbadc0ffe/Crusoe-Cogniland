@@ -30,6 +30,7 @@ class EnvState(NamedTuple):
     hp: torch.Tensor              # [B] float
     cost: torch.Tensor            # [B] float — accumulated terrain time cost this episode
     dijkstra_cost: torch.Tensor   # [B] float — optimal time cost spawn→target (constant per episode)
+    cost_to_go: torch.Tensor      # [B] float — Dijkstra cost-to-go from current position to target
 
 
 class StepResult(NamedTuple):
@@ -161,10 +162,13 @@ class DatasetConfig:
 @dataclass(frozen=True)
 class RewardConfig:
     """Reward shaping parameters — part of the environment specification."""
-    lambda_p: float = 0.1       # progress reward weight (Manhattan distance approach)
-    lambda_t: float = 60.0      # time-efficiency bonus weight at success
-    lambda_d: float = 0.6       # death penalty = lambda_d * reach_bonus
-    reach_bonus: float = 100.0
+    reach_bonus: float = 100.0    # r_success: sparse bonus on reaching target
+    lambda_p: float = 0.05       # progress signal weight (Dijkstra cost-to-go reduction)
+    lambda_rho: float = 0.5      # risk penalty weight
+    lambda_s: float = 0.001      # per-step penalty
+    lambda_t: float = 40.0       # time-efficiency bonus weight at success
+    lambda_d: float = 1.0        # death penalty = lambda_d * reach_bonus
+    beta_raft: float = 10.0      # extra cost for land→water transitions in Dijkstra cost-to-go
 
 
 # ---------------------------------------------------------------------------
@@ -359,10 +363,13 @@ class EnvConfig:
 
         rw_cfg = env.get("reward", {})
         reward = RewardConfig(
-            lambda_p=rw_cfg.get("lambda_p", 0.1),
-            lambda_t=rw_cfg.get("lambda_t", 60.0),
-            lambda_d=rw_cfg.get("lambda_d", 0.6),
             reach_bonus=rw_cfg.get("reach_bonus", 100.0),
+            lambda_p=rw_cfg.get("lambda_p", 0.05),
+            lambda_rho=rw_cfg.get("lambda_rho", 0.5),
+            lambda_s=rw_cfg.get("lambda_s", 0.001),
+            lambda_t=rw_cfg.get("lambda_t", 40.0),
+            lambda_d=rw_cfg.get("lambda_d", 1.0),
+            beta_raft=rw_cfg.get("beta_raft", 10.0),
         )
 
         return cls(
