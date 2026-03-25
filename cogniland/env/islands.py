@@ -15,7 +15,7 @@ import numpy as np
 import torch
 
 from cogniland.env.core import compute_minimap_batch, compute_terrain_levels, env_step
-from cogniland.env.pathfinding import batch_dijkstra_from_sources
+from cogniland.env.pathfinding import batch_dijkstra_from_sources, batch_reverse_dijkstra
 from cogniland.env.types import CompiledTerrainData, CurriculumStage, EnvConfig, EnvState, StepResult
 
 
@@ -226,17 +226,31 @@ class Islands:
         compass_raw = (spawn_pos - target_pos).float()
         compass = compass_raw / torch.norm(compass_raw, dim=1, keepdim=True).clamp(min=1e-8)
 
-        # Precompute optimal time cost spawn→target via Dijkstra (episode constant)
-        dist_maps = batch_dijkstra_from_sources(
+        # Precompute optimal time cost spawn→target via forward Dijkstra (for time ratio)
+        fwd_dist_maps = batch_dijkstra_from_sources(
             per_env_maps.cpu(), self._compiled.move_costs.cpu(), spawn_pos.cpu(),
             terrain_thresholds=self._compiled.thresholds.cpu(),
         )
         dijkstra_cost = torch.tensor([
-            dist_maps[i][target_pos[i, 0].item(), target_pos[i, 1].item()]
+            fwd_dist_maps[i][target_pos[i, 0].item(), target_pos[i, 1].item()]
             for i in range(batch_size)
         ], dtype=torch.float32, device=self._device)
         if not torch.all(torch.isfinite(dijkstra_cost)):
             raise ValueError("Dijkstra returned inf cost — disconnected map at reset()")
+
+        # Reverse Dijkstra from target: cost-to-go map for progress signal
+        ctg_maps_np = batch_reverse_dijkstra(
+            per_env_maps.cpu(), self._compiled.move_costs.cpu(),
+            self._compiled.thresholds.cpu(), self._compiled.is_water.cpu(),
+            target_pos.cpu(), beta_raft=self.config.reward.beta_raft,
+        )
+        self._cost_to_go_maps = torch.stack([
+            torch.from_numpy(m.astype("float32")) for m in ctg_maps_np
+        ]).to(self._device)  # [B, H, W]
+
+        # Look up initial cost-to-go at spawn positions
+        b_idx = torch.arange(batch_size, device=self._device)
+        init_ctg = self._cost_to_go_maps[b_idx, spawn_pos[:, 0], spawn_pos[:, 1]]
 
         state = EnvState(
             position=spawn_pos,
@@ -247,6 +261,7 @@ class Islands:
             hp=torch.full((batch_size,), self.config.init_hp, device=self._device),
             cost=torch.zeros(batch_size, device=self._device),
             dijkstra_cost=dijkstra_cost,
+            cost_to_go=init_ctg,
         )
         return state, target_pos
 
@@ -294,7 +309,7 @@ class Islands:
     # ------------------------------------------------------------------
 
     def step(self, state: EnvState, action: torch.Tensor, target_pos: torch.Tensor) -> StepResult:
-        """Call env_step. Reward is only computed if self.reward_config is set."""
+        """Call env_step with per-env maps and cost-to-go maps."""
         from cogniland.env.core import env_step
 
         # Passes per-env maps [B, H, W] so each env steps on its own map.
@@ -306,6 +321,7 @@ class Islands:
             target_pos,
             self.config,
             self._compiled,
+            cost_to_go_maps=self._cost_to_go_maps,
         )
 
     # ------------------------------------------------------------------
@@ -367,7 +383,7 @@ class Islands:
         new_compass_raw = (new_spawn - new_target).float()
         new_compass = new_compass_raw / torch.norm(new_compass_raw, dim=1, keepdim=True).clamp(min=1e-8)
 
-        # Precompute optimal time cost for done envs
+        # Precompute optimal time cost for done envs (forward Dijkstra)
         done_dist_maps = batch_dijkstra_from_sources(
             done_maps.cpu(), self._compiled.move_costs.cpu(), new_spawn.cpu(),
             terrain_thresholds=self._compiled.thresholds.cpu(),
@@ -378,6 +394,17 @@ class Islands:
         ], dtype=torch.float32, device=self._device)
         if not torch.all(torch.isfinite(new_dijkstra_cost_np)):
             raise ValueError("Dijkstra returned inf cost — disconnected map at reset_done()")
+
+        # Reverse Dijkstra for cost-to-go maps
+        done_ctg_maps_np = batch_reverse_dijkstra(
+            done_maps.cpu(), self._compiled.move_costs.cpu(),
+            self._compiled.thresholds.cpu(), self._compiled.is_water.cpu(),
+            new_target.cpu(), beta_raft=self.config.reward.beta_raft,
+        )
+        done_ctg_maps = torch.stack([
+            torch.from_numpy(m.astype("float32")) for m in done_ctg_maps_np
+        ]).to(self._device)  # [n_done, H, W]
+        self._cost_to_go_maps[done] = done_ctg_maps
 
         # Replace done environments in each tensor
         position = state.position.clone()
@@ -404,11 +431,18 @@ class Islands:
         dijkstra_cost = state.dijkstra_cost.clone()
         dijkstra_cost[done] = new_dijkstra_cost_np
 
+        # Look up initial cost-to-go at new spawn positions
+        done_b_idx = torch.arange(n_done, device=self._device)
+        new_ctg = done_ctg_maps[done_b_idx, new_spawn[:, 0], new_spawn[:, 1]]
+        cost_to_go = state.cost_to_go.clone()
+        cost_to_go[done] = new_ctg
+
         new_state = EnvState(
             position=position, minimap=minimap, compass=compass,
             terrain_idx=terrain_idx,
             resources=resources, hp=hp, cost=cost,
             dijkstra_cost=dijkstra_cost,
+            cost_to_go=cost_to_go,
         )
 
         new_targets = target_pos.clone()

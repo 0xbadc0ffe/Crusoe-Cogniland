@@ -12,7 +12,7 @@ import functools
 
 import torch
 
-from cogniland.env.constants import ACTIONS, ACTION_DELTAS
+from cogniland.env.constants import ACTION_DELTAS
 from cogniland.env.types import CompiledTerrainData, EnvConfig, EnvState, RewardConfig, StepResult
 
 
@@ -27,14 +27,16 @@ def env_step(
     target_pos: torch.Tensor,
     config: EnvConfig,
     compiled: CompiledTerrainData,
+    cost_to_go_maps: torch.Tensor | None = None,
 ) -> StepResult:
     """Execute one batched step.  Pure function — no side effects.
 
     world_map: either [H, W] (shared) or [B, H, W] (per-env Level Replay).
+    cost_to_go_maps: [B, H, W] reverse-Dijkstra maps for reward progress signal.
     """
 
     old_terrain = state.terrain_idx.clone()  # needed for land-to-water transition
-    prev_dist = (state.position - target_pos).float().abs().sum(dim=1)
+    prev_cost_to_go = state.cost_to_go       # J_{t-1}
 
     # 1. Movement
     new_state = apply_movement(state, action, config.size)
@@ -61,25 +63,40 @@ def env_step(
     new_state = apply_movement_costs(new_state, action, config, compiled)
     new_state = apply_terrain_effects(new_state, old_terrain, action, config, compiled)
 
-    # 8. Clamp
+    # 6. Clamp
     hp = torch.clamp(new_state.hp, 0.0, config.max_hp)
     resources = torch.clamp(new_state.resources, 0.0, config.max_resources)
     new_state = new_state._replace(hp=hp, resources=resources)
 
-    # 9. Terminal conditions
+    # 7. Update cost-to-go from maps
+    if cost_to_go_maps is not None:
+        device = new_state.position.device
+        b_idx = torch.arange(new_state.position.shape[0], device=device)
+        new_ctg = cost_to_go_maps[b_idx, new_state.position[:, 0], new_state.position[:, 1]]
+        new_state = new_state._replace(cost_to_go=new_ctg)
+    else:
+        new_ctg = prev_cost_to_go  # fallback: no progress signal
+
+    # 8. Terminal conditions
     alive = new_state.hp > 0
     dist_to_target = (new_state.position - target_pos).float().abs().sum(dim=1)
     reached = dist_to_target < 1.0
     done = ~alive | reached
 
-    # 10. Reward (computed natively from env config)
+    # 9. Compute risk ρ_t = max(0, drain_t) / (res_t + 0.5 * hp_t)
+    res_rate_table = compiled.res_rate.to(new_state.hp.device)
+    drain = (-res_rate_table[terrain_idx.long()]).clamp(min=0)  # positive drain
+    risk = drain / (new_state.resources + 0.5 * new_state.hp).clamp(min=1e-6)
+
+    # 10. Reward
     reward = compute_reward(
+        prev_cost_to_go=prev_cost_to_go,
+        cost_to_go=new_state.cost_to_go,
         cost=new_state.cost,
         dijkstra_cost=new_state.dijkstra_cost,
         alive=alive,
         reached=reached,
-        dist_to_target=dist_to_target,
-        prev_dist=prev_dist,
+        risk=risk,
         rw=config.reward,
     )
 
@@ -87,7 +104,6 @@ def env_step(
         "alive": alive,
         "reached": reached,
         "dist_to_target": dist_to_target,
-        "prev_dist": prev_dist,
     }
     return StepResult(state=new_state, reward=reward, done=done, info=info)
 
@@ -97,18 +113,33 @@ def env_step(
 # ---------------------------------------------------------------------------
 
 def compute_reward(
+    prev_cost_to_go: torch.Tensor,
+    cost_to_go: torch.Tensor,
     cost: torch.Tensor,
     dijkstra_cost: torch.Tensor,
     alive: torch.Tensor,
     reached: torch.Tensor,
-    dist_to_target: torch.Tensor,
-    prev_dist: torch.Tensor,
+    risk: torch.Tensor,
     rw: RewardConfig,
 ) -> torch.Tensor:
-    """Compute shaped reward. Pure function, no side effects."""
+    """Compute shaped reward. Pure function, no side effects.
+
+    r_t = λ_p (J_{t-1} - J_t)                          # progress signal
+        - λ_ρ ρ_t                                       # risk penalty
+        - λ_s                                            # step penalty
+        + 1_reached (r_success + λ_t time*/time)         # success reward
+        - 1_dead    λ_d r_success                        # death penalty
+    """
     device = alive.device
 
-    r_progress = rw.lambda_p * (prev_dist - dist_to_target)
+    # Progress: reduction in cost-to-go
+    r_progress = rw.lambda_p * (prev_cost_to_go - cost_to_go)
+
+    # Risk penalty
+    r_risk = -rw.lambda_rho * risk
+
+    # Step penalty (constant)
+    r_step = torch.tensor(-rw.lambda_s, device=device)
 
     # Time-efficiency ratio: optimal time / actual time, clamped to [0, 1]
     time_ratio = torch.clamp(dijkstra_cost / (cost + 1e-6), 0.0, 1.0)
@@ -124,7 +155,7 @@ def compute_reward(
         torch.zeros(1, device=device),
     )
 
-    return r_progress + r_success + r_death
+    return r_progress + r_risk + r_step + r_success + r_death
 
 
 # ---------------------------------------------------------------------------
@@ -245,14 +276,14 @@ def apply_terrain_effects(
 @functools.lru_cache(maxsize=None)
 def _bresenham_rays(max_ray: int) -> torch.Tensor:
     """Pre-compute Bresenham rays from center to all perimeter cells.
-    
+
     Returns:
         rays: [num_rays, max_len, 2] tensor of (dy, dx) offsets from center.
         lengths: [num_rays] tensor of valid lengths for each ray.
     """
     diameter = 2 * max_ray + 1
     center = max_ray
-    
+
     # Get all perimeter coordinates
     perimeter = []
     for i in range(diameter):
@@ -261,7 +292,7 @@ def _bresenham_rays(max_ray: int) -> torch.Tensor:
     for i in range(1, diameter - 1):
         perimeter.append((i, 0))
         perimeter.append((i, diameter - 1))
-        
+
     rays = []
     for (y1, x1) in perimeter:
         # Bresenham from center to (y1, x1)
@@ -271,7 +302,7 @@ def _bresenham_rays(max_ray: int) -> torch.Tensor:
         sx = 1 if x0 < x1 else -1
         sy = 1 if y0 < y1 else -1
         err = dx - dy
-        
+
         ray = []
         while True:
             ray.append((y0 - center, x0 - center))
@@ -285,81 +316,81 @@ def _bresenham_rays(max_ray: int) -> torch.Tensor:
                 err += dx
                 y0 += sy
         rays.append(ray)
-        
+
     # Pad rays to same length for tensor
     max_len = max(len(r) for r in rays)
     ray_tensor = torch.zeros(len(rays), max_len, 2, dtype=torch.long)
     lengths = torch.tensor([len(r) for r in rays], dtype=torch.long)
-    
+
     for i, r in enumerate(rays):
         for j, (dy, dx) in enumerate(r):
             ray_tensor[i, j, 0] = dy
             ray_tensor[i, j, 1] = dx
-            
+
     return ray_tensor, lengths
 
 
 def compute_occlusion_mask_batch(patches: torch.Tensor, max_ray: int, clear_tolerance: float) -> torch.Tensor:
     """Compute binary visibility mask in batch using raycasting from the center.
-    
+
     Args:
         patches: [B, D, D] heightmap patches centered on the agents.
         max_ray: radius of the patches.
         clear_tolerance: max height difference above the agent before vision is blocked.
-        
+
     Returns:
         masks: [B, D, D] float tensor (1.0 = visible, 0.0 = occluded).
     """
     B, D, _ = patches.shape
     device = patches.device
-    
+
     rays, lengths = _bresenham_rays(max_ray)
     rays = rays.to(device)
     lengths = lengths.to(device)
-    
+
     num_rays, max_len, _ = rays.shape
-    
+
     # Global indices for rays relative to patch top-left
     ray_y = max_ray + rays[..., 0]  # [num_rays, max_len]
     ray_x = max_ray + rays[..., 1]  # [num_rays, max_len]
-    
+
     # Gather heights for all patches along all rays
     ray_heights = patches[:, ray_y, ray_x]  # [B, num_rays, max_len]
-    
+
     # Get the height of the agent at the center of each patch
     center_heights = patches[:, max_ray, max_ray]  # [B]
-    
+
     # Find blocking cells: Blocked if the cell is taller than the agent + tolerance
     blocks = (ray_heights >= (center_heights.unsqueeze(1).unsqueeze(2) + clear_tolerance)).float()
-    
+
     # Cells *after* the first block are occluded.
     # cummax creates a mask of 1s starting from the first block.
     # By shifting right, the blocking cell itself remains 0 (visible).
     is_blocked = blocks.cummax(dim=2)[0]
     occluded = torch.cat([torch.zeros(B, num_rays, 1, device=device), is_blocked[:, :, :-1]], dim=2)
-    
+
     # Mask to ignore padding in the ray sequences
     valid_mask = torch.arange(max_len, device=device).unsqueeze(0) < lengths.unsqueeze(1)
-    
+
     # We want final mask to be 1.0 (visible) by default, and set to 0.0 if occluded
     # We take the minimum visibility over all rays that visit a cell
     visible = 1.0 - occluded
-    
+
     # Flatten the ray coordinates for scatter_reduce
     flat_y = ray_y.flatten()
     flat_x = ray_x.flatten()
     flat_indices = flat_y * D + flat_x # [num_rays * max_len]
     flat_indices = flat_indices.unsqueeze(0).expand(B, -1) # [B, num_rays * max_len]
-    
+
     flat_visible = visible.reshape(B, -1) # [B, num_rays * max_len]
     flat_valid = valid_mask.reshape(1, -1).expand(B, -1)
-    
+
     # Set invalid elements to 1.0 so min reduction ignores them
     flat_visible = torch.where(flat_valid, flat_visible, torch.ones_like(flat_visible))
-    
+
     final_masks = torch.ones(B, D * D, device=device)
     final_masks.scatter_reduce_(1, flat_indices, flat_visible, reduce="amin", include_self=False)
-    
+
     return final_masks.view(B, D, D)
 
 

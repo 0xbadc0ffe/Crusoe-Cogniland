@@ -78,11 +78,14 @@ def _make_run_config(cfg) -> dict:
     ds  = tr.get("dataset", {})
 
     slim = {
-        # ── Reward shaping (sweep axes + shaping weights) ──────────────────
+        # ── Reward shaping ────────────────────────────────────────────────
+        "reward/reach_bonus":  rw.get("reach_bonus"),
         "reward/lambda_p":     rw.get("lambda_p", env.get("lambda_p")),
+        "reward/lambda_rho":   rw.get("lambda_rho"),
+        "reward/lambda_s":     rw.get("lambda_s"),
         "reward/lambda_t":     rw.get("lambda_t"),
         "reward/lambda_d":     rw.get("lambda_d"),
-        "reward/reach_bonus":  rw.get("reach_bonus"),
+        "reward/beta_raft":    rw.get("beta_raft"),
 
         # ── PPO optimisation ────────────────────────────────────────────────
         "ppo/lr":              tr.get("learning_rate"),

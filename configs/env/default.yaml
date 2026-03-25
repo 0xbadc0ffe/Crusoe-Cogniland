@@ -52,7 +52,10 @@ terrains:
 
 # ── Reward shaping ──
 reward:
-  lambda_p: 0.5                  # Progress reward weight (Manhattan distance approach)
-  lambda_t: 60.0                 # Time-efficiency bonus weight at success
-  lambda_d: 0.6                  # Death penalty = lambda_d * reach_bonus
-  reach_bonus: 100.0
+  reach_bonus: 150.0               # Sparse bonus on reaching target
+  lambda_p: 0.04                   # Progress signal weight (Dijkstra cost-to-go reduction)
+  lambda_rho: 0.4                  # Risk penalty weight
+  lambda_s: 0.001                  # Per-step penalty
+  lambda_t: 40.0                   # Time-efficiency bonus weight at success
+  lambda_d: 1.0                    # Death penalty = lambda_d * reach_bonus
+  beta_raft: 10.0                  # Extra cost for land→water transitions in cost-to-go

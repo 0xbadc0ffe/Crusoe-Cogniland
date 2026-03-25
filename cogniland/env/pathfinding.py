@@ -1,8 +1,13 @@
-"""Pathfinding on the island heightmap for eval path-efficiency metrics.
+"""Pathfinding on the island heightmap.
 
-Uses scipy Dijkstra from a single source to compute distances to all cells.
-One call per episode serves both directness (spawn→final position) and
-survival margin computations.
+Two graph types:
+1. **Move-cost graph** — edge cost = terrain move_cost of destination.
+   Used by eval metrics (path efficiency) and the time-ratio in the reward.
+2. **Reward cost-to-go graph** — edge cost = τ(dest) + β_raft × 1_{land→water}.
+   Used for the Dijkstra progress signal J_t in the reward function.
+   Computed as a *reverse* Dijkstra from the target so that J(cell) = cost-to-go.
+
+Both use scipy Dijkstra (releases the GIL → parallelisable via threads).
 """
 
 from __future__ import annotations
@@ -12,7 +17,7 @@ import torch
 
 
 # ---------------------------------------------------------------------------
-# Dijkstra (scipy-based)
+# Graph builders
 # ---------------------------------------------------------------------------
 
 def _build_grid_graph(
@@ -55,6 +60,61 @@ def _build_grid_graph(
     return csr_matrix((all_data, (all_src, all_dst)), shape=(N, N))
 
 
+def _build_reward_graph(
+    wm: np.ndarray,
+    thresholds_np: np.ndarray,
+    costs_np: np.ndarray,
+    is_water: np.ndarray,          # [num_terrains] bool
+    beta_raft: float,
+) -> "csr_matrix":
+    """Build graph with c(s→s') = τ(s') + β_raft × 1_{land→water}.
+
+    Used for the Dijkstra cost-to-go progress signal in the reward function.
+    """
+    from scipy.sparse import csr_matrix
+
+    H, W = wm.shape
+
+    terrain = np.searchsorted(thresholds_np, wm.ravel(), side="left").reshape(H, W)
+    terrain = np.clip(terrain, 0, len(thresholds_np) - 1).astype(np.int32)
+
+    water_mask = is_water[terrain]  # [H, W] bool
+
+    # Horizontal edges
+    r_h, c_h = np.mgrid[0:H, 0:W-1]
+    src_h = (r_h * W + c_h).ravel()
+    dst_h = (r_h * W + c_h + 1).ravel()
+    # Forward: (r,c) → (r,c+1)
+    cost_h_fwd = costs_np[terrain[r_h, c_h + 1]].ravel()
+    raft_h_fwd = (~water_mask[r_h, c_h] & water_mask[r_h, c_h + 1]).ravel().astype(np.float64) * beta_raft
+    # Backward: (r,c+1) → (r,c)
+    cost_h_bwd = costs_np[terrain[r_h, c_h]].ravel()
+    raft_h_bwd = (~water_mask[r_h, c_h + 1] & water_mask[r_h, c_h]).ravel().astype(np.float64) * beta_raft
+
+    # Vertical edges
+    r_v, c_v = np.mgrid[0:H-1, 0:W]
+    src_v = (r_v * W + c_v).ravel()
+    dst_v = ((r_v + 1) * W + c_v).ravel()
+    cost_v_fwd = costs_np[terrain[r_v + 1, c_v]].ravel()
+    raft_v_fwd = (~water_mask[r_v, c_v] & water_mask[r_v + 1, c_v]).ravel().astype(np.float64) * beta_raft
+    cost_v_bwd = costs_np[terrain[r_v, c_v]].ravel()
+    raft_v_bwd = (~water_mask[r_v + 1, c_v] & water_mask[r_v, c_v]).ravel().astype(np.float64) * beta_raft
+
+    all_src  = np.concatenate([src_h, dst_h, src_v, dst_v])
+    all_dst  = np.concatenate([dst_h, src_h, dst_v, src_v])
+    all_data = np.concatenate([
+        cost_h_fwd + raft_h_fwd, cost_h_bwd + raft_h_bwd,
+        cost_v_fwd + raft_v_fwd, cost_v_bwd + raft_v_bwd,
+    ])
+
+    N = H * W
+    return csr_matrix((all_data, (all_src, all_dst)), shape=(N, N))
+
+
+# ---------------------------------------------------------------------------
+# Dijkstra runners
+# ---------------------------------------------------------------------------
+
 def dijkstra_from_source(
     world_map: torch.Tensor,    # [H, W] CPU
     terrain_costs: torch.Tensor,
@@ -74,7 +134,6 @@ def dijkstra_from_source(
     if terrain_thresholds is not None:
         thresholds_np = terrain_thresholds.cpu().numpy()
     else:
-        # Fallback: caller must provide thresholds
         raise ValueError("terrain_thresholds is required")
 
     graph = _build_grid_graph(wm, thresholds_np, costs_np)
@@ -100,8 +159,7 @@ def batch_dijkstra_from_sources(
     """Parallel Dijkstra across a batch using ThreadPoolExecutor.
 
     scipy releases the GIL, so threads genuinely parallelise the computation.
-    Returns one full distance map per episode (from spawn to every cell), which
-    serves directness (spawn→final pos) and other per-episode metrics.
+    Returns one full distance map per episode (from spawn to every cell).
     """
     from concurrent.futures import ThreadPoolExecutor
 
@@ -113,5 +171,61 @@ def batch_dijkstra_from_sources(
 
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         dist_maps = list(pool.map(_run_dijkstra, args))
+
+    return dist_maps
+
+
+# ---------------------------------------------------------------------------
+# Reverse Dijkstra for reward cost-to-go
+# ---------------------------------------------------------------------------
+
+def _reverse_dijkstra_single(args: tuple) -> np.ndarray:
+    """Compute cost-to-go from every cell to a single target.
+
+    Runs Dijkstra from the target on the *transposed* graph so that
+    dist[r, c] = optimal cost from cell (r, c) to the target.
+    """
+    from scipy.sparse.csgraph import dijkstra as scipy_dijkstra
+
+    wm_np, thresholds_np, costs_np, is_water_np, beta_raft, target_rc = args
+
+    H, W = wm_np.shape
+    graph = _build_reward_graph(wm_np, thresholds_np, costs_np, is_water_np, beta_raft)
+
+    tr, tc = int(target_rc[0]), int(target_rc[1])
+    target_idx = tr * W + tc
+    # Transpose: Dijkstra from target on G^T gives cost-to-go in G
+    dist = scipy_dijkstra(graph.T, directed=True, indices=target_idx)  # [H*W]
+    return dist.reshape(H, W)
+
+
+def batch_reverse_dijkstra(
+    world_maps: torch.Tensor,       # [B, H, W] CPU
+    terrain_costs: torch.Tensor,    # [num_terrains]
+    terrain_thresholds: torch.Tensor,
+    is_water: torch.Tensor,         # [num_terrains] bool
+    targets: torch.Tensor,          # [B, 2] long
+    beta_raft: float,
+    n_workers: int | None = None,
+) -> list[np.ndarray]:
+    """Parallel reverse Dijkstra: cost-to-go from every cell to each target.
+
+    Returns list of B arrays, each [H, W] float64.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    B = targets.shape[0]
+    costs_np = terrain_costs.cpu().numpy()
+    thresholds_np = terrain_thresholds.cpu().numpy()
+    is_water_np = is_water.cpu().numpy()
+
+    args = [
+        (world_maps[i].cpu().numpy(), thresholds_np, costs_np, is_water_np, beta_raft,
+         (targets[i, 0].item(), targets[i, 1].item()))
+        for i in range(B)
+    ]
+
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        dist_maps = list(pool.map(_reverse_dijkstra_single, args))
 
     return dist_maps
