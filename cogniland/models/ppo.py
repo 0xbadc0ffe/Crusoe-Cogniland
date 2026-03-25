@@ -410,8 +410,102 @@ class PPOAgent:
         test_sr = test_metrics.get("test_det/env/success_rate", 0.0)
         print(f"  test deterministic success: {test_sr:.3f}")
 
+        # ── Behavioral test evaluation ──
+        print("Running behavioral map evaluation...")
+        model.eval()
+        beh_metrics = self._run_behavioral_eval(logger=logger, global_step=num_updates + 2)
+        model.train()
+        if beh_metrics:
+            logger.log(beh_metrics, step=num_updates + 2)
+            beh_sr = beh_metrics.get("test/behavioral/success_rate", 0.0)
+            print(f"  behavioral success rate: {beh_sr:.3f}")
+
         logger.finish()
         print(f"Training complete. Total timesteps: {global_step}")
+
+    def _run_behavioral_eval(self, logger=None, global_step: int = 0) -> dict[str, float]:
+        """Deterministic eval on each hand-crafted behavioral map (one episode per map).
+
+        Loads data/test_behavior.pt, runs the deterministic policy on each map with its
+        fixed spawn/target, and returns per-map metrics under ``test/behavioral/{name}/...``.
+        Trajectory images are uploaded to WandB if a logger is provided.
+        """
+        import dataclasses
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from pathlib import Path
+        from cogniland.env.types import CustomMapConfig
+
+        behavioral_path = Path("data/test_behavior.pt")
+        if not behavioral_path.exists():
+            print("  Skipping behavioral eval: data/test_behavior.pt not found")
+            return {}
+
+        data = torch.load(str(behavioral_path), map_location="cpu", weights_only=False)
+        names: list[str] = data["names"]
+
+        model = self.model
+        metrics: dict[str, float] = {}
+        figs, captions, indices = [], [], []
+
+        for i, name in enumerate(names):
+            # Build a single-map env with the fixed spawn/target from custom_maps
+            map_cfg = dataclasses.replace(
+                self.env_config,
+                custom_map=CustomMapConfig(map_name=name),
+            )
+            env = BatchedIslandEnv(map_cfg, num_envs=1)
+            env.reset(seed=self._eval_seed)
+            target_pos = env.target_pos[0].clone()
+
+            trajectory = [env.state.position[0].tolist()]
+            total_reward = 0.0
+            reached = False
+            alive = True
+
+            for _ in range(self.env_config.max_steps):
+                obs = env.get_obs()
+                with torch.no_grad():
+                    action = model.get_deterministic_action(obs)
+                _obs, reward, done, info = env.step(action)
+                total_reward += reward[0].item()
+                trajectory.append(env.state.position[0].tolist())
+                if done[0]:
+                    reached = bool(info["reached"][0].item())
+                    alive   = bool(info["alive"][0].item())
+                    break
+
+            outcome = "success" if reached else ("death" if not alive else "timeout")
+            length  = len(trajectory) - 1
+
+            metrics[f"test/behavioral/{name}/success"]        = float(reached)
+            metrics[f"test/behavioral/{name}/return"]         = total_reward
+            metrics[f"test/behavioral/{name}/episode_length"] = float(length)
+
+            if logger is not None:
+                world_map = env.env.world_maps[0]
+                fig = render_trajectory(
+                    world_map, trajectory, target_pos,
+                    reached, i, env.compiled,
+                )
+                figs.append(fig)
+                captions.append(
+                    f"[{name}] {outcome.upper()} — {length} steps  R={total_reward:.1f}"
+                )
+                indices.append(i)
+
+        metrics["test/behavioral/success_rate"] = (
+            sum(v for k, v in metrics.items() if k.endswith("/success")) / len(names)
+            if names else 0.0
+        )
+
+        if logger is not None and figs:
+            logger.log_trajectory_images(figs, captions, indices, step=global_step)
+            for fig in figs:
+                plt.close(fig)
+
+        return metrics
 
     def _ppo_update(self, optimizer, flat_data, advantages, returns, cfg):
         model = self.model

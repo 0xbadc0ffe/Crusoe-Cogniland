@@ -52,7 +52,8 @@ ENV_MM_CLR_TOL  = _env_mm.get("clear_tolerance",   _env_cfg.get("minimap_clear_t
 _env_mg = _env_cfg.get("map_generation", _env_cfg)
 ENV_MAP_SIZE    = _env_mg.get("size", _env_cfg.get("size", 250))
 
-DEMO_MAPS_PATH = Path("data/demo_maps.pt")
+VAL_MAPS_PATH        = Path("data/val_seed42_n16.pt")
+BEHAVIORAL_MAPS_PATH = Path("data/test_behavior.pt")
 
 # ---------------------------------------------------------------------------
 # UI constants
@@ -79,13 +80,6 @@ COLORS = {
 # ---------------------------------------------------------------------------
 # Demo-map helpers
 # ---------------------------------------------------------------------------
-
-def load_demo_maps() -> torch.Tensor | None:
-    """Return [N, H, W] float32 CPU tensor, or None if file absent."""
-    if not DEMO_MAPS_PATH.exists():
-        return None
-    data = torch.load(str(DEMO_MAPS_PATH), map_location="cpu", weights_only=True)
-    return data["maps"]
 
 
 def _fast_colorize(world_map: np.ndarray, compiled) -> np.ndarray:
@@ -209,7 +203,7 @@ def screen_main_menu(screen, clock):
     font_med   = pygame.font.Font(None, 34)
     font_small = pygame.font.Font(None, 24)
 
-    has_maps = DEMO_MAPS_PATH.exists()
+    has_maps = VAL_MAPS_PATH.exists() or BEHAVIORAL_MAPS_PATH.exists()
 
     while True:
         for ev in pygame.event.get():
@@ -259,132 +253,133 @@ def screen_main_menu(screen, clock):
 
 
 # ---------------------------------------------------------------------------
-# Screen: map selection with thumbnails
+# Screen: map selection
 # ---------------------------------------------------------------------------
 
-def screen_select_map(screen, clock) -> torch.Tensor | None:
-    """Show demo-map thumbnail grid.
+def _screen_pick_map_grid(screen, clock, maps, compiled, labels=None):
+    """Thumbnail grid for a set of maps. Returns selected index or None (ESC)."""
+    N = maps.shape[0]
+    print("Building map thumbnails …", flush=True)
+    thumbs = maps_to_thumbnails(maps, compiled, 150)
+    print("Done.")
+    if labels is None:
+        labels = [f"Map {i + 1}" for i in range(N)]
 
-    Returns:
-        torch.Tensor [H, W]  — selected map
-        None                 — user quit / pressed ESC
-    """
-    # Load maps & compile terrain for thumbnails
-    demo_maps = load_demo_maps()
+    COLS, THUMB, PAD, GRID_TOP = 4, 150, 14, 90
+    GRID_W = COLS * THUMB + (COLS - 1) * PAD
+    GRID_X = (WINDOW_W - GRID_W) // 2
 
-    # We always need a compiled terrain for colorising thumbnails
-    _compiled_cfg = EnvConfig()
-    compiled = _compiled_cfg.compile_terrain("cpu")
+    def tile_rect(idx):
+        col = idx % COLS
+        row = idx // COLS
+        return pygame.Rect(GRID_X + col * (THUMB + PAD),
+                           GRID_TOP + row * (THUMB + PAD + 18), THUMB, THUMB)
 
     font_large = pygame.font.Font(None, 42)
     font_small = pygame.font.Font(None, 20)
-
-    # ── Layout ──────────────────────────────────────────────────────────────
-    COLS     = 4
-    THUMB    = 150          # thumbnail pixel size
-    PAD      = 14           # gap between thumbnails
-    GRID_TOP = 90           # y-offset of first row
-
-    if demo_maps is not None:
-        N      = demo_maps.shape[0]
-        print("Building map thumbnails …", flush=True)
-        thumbs = maps_to_thumbnails(demo_maps, compiled, THUMB)
-        print("Done.")
-    else:
-        N      = 0
-        thumbs = []
-
-    # "Random" tile (rendered as a gradient placeholder)
-    rand_surf = pygame.Surface((THUMB, THUMB))
-    rand_surf.fill((50, 50, 70))
-    rand_font = pygame.font.Font(None, 28)
-    rand_label = rand_font.render("Random", True, COLORS["panel_fg"])
-    rand_surf.blit(rand_label, (THUMB // 2 - rand_label.get_width() // 2,
-                                THUMB // 2 - rand_label.get_height() // 2))
-    pygame.draw.rect(rand_surf, COLORS["gray"], (0, 0, THUMB, THUMB), 1)
-
-    # Append random tile after the map tiles
-    all_tiles  = thumbs + [rand_surf]    # index N == random
-    total_tiles = N + 1
-
-    # Recompute grid to include random tile
-    TOTAL_COLS = COLS
-    GRID_W     = TOTAL_COLS * THUMB + (TOTAL_COLS - 1) * PAD
-    GRID_X     = (WINDOW_W - GRID_W) // 2
-
-    def tile_rect(idx):
-        col = idx % TOTAL_COLS
-        row = idx // TOTAL_COLS
-        x   = GRID_X + col * (THUMB + PAD)
-        y   = GRID_TOP + row * (THUMB + PAD + 18)   # +18 for label
-        return pygame.Rect(x, y, THUMB, THUMB)
-
-    selected = 0   # 0..N-1 = map index, N = random
+    selected   = 0
 
     while True:
         for ev in pygame.event.get():
-            if ev.type == pygame.QUIT:
-                return None
+            if ev.type == pygame.QUIT:    return None
             if ev.type == pygame.KEYDOWN:
-                if ev.key == pygame.K_ESCAPE:
-                    return None
-                if ev.key == pygame.K_RETURN:
-                    return demo_maps[selected] if selected < N else None
-                if ev.key == pygame.K_r:
-                    return None          # random
-                if ev.key == pygame.K_RIGHT:
-                    selected = (selected + 1) % total_tiles
-                if ev.key == pygame.K_LEFT:
-                    selected = (selected - 1) % total_tiles
-                if ev.key == pygame.K_DOWN:
-                    selected = min(selected + TOTAL_COLS, total_tiles - 1)
-                if ev.key == pygame.K_UP:
-                    selected = max(selected - TOTAL_COLS, 0)
-
+                if ev.key == pygame.K_ESCAPE: return None
+                if ev.key == pygame.K_RETURN: return selected
+                if ev.key == pygame.K_RIGHT:  selected = (selected + 1) % N
+                if ev.key == pygame.K_LEFT:   selected = (selected - 1) % N
+                if ev.key == pygame.K_DOWN:   selected = min(selected + COLS, N - 1)
+                if ev.key == pygame.K_UP:     selected = max(selected - COLS, 0)
             if ev.type == pygame.MOUSEMOTION:
-                mx, my = ev.pos
-                for i in range(total_tiles):
-                    if tile_rect(i).collidepoint(mx, my):
+                for i in range(N):
+                    if tile_rect(i).collidepoint(ev.pos):
                         selected = i
-
             if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
-                mx, my = ev.pos
-                for i in range(total_tiles):
-                    if tile_rect(i).collidepoint(mx, my):
-                        selected = i
-                        return demo_maps[selected] if selected < N else None
+                for i in range(N):
+                    if tile_rect(i).collidepoint(ev.pos):
+                        return i
 
-        # ── Draw ────────────────────────────────────────────────────────────
         screen.fill(COLORS["panel_bg"])
-
         title = font_large.render("Select Map", True, COLORS["blue_ui"])
         screen.blit(title, (WINDOW_W // 2 - title.get_width() // 2, 28))
 
-        for i, surf in enumerate(all_tiles):
+        for i, surf in enumerate(thumbs):
             r = tile_rect(i)
             screen.blit(surf, r.topleft)
-
-            # Label below
-            if i < N:
-                lbl = font_small.render(f"Map {i + 1}", True, COLORS["panel_fg"])
-            else:
-                lbl = font_small.render("Random", True, COLORS["panel_fg"])
+            lbl = font_small.render(labels[i], True, COLORS["panel_fg"])
             screen.blit(lbl, (r.x + THUMB // 2 - lbl.get_width() // 2, r.y + THUMB + 2))
-
-            # Highlight border
             border_color = COLORS["highlight"] if i == selected else COLORS["gray"]
-            border_w     = 3 if i == selected else 1
-            pygame.draw.rect(screen, border_color, r, border_w)
+            pygame.draw.rect(screen, border_color, r, 3 if i == selected else 1)
 
-        hint_parts = [
-            "Arrow keys / mouse to browse",
-            "Enter or click to select",
-            "R = random map",
-            "ESC = back",
-        ]
-        hint = font_small.render("   •   ".join(hint_parts), True, COLORS["gray"])
+        hint = font_small.render(
+            "Arrows / mouse to browse   •   Enter / click to select   •   ESC = back",
+            True, COLORS["gray"],
+        )
         screen.blit(hint, (WINDOW_W // 2 - hint.get_width() // 2, WINDOW_H - 36))
+        pygame.display.flip()
+        clock.tick(30)
 
+
+def screen_select_map(screen, clock):
+    """3-option map source menu.
+
+    Returns (world_map, spawn_rc, target_rc):
+      - Random / ESC  →  (None, None, None)
+      - Val map       →  (tensor [H,W], None, None)
+      - Behavioral    →  (tensor [H,W], (r,c), (r,c))   ← positions pre-set
+    """
+    compiled    = EnvConfig().compile_terrain("cpu")
+    val_exists  = VAL_MAPS_PATH.exists()
+    beh_exists  = BEHAVIORAL_MAPS_PATH.exists()
+
+    font_large = pygame.font.Font(None, 52)
+    font_med   = pygame.font.Font(None, 34)
+    font_small = pygame.font.Font(None, 22)
+
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:    return None, None, None
+            if ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_ESCAPE: return None, None, None
+                if ev.key == pygame.K_r:      return None, None, None
+
+                if ev.key == pygame.K_v and val_exists:
+                    data = torch.load(str(VAL_MAPS_PATH), map_location="cpu", weights_only=True)
+                    maps = data["maps"]
+                    idx  = _screen_pick_map_grid(screen, clock, maps, compiled)
+                    if idx is None:
+                        continue   # back to source menu
+                    return maps[idx], None, None
+
+                if ev.key == pygame.K_b and beh_exists:
+                    data = torch.load(str(BEHAVIORAL_MAPS_PATH), map_location="cpu",
+                                      weights_only=False)
+                    maps, spawns, targets, names = (
+                        data["maps"], data["spawns"], data["targets"], data["names"]
+                    )
+                    idx = _screen_pick_map_grid(screen, clock, maps, compiled, labels=names)
+                    if idx is None:
+                        continue
+                    return maps[idx], spawns[idx], targets[idx]
+
+        screen.fill(COLORS["panel_bg"])
+        title = font_large.render("Select Map", True, COLORS["blue_ui"])
+        screen.blit(title, (WINDOW_W // 2 - title.get_width() // 2, 130))
+
+        y = 250
+        for key, label, desc, avail in [
+            ("R", "Random Map",   "Procedurally generated",          True),
+            ("V", "Val Maps",     f"{VAL_MAPS_PATH.name}  (16 maps)", val_exists),
+            ("B", "Behavioral",   f"{BEHAVIORAL_MAPS_PATH.name}  (16 maps)", beh_exists),
+        ]:
+            key_col = COLORS["blue_ui"] if avail else COLORS["gray"]
+            lbl_col = COLORS["white"]   if avail else COLORS["gray"]
+            screen.blit(font_med.render(f"[{key}]",       True, key_col), (WINDOW_W//2 - 200, y))
+            screen.blit(font_med.render(f"  {label}",     True, lbl_col), (WINDOW_W//2 - 160, y))
+            screen.blit(font_small.render(desc,           True, COLORS["gray"]), (WINDOW_W//2 - 150, y + 30))
+            y += 90
+
+        hint = font_small.render("ESC = back to main menu", True, COLORS["gray"])
+        screen.blit(hint, (WINDOW_W // 2 - hint.get_width() // 2, WINDOW_H - 50))
         pygame.display.flip()
         clock.tick(30)
 
@@ -436,10 +431,11 @@ def screen_select_checkpoint(screen, clock):
 # Screen: position picker (agent only)
 # ---------------------------------------------------------------------------
 
-def screen_pick_positions(screen, clock, env_config,
+def screen_pick_positions(screen, clock, env_config, world_map=None,
                           default_spawn=None, default_target=None):
     """Returns (spawn_rc, target_rc) or None."""
-    env        = Islands(env_config)
+    env        = Islands(env_config,
+                         world_maps=world_map.unsqueeze(0) if world_map is not None else None)
     _compiled  = env.compiled
     world_map  = env.world_map
     map_surf   = heightmap_to_surface(world_map, MAP_DISPLAY_SIZE, _compiled)
@@ -575,6 +571,8 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=
     MAP_X, MAP_Y = 20, 60
 
     trajectory     = [tuple(state.position[0].cpu().tolist())]
+    hp_history     = [state.hp[0].item()]
+    res_history    = [state.resources[0].item()]
     step_count     = 0
     game_over      = won = paused = False
     frames_per_step = 12
@@ -619,6 +617,8 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=
                 step_count += 1
                 update_seen(state)
                 trajectory.append(tuple(state.position[0].cpu().tolist()))
+                hp_history.append(state.hp[0].item())
+                res_history.append(state.resources[0].item())
 
                 alive   = result.info["alive"][0]
                 reached = result.info["reached"][0]
@@ -710,11 +710,70 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=
             screen.blit(font_med.render(val, True, col), (sx + 90, sy_ - 2))
             sy_ += 28
 
-        # Controls column
-        cx_, cy_ = mm_x + MINIMAP_DISPLAY_SIZE + 20, MAP_Y
-        screen.blit(font_med.render("CONTROLS", True, COLORS["blue_ui"]), (cx_, cy_)); cy_ += 26
-        for ctrl in ["+/- : Speed", "P   : Pause", "R   : Reset", "ESC : Menu"]:
-            screen.blit(font_small.render(ctrl, True, COLORS["gray"]), (cx_, cy_)); cy_ += 20
+        # ── Right panel: controls + HP/Res plot + terrain legend ────────────
+        rx  = mm_x + MINIMAP_DISPLAY_SIZE + 20   # x ≈ 840
+        rw  = WINDOW_W - rx - 8                  # available width ≈ 352
+        ry  = MAP_Y
+        font_tiny = pygame.font.Font(None, 18)
+
+        # Controls
+        screen.blit(font_med.render("CONTROLS", True, COLORS["blue_ui"]), (rx, ry)); ry += 24
+        for ctrl in ["+/-  Speed", "P    Pause", "R    Reset", "ESC  Menu"]:
+            screen.blit(font_small.render(ctrl, True, COLORS["gray"]), (rx, ry)); ry += 19
+        ry += 8
+
+        # HP / Resources real-time plot
+        PLOT_W, PLOT_H = rw, 155
+        plot_surf = pygame.Surface((PLOT_W, PLOT_H))
+        plot_surf.fill((15, 15, 25))
+
+        # Axes
+        pygame.draw.line(plot_surf, COLORS["gray"], (0, PLOT_H - 1), (PLOT_W, PLOT_H - 1), 1)
+        pygame.draw.line(plot_surf, COLORS["gray"], (0, 0), (0, PLOT_H - 1), 1)
+
+        # Dotted threshold line at y = 100
+        y100 = PLOT_H - 1 - int(100 / 200 * (PLOT_H - 2))
+        for dx in range(0, PLOT_W, 8):
+            pygame.draw.line(plot_surf, (200, 190, 60),
+                             (dx, y100), (min(dx + 4, PLOT_W - 1), y100), 1)
+
+        n_steps = max(len(hp_history) - 1, 1)
+        def _px(step):   return int(step / n_steps * (PLOT_W - 1))
+        def _py(val):    return PLOT_H - 1 - int(min(max(val, 0), 200) / 200 * (PLOT_H - 2))
+
+        for hist, col in [(hp_history,  (70, 210, 70)),
+                          (res_history, (70, 140, 255))]:
+            pts = [(_px(i), _py(v)) for i, v in enumerate(hist)]
+            if len(pts) >= 2:
+                pygame.draw.lines(plot_surf, col, False, pts, 1)
+
+        # Mini legend inside plot
+        plot_surf.blit(font_tiny.render("HP",  True, (70, 210, 70)),  (PLOT_W - 56, 3))
+        plot_surf.blit(font_tiny.render("Res", True, (70, 140, 255)), (PLOT_W - 28, 3))
+        # Y-axis labels
+        for yval, label in [(200, "200"), (100, "100"), (0, "0")]:
+            plot_surf.blit(font_tiny.render(label, True, COLORS["gray"]),
+                           (2, _py(yval) - 7))
+
+        screen.blit(font_small.render("HP / Resources", True, COLORS["panel_fg"]), (rx, ry))
+        ry += 18
+        screen.blit(plot_surf, (rx, ry))
+        ry += PLOT_H + 10
+
+        # Terrain legend
+        screen.blit(font_med.render("TERRAIN", True, COLORS["blue_ui"]), (rx, ry)); ry += 21
+        for lev in range(_compiled.num_terrains):
+            col     = terrain_color(lev, _compiled)
+            name    = _compiled.terrain_names[lev].capitalize()
+            cost    = _compiled.move_costs[lev].item()
+            drain   = int(round(_compiled.res_rate[lev].item()))
+            drain_s = f"+{drain}" if drain >= 0 else str(drain)
+            pygame.draw.rect(screen, col,            (rx, ry + 1, 11, 11))
+            pygame.draw.rect(screen, COLORS["white"], (rx, ry + 1, 11, 11), 1)
+            screen.blit(font_tiny.render(
+                f" {name:<10} {cost:.2f}  {drain_s:>3}/step",
+                True, COLORS["panel_fg"]), (rx + 13, ry))
+            ry += 19
 
         if game_over:
             overlay = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
@@ -996,15 +1055,12 @@ def main():
         if mode is None:
             break
 
-        # Map selection (shared between both modes)
-        world_map = screen_select_map(screen, clock)
-        # None means "random" or ESC — but we need to distinguish:
-        # screen_select_map returns None both for ESC and for "random".
-        # ESC while on the map screen should go back to main menu.
-        # We handle this by checking if the user actually pressed ESC vs selected random.
-        # (The current implementation returns None for both; random is fine as None → Islands
-        #  will generate a random map. ESC also returns None which restarts the outer loop —
-        #  that's acceptable: user lands back on main menu.)
+        # Map selection (shared between both modes).
+        # Returns (world_map, fixed_spawn, fixed_target):
+        #   random / ESC → (None, None, None)
+        #   val map      → (tensor, None, None)
+        #   behavioral   → (tensor, (r,c), (r,c))
+        world_map, fixed_spawn, fixed_target = screen_select_map(screen, clock)
 
         if mode == "human":
             demo   = HumanDemo(screen, world_map=world_map)
@@ -1017,14 +1073,18 @@ def main():
             if ckpt_path is None:
                 continue   # back to main menu
 
-            # Build an env config that carries the selected world map geometry
             env_config = EnvConfig(map_generation=MapGenConfig(seed=42))
 
             while True:
-                result = screen_pick_positions(screen, clock, env_config)
-                if result is None:
-                    break   # back to main menu
-                spawn_rc, target_rc = result
+                if fixed_spawn is not None and fixed_target is not None:
+                    # Behavioral map: positions are pre-set, skip the picker
+                    spawn_rc, target_rc = fixed_spawn, fixed_target
+                else:
+                    result = screen_pick_positions(screen, clock, env_config,
+                                                   world_map=world_map)
+                    if result is None:
+                        break   # back to main menu
+                    spawn_rc, target_rc = result
 
                 outcome = screen_ai_playback(
                     screen, clock, ckpt_path, spawn_rc, target_rc,
