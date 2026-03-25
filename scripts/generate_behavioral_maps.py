@@ -12,7 +12,7 @@ out_path = Path("data/test_behavior.pt")
 out_path.parent.mkdir(parents=True, exist_ok=True)
 
 names   = list_maps()
-maps    = torch.stack([get_map(n) for n in names])   # [16, 250, 250]
+maps    = torch.stack([get_map(n) for n in names])   # [9, 250, 250]
 spawns  = [get_spawn(n)  for n in names]
 targets = [get_target(n) for n in names]
 
