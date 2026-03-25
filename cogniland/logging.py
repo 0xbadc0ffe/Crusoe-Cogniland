@@ -83,7 +83,6 @@ def _make_run_config(cfg) -> dict:
         "reward/lambda_t":     rw.get("lambda_t"),
         "reward/lambda_d":     rw.get("lambda_d"),
         "reward/reach_bonus":  rw.get("reach_bonus"),
-        "reward/time_penalty": env.get("time_penalty"),   # flat sweep override
 
         # ── PPO optimisation ────────────────────────────────────────────────
         "ppo/lr":              tr.get("learning_rate"),

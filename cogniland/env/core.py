@@ -124,9 +124,7 @@ def compute_reward(
         torch.zeros(1, device=device),
     )
 
-    time_penalty= torch.tensor(-rw.time_penalty, device=device)
-
-    return r_progress + r_success + r_death + time_penalty
+    return r_progress + r_success + r_death
 
 
 # ---------------------------------------------------------------------------
