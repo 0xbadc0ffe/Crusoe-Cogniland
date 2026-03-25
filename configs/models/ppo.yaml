@@ -16,13 +16,13 @@ training:
     train_path: "data/train_seed42_n128.pt"
     val_path: "data/val_seed42_n16.pt"
     test_path: "data/test_seed42_n16.pt"
-    curriculum_switch_steps: 2_000_000   # 0 = disabled; switch EASY → NORMAL at this global_step
+    curriculum_switch_steps: 5_000_000   # 0 = disabled; switch EASY → NORMAL at this global_step
     curriculum_easy_radius: 50           # radius (cells) around map center for EASY spawn/target
 
   # ── Rollout collection ──
   parallel_envs: 32             # How many environments run in parallel during rollout
   moves_per_rollout: 256        # How many moves each env makes before the model learns
-  total_env_moves: 8_000_000    # Total moves budget across all envs for the entire training
+  total_env_moves: 30_000_000    # Total moves budget across all envs for the entire training
 
   # ── PPO optimisation ──
   epochs_per_update: 2          # How many times the model re-studies each rollout's data
@@ -31,7 +31,7 @@ training:
   anneal_lr: true               # Linearly decay LR to 0 over training
 
   # ── Advantage estimation (GAE) ──
-  discount_factor: 0.99         # γ — how much future rewards matter (1.0 = greedy long-term)
+  discount_factor: 0.999         # γ — how much future rewards matter (1.0 = greedy long-term)
   gae_lambda: 0.95              # λ — bias-variance tradeoff in advantage estimates
 
   # ── Loss coefficients ──
