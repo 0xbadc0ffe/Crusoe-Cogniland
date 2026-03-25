@@ -710,70 +710,67 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=
             screen.blit(font_med.render(val, True, col), (sx + 90, sy_ - 2))
             sy_ += 28
 
-        # ── Right panel: controls + HP/Res plot + terrain legend ────────────
+        # ── Right panel: plot → terrain legend → controls ────────────────────
         rx  = mm_x + MINIMAP_DISPLAY_SIZE + 20   # x ≈ 840
         rw  = WINDOW_W - rx - 8                  # available width ≈ 352
         ry  = MAP_Y
         font_tiny = pygame.font.Font(None, 18)
 
-        # Controls
-        screen.blit(font_med.render("CONTROLS", True, COLORS["blue_ui"]), (rx, ry)); ry += 24
-        for ctrl in ["+/-  Speed", "P    Pause", "R    Reset", "ESC  Menu"]:
-            screen.blit(font_small.render(ctrl, True, COLORS["gray"]), (rx, ry)); ry += 19
-        ry += 8
-
-        # HP / Resources real-time plot
-        PLOT_W, PLOT_H = rw, 155
+        # HP + Resources combined real-time plot
+        combined_history = [h + r for h, r in zip(hp_history, res_history)]
+        PLOT_W, PLOT_H = rw, 150
         plot_surf = pygame.Surface((PLOT_W, PLOT_H))
         plot_surf.fill((15, 15, 25))
 
-        # Axes
         pygame.draw.line(plot_surf, COLORS["gray"], (0, PLOT_H - 1), (PLOT_W, PLOT_H - 1), 1)
         pygame.draw.line(plot_surf, COLORS["gray"], (0, 0), (0, PLOT_H - 1), 1)
 
-        # Dotted threshold line at y = 100
+        # Dotted line at y = 100
         y100 = PLOT_H - 1 - int(100 / 200 * (PLOT_H - 2))
         for dx in range(0, PLOT_W, 8):
             pygame.draw.line(plot_surf, (200, 190, 60),
                              (dx, y100), (min(dx + 4, PLOT_W - 1), y100), 1)
 
-        n_steps = max(len(hp_history) - 1, 1)
-        def _px(step):   return int(step / n_steps * (PLOT_W - 1))
-        def _py(val):    return PLOT_H - 1 - int(min(max(val, 0), 200) / 200 * (PLOT_H - 2))
+        n_steps = max(len(combined_history) - 1, 1)
+        def _px(step): return int(step / n_steps * (PLOT_W - 1))
+        def _py(val):  return PLOT_H - 1 - int(min(max(val, 0), 200) / 200 * (PLOT_H - 2))
 
-        for hist, col in [(hp_history,  (70, 210, 70)),
-                          (res_history, (70, 140, 255))]:
-            pts = [(_px(i), _py(v)) for i, v in enumerate(hist)]
-            if len(pts) >= 2:
-                pygame.draw.lines(plot_surf, col, False, pts, 1)
+        pts = [(_px(i), _py(v)) for i, v in enumerate(combined_history)]
+        if len(pts) >= 2:
+            pygame.draw.lines(plot_surf, (70, 200, 120), False, pts, 2)
 
-        # Mini legend inside plot
-        plot_surf.blit(font_tiny.render("HP",  True, (70, 210, 70)),  (PLOT_W - 56, 3))
-        plot_surf.blit(font_tiny.render("Res", True, (70, 140, 255)), (PLOT_W - 28, 3))
-        # Y-axis labels
         for yval, label in [(200, "200"), (100, "100"), (0, "0")]:
             plot_surf.blit(font_tiny.render(label, True, COLORS["gray"]),
                            (2, _py(yval) - 7))
 
-        screen.blit(font_small.render("HP / Resources", True, COLORS["panel_fg"]), (rx, ry))
+        screen.blit(font_small.render("HP + Resources", True, COLORS["panel_fg"]), (rx, ry))
         ry += 18
         screen.blit(plot_surf, (rx, ry))
-        ry += PLOT_H + 10
+        ry += PLOT_H + 12
 
-        # Terrain legend
+        # Terrain legend — pixel-aligned columns
         screen.blit(font_med.render("TERRAIN", True, COLORS["blue_ui"]), (rx, ry)); ry += 21
+        COL_NAME  = rx + 14          # name starts here
+        COL_COST  = rx + 114         # cost column (fixed x)
+        COL_DRAIN = rx + 158         # drain column (fixed x)
         for lev in range(_compiled.num_terrains):
-            col     = terrain_color(lev, _compiled)
+            tc      = terrain_color(lev, _compiled)
             name    = _compiled.terrain_names[lev].capitalize()
             cost    = _compiled.move_costs[lev].item()
             drain   = int(round(_compiled.res_rate[lev].item()))
             drain_s = f"+{drain}" if drain >= 0 else str(drain)
-            pygame.draw.rect(screen, col,            (rx, ry + 1, 11, 11))
+            pygame.draw.rect(screen, tc,              (rx, ry + 1, 11, 11))
             pygame.draw.rect(screen, COLORS["white"], (rx, ry + 1, 11, 11), 1)
-            screen.blit(font_tiny.render(
-                f" {name:<10} {cost:.2f}  {drain_s:>3}/step",
-                True, COLORS["panel_fg"]), (rx + 13, ry))
+            screen.blit(font_tiny.render(name,              True, COLORS["panel_fg"]), (COL_NAME,  ry))
+            screen.blit(font_tiny.render(f"{cost:.2f}",     True, COLORS["gray"]),     (COL_COST,  ry))
+            screen.blit(font_tiny.render(f"{drain_s}/step", True, COLORS["gray"]),     (COL_DRAIN, ry))
             ry += 19
+        ry += 10
+
+        # Controls (bottom)
+        screen.blit(font_med.render("CONTROLS", True, COLORS["blue_ui"]), (rx, ry)); ry += 22
+        for ctrl in ["+/-  Speed", "P    Pause", "R    Reset", "ESC  Menu"]:
+            screen.blit(font_small.render(ctrl, True, COLORS["gray"]), (rx, ry)); ry += 19
 
         if game_over:
             overlay = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
