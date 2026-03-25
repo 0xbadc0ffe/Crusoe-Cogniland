@@ -22,7 +22,6 @@ from cogniland.eval.metrics import (
     compute_exploration,
     compute_risk_exposure,
     compute_terrain_visit_fractions,
-    read_dijkstra_to_final,
 )
 
 
@@ -267,8 +266,7 @@ class EvalRunner:
         resource_mean = resource_sum / resource_count.clamp(min=1)
         hp_mean = hp_sum / hp_count.clamp(min=1)
 
-        dijkstra_to_final = read_dijkstra_to_final(dist_maps, final_positions, device)
-        directness = compute_directness(final_cost, dijkstra_to_final)
+        directness = compute_directness(initial_spawns, final_positions, total_moves)
         exploration = compute_exploration(observed)
         terrain_visit_frac = compute_terrain_visit_fractions(terrain_visits)
         risk_exposure = compute_risk_exposure(risk_sum, risk_count)

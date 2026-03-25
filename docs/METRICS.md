@@ -93,40 +93,26 @@ A Vega stacked area chart (preset `crusoe/terrain_distribution`) showing how ter
 
 ### Directness
 
-**What it measures:** How efficiently the agent moved in terms of terrain cost, compared to the optimal path to wherever it *ended up* — regardless of whether it reached the target.
-
-**Why "to its final position":** Using the agent's final position rather than the target makes the metric well-defined for all episode outcomes (success, death, timeout). An agent that wandered far and then died is correctly penalised, even though it never reached the target.
+**What it measures:** How directly the agent moves toward its final position, independently of terrain costs or survivability constraints.
 
 **Computation:**
 
-Let:
-- `C_agent` = total terrain-weighted cost accumulated during the episode (`EnvState.cost`)
-- `C_astar(spawn → final)` = optimal A* cost from spawn to the agent's **final position** on the episode's actual map
-
-Then:
-
 ```
-         C_agent
+         ‖x_spawn − x_final‖₁
 D = ─────────────────────────────
-    C_agent − C_astar(spawn → final)
+              N_steps
 ```
 
-This formula measures the "overhead factor": if `C_astar = 0.9 · C_agent`, the agent wasted 10% of its movement cost versus the optimal route, giving `D = 1 / 0.1 = 10`. If the agent took exactly the optimal route, `C_agent = C_astar`, the denominator is zero and `D` is capped at 100.
+Where `‖x_spawn − x_final‖₁` is the Manhattan distance between the spawn and the agent's final position, and `N_steps` is the total number of steps taken.
 
-**Boundary cases:**
-- If `C_agent ≤ C_astar + ε` (agent at least as efficient as A*): `D = 100` (cap).
-- If `C_agent = 0`: `D = 100` by the cap rule.
-- The cap of 100 prevents numerical explosion for nearly-optimal agents; it does not imply the agent scored perfectly on all metrics.
+A value close to 1 indicates a nearly straight path; lower values indicate detours (e.g. for terrain-time cost or survivability). Using Manhattan distance matches the grid movement model (4 cardinal directions, no diagonals).
 
-**Range:** [1, 100]. `D = 100` means the agent followed the optimal route. `D = 2` means the agent spent twice the terrain cost of the optimal route. `D = 1` is the theoretical minimum: the agent wasted all of its movement cost vs. the optimal path (only possible if `C_astar ≈ 0`).
+**Range:** (0, 1]. Clamped to a maximum of 1.
 
-**Implementation in code** (`runner.py`):
+**Implementation in code** (`metrics.py`):
 ```python
-directness = torch.where(
-    final_cost > astar_to_final + 1e-6,
-    (final_cost / (final_cost - astar_to_final)).clamp(max=100.0),
-    torch.full_like(final_cost, 100.0),
-)
+manhattan = (initial_spawns - final_positions).abs().sum(dim=1).float()
+directness = (manhattan / total_moves.clamp(min=1)).clamp(max=1.0)
 ```
 
 ---
