@@ -40,9 +40,9 @@ custom_map:
 # hp_rate:  signed HP rate per step      — positive = heal (forest when below max HP)
 # Tags drive engine logic: "water" triggers boat costs, "forest" triggers healing/gathering.
 terrains:
-  - { name: ocean,      threshold: 0.007, move_cost: 1.0,  res_rate: -0.7, hp_rate: 0.0, visibility: 10, color: [5, 35, 225],      tags: [water] }
-  - { name: deep_water, threshold: 0.025, move_cost: 1.25, res_rate: -0.5, hp_rate: 0.0, visibility:  8, color: [25, 65, 225],     tags: [water] }
-  - { name: water,      threshold: 0.05,  move_cost: 1.5,  res_rate: -0.3, hp_rate: 0.0, visibility:  6, color: [65, 105, 225],    tags: [water] }
+  - { name: ocean,      threshold: 0.007, move_cost: 0.5,  res_rate: -0.5, hp_rate: 0.0, visibility: 10, color: [5, 35, 225],      tags: [water] }
+  - { name: deep_water, threshold: 0.025, move_cost: 0.75, res_rate: -0.4, hp_rate: 0.0, visibility:  8, color: [25, 65, 225],     tags: [water] }
+  - { name: water,      threshold: 0.05,  move_cost: 1,  res_rate: -0.3, hp_rate: 0.0, visibility:  6, color: [65, 105, 225],    tags: [water] }
   - { name: beach,      threshold: 0.06,  move_cost: 1.75, res_rate: -1.5, hp_rate: 0.0, visibility:  5, color: [238, 214, 175],   tags: [land] }
   - { name: sandy,      threshold: 0.1,   move_cost: 2.0,  res_rate: -1.5, hp_rate: 0.0, visibility:  5, color: [210, 180, 140],   tags: [land] }
   - { name: grassland,  threshold: 0.25,  move_cost: 2.25, res_rate: -1.5, hp_rate: 0.0, visibility:  5, color: [34, 139, 34],     tags: [land] }
