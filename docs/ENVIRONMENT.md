@@ -17,7 +17,7 @@ Cogniland is a navigation task on procedurally generated 250×250 island maps. A
 | Component | Description |
 |-----------|-------------|
 | **State space** | `minimap` [45×45, 2 ch] + `scalars` [6] — see [Observation space](#observation-space) |
-| **Action space** | 5 discrete actions: up, down, left, right, stay |
+| **Action space** | 4 discrete actions: up, down, left, right |
 | **Transition** | Deterministic 1-cell movement; terrain at destination determines resource/HP effects |
 | **Reward** | Dense approach reward + sparse reach bonus/death penalty + resource/HP shaping — see [Reward function](#reward-function) |
 | **Termination** | Agent reaches target (success), HP ≤ 0 (death), or episode length > 1000 (timeout) |
@@ -48,7 +48,6 @@ The minimap uses the current visibility radius as its effective range (see terra
 | 1  | down  | Move one cell south |
 | 2  | right | Move one cell east |
 | 3  | left  | Move one cell west |
-| 4  | stay  | Remain in place; terrain effects and time penalty still apply |
 
 ---
 
@@ -93,7 +92,7 @@ Entering any water tile (IDs 0–2) from land (IDs 3–8) costs **20 resources**
 ## Resource and HP system
 
 ```
-Each step (stay or move):
+Each step:
   resources -= terrain_resource_drain
 
 If resources < 0:
@@ -188,7 +187,7 @@ reset()
   → init hp=100, resources=80, cost=0
 
 for each step:
-  → agent selects action (up/down/left/right/stay)
+  → agent selects action (up/down/left/right)
   → update position, compute terrain effects, update hp/resources
   → compute reward
   → check termination: hp≤0 (death), dist≤0 (reached), steps≥1000 (timeout)

@@ -9,9 +9,9 @@ All metrics logged to WandB during training and evaluation. The **x-axis** in Wa
 | Term | Meaning |
 |------|---------|
 | **update** | One PPO training iteration: collect rollout → compute GAE → run minibatch updates. X-axis in WandB. |
-| **move** | One agent action in the environment (up/down/left/right/stay). An episode is a sequence of moves. |
+| **move** | One agent action in the environment (up/down/left/right). An episode is a sequence of moves. |
 | **global\_step** | Cumulative number of moves across all parallel envs since training start: `update × num_envs × rollout_steps`. |
-| **C\_agent** | Terrain-weighted cost accumulated by the agent during an episode (`EnvState.cost`). Each non-stay move adds `TERRAIN_COSTS[terrain_idx]` to this counter. |
+| **C\_agent** | Terrain-weighted cost accumulated by the agent during an episode (`EnvState.cost`). Each move adds `TERRAIN_COSTS[terrain_idx]` to this counter. |
 | **A\*** | Optimal terrain-weighted shortest path computed by `batch_astar()`. The cost of the A* path equals the sum of `TERRAIN_COSTS` along the optimal route on the actual map used in the episode. |
 
 ---
@@ -115,10 +115,10 @@ This formula measures the "overhead factor": if `C_astar = 0.9 · C_agent`, the 
 
 **Boundary cases:**
 - If `C_agent ≤ C_astar + ε` (agent at least as efficient as A*): `D = 100` (cap).
-- If `C_agent = 0` (agent stayed still): `D = 100` by the cap rule.
+- If `C_agent = 0`: `D = 100` by the cap rule.
 - The cap of 100 prevents numerical explosion for nearly-optimal agents; it does not imply the agent scored perfectly on all metrics.
 
-**Range:** [1, 100]. `D = 100` means the agent followed the optimal route (or stayed still). `D = 2` means the agent spent twice the terrain cost of the optimal route. `D = 1` is the theoretical minimum: the agent wasted all of its movement cost vs. the optimal path (only possible if `C_astar ≈ 0`).
+**Range:** [1, 100]. `D = 100` means the agent followed the optimal route. `D = 2` means the agent spent twice the terrain cost of the optimal route. `D = 1` is the theoretical minimum: the agent wasted all of its movement cost vs. the optimal path (only possible if `C_astar ≈ 0`).
 
 **Implementation in code** (`runner.py`):
 ```python
@@ -234,7 +234,7 @@ The episode exploration fraction is:
 exploration = count(observed[i]) / (H × W)
 ```
 
-**Range:** [0, 1]. 0 = agent never moved (or took only stay actions). Full map coverage (1.0) is practically unachievable within 1000 steps on a 250×250 map.
+**Range:** [0, 1]. 0 = agent never moved. Full map coverage (1.0) is practically unachievable within 1000 steps on a 250×250 map.
 
 **Implementation in code** (`runner.py`):
 ```python

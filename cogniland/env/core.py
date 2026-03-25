@@ -180,11 +180,7 @@ def apply_movement_costs(
     state: EnvState, action: torch.Tensor,
     config: EnvConfig, compiled: CompiledTerrainData,
 ) -> EnvState:
-    """Apply base movement costs based on terrain (vectorised).
-
-    The stay action still incurs the terrain cost — it represents time passing,
-    not a free pause. Only the land-to-water transition is gated on actual movement.
-    """
+    """Apply base movement costs based on terrain (vectorised)."""
     device = state.position.device
     costs = compiled.move_costs.to(device)
     terrain_idx = state.terrain_idx.long()
@@ -230,10 +226,9 @@ def apply_terrain_effects(
 
     # --- Land-to-water transition: costs resources; shortfall converts to HP ---
     is_water = compiled.is_water.to(device)
-    moving = action != ACTIONS["stay"]
     old_is_water = is_water[old_terrain.long()]
     new_is_water = is_water[terrain.long()]
-    land_to_water = (~old_is_water) & new_is_water & moving
+    land_to_water = (~old_is_water) & new_is_water
 
     resources_available = torch.clamp(resources, 0.0, config.agent.land_to_water_resource_cost)
     resources_missing = config.agent.land_to_water_resource_cost - resources_available
