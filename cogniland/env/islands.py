@@ -18,6 +18,26 @@ from cogniland.env.core import compute_minimap_batch, compute_terrain_levels, en
 from cogniland.env.pathfinding import batch_dijkstra_from_sources, batch_reverse_dijkstra
 from cogniland.env.types import CompiledTerrainData, CurriculumStage, EnvConfig, EnvState, StepResult
 
+# Compass noise (max degrees) per curriculum stage
+COMPASS_NOISE_DEG: dict[CurriculumStage, float] = {
+    CurriculumStage.EXTRA_EASY:  5.0,
+    CurriculumStage.EASY:       30.0,
+    CurriculumStage.NORMAL:     60.0,
+}
+
+
+def _add_compass_noise(compass: torch.Tensor, max_deg: float) -> torch.Tensor:
+    """Rotate each unit compass vector by a uniform random angle in [-max_deg, +max_deg]."""
+    if max_deg == 0.0:
+        return compass
+    max_rad = max_deg * math.pi / 180.0
+    theta = (torch.rand(compass.shape[0], device=compass.device) * 2.0 - 1.0) * max_rad
+    cos_t = torch.cos(theta)
+    sin_t = torch.sin(theta)
+    x = compass[:, 0] * cos_t - compass[:, 1] * sin_t
+    y = compass[:, 0] * sin_t + compass[:, 1] * cos_t
+    return torch.stack([x, y], dim=1)
+
 
 def generate_island(config: EnvConfig) -> torch.Tensor:
     """Generate a single island heightmap on CPU.
@@ -115,13 +135,16 @@ class Islands:
         self,
         config: EnvConfig | None = None,
         world_maps: torch.Tensor | None = None,
-        curriculum_easy_radius: int = 40,
+        curriculum_extra_easy_radius: int = 25,
+        curriculum_easy_radius: int = 50,
         **kwargs,
     ):
         if config is None:
             config = EnvConfig(**kwargs)
         self.config = config
+        self.curriculum_extra_easy_radius = curriculum_extra_easy_radius
         self.curriculum_easy_radius = curriculum_easy_radius
+        self.compass_noise_deg: float = COMPASS_NOISE_DEG[CurriculumStage.NORMAL]
         self._device = config.resolved_device()
 
         # Compile terrain data once
@@ -169,6 +192,9 @@ class Islands:
     def compiled(self) -> CompiledTerrainData:
         """Access compiled terrain data."""
         return self._compiled
+
+    def set_curriculum_stage(self, stage: CurriculumStage) -> None:
+        self.compass_noise_deg = COMPASS_NOISE_DEG[stage]
 
     # ------------------------------------------------------------------
     # Reset
@@ -225,6 +251,7 @@ class Islands:
         )
         compass_raw = (spawn_pos - target_pos).float()
         compass = compass_raw / torch.norm(compass_raw, dim=1, keepdim=True).clamp(min=1e-8)
+        compass = _add_compass_noise(compass, self.compass_noise_deg)
 
         # Precompute optimal time cost spawn→target via forward Dijkstra (for time ratio)
         fwd_dist_maps = batch_dijkstra_from_sources(
@@ -243,6 +270,7 @@ class Islands:
             per_env_maps.cpu(), self._compiled.move_costs.cpu(),
             self._compiled.thresholds.cpu(), self._compiled.is_water.cpu(),
             target_pos.cpu(), beta_raft=self.config.reward.beta_raft,
+            res_rates=self._compiled.res_rate.cpu(),
         )
         self._cost_to_go_maps = torch.stack([
             torch.from_numpy(m.astype("float32")) for m in ctg_maps_np
@@ -280,9 +308,13 @@ class Islands:
         size = self.config.size
         positions = torch.zeros(B, 2, dtype=torch.long, device=self._device)
 
-        if curriculum_stage == CurriculumStage.EASY:
+        constrained = curriculum_stage in (CurriculumStage.EXTRA_EASY, CurriculumStage.EASY)
+        if constrained:
             center = size // 2
-            radius = self.curriculum_easy_radius
+            if curriculum_stage == CurriculumStage.EXTRA_EASY:
+                radius = self.curriculum_extra_easy_radius
+            else:
+                radius = self.curriculum_easy_radius
             r_lo = max(0, center - radius)
             r_hi = min(size - 1, center + radius)
             c_lo = max(0, center - radius)
@@ -291,7 +323,7 @@ class Islands:
         for b in range(B):
             m = self.world_maps[map_indices[b]]  # [H, W]
             while True:
-                if curriculum_stage == CurriculumStage.EASY:
+                if constrained:
                     r = random.randint(r_lo, r_hi)
                     c = random.randint(c_lo, c_hi)
                     if (r - center) ** 2 + (c - center) ** 2 > radius * radius:
@@ -322,6 +354,7 @@ class Islands:
             self.config,
             self._compiled,
             cost_to_go_maps=self._cost_to_go_maps,
+            compass_noise_deg=self.compass_noise_deg,
         )
 
     # ------------------------------------------------------------------
@@ -382,6 +415,7 @@ class Islands:
         )
         new_compass_raw = (new_spawn - new_target).float()
         new_compass = new_compass_raw / torch.norm(new_compass_raw, dim=1, keepdim=True).clamp(min=1e-8)
+        new_compass = _add_compass_noise(new_compass, self.compass_noise_deg)
 
         # Precompute optimal time cost for done envs (forward Dijkstra)
         done_dist_maps = batch_dijkstra_from_sources(
@@ -400,6 +434,7 @@ class Islands:
             done_maps.cpu(), self._compiled.move_costs.cpu(),
             self._compiled.thresholds.cpu(), self._compiled.is_water.cpu(),
             new_target.cpu(), beta_raft=self.config.reward.beta_raft,
+            res_rates=self._compiled.res_rate.cpu(),
         )
         done_ctg_maps = torch.stack([
             torch.from_numpy(m.astype("float32")) for m in done_ctg_maps_np

@@ -15,8 +15,9 @@ import torch
 
 class CurriculumStage(str, Enum):
     """Training curriculum stage controlling spawn/target sampling."""
-    EASY   = "easy"    # Spawn + target constrained to radius circle around map center
-    NORMAL = "normal"  # Spawn + target sampled uniformly over land cells
+    EXTRA_EASY = "extra_easy"  # Spawn + target constrained to small radius (25) around map center
+    EASY       = "easy"        # Spawn + target constrained to medium radius (50) around map center
+    NORMAL     = "normal"      # Spawn + target sampled uniformly over land cells
 
 
 class EnvState(NamedTuple):
@@ -162,9 +163,9 @@ class DatasetConfig:
 @dataclass(frozen=True)
 class RewardConfig:
     """Reward shaping parameters — part of the environment specification."""
-    reach_bonus: float = 100.0    # r_success: sparse bonus on reaching target
+    reach_bonus: float = 150.0    # r_success: sparse bonus on reaching target
     lambda_p: float = 0.05       # progress signal weight (positive Dijkstra alignment only)
-    lambda_rho: float = 0.5      # risk penalty weight
+    lambda_rho: float = 0.1      # risk penalty weight
     lambda_t: float = 40.0       # time-efficiency bonus weight at success
     lambda_d: float = 1.0        # death penalty = lambda_d * reach_bonus
     beta_raft: float = 10.0      # extra cost for land→water transitions in Dijkstra cost-to-go
@@ -362,9 +363,9 @@ class EnvConfig:
 
         rw_cfg = env.get("reward", {})
         reward = RewardConfig(
-            reach_bonus=rw_cfg.get("reach_bonus", 100.0),
+            reach_bonus=rw_cfg.get("reach_bonus", 150.0),
             lambda_p=rw_cfg.get("lambda_p", 0.05),
-            lambda_rho=rw_cfg.get("lambda_rho", 0.5),
+            lambda_rho=rw_cfg.get("lambda_rho", 0.1),
             lambda_t=rw_cfg.get("lambda_t", 40.0),
             lambda_d=rw_cfg.get("lambda_d", 1.0),
             beta_raft=rw_cfg.get("beta_raft", 10.0),
