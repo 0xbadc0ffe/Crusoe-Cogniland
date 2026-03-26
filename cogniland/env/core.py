@@ -83,10 +83,11 @@ def env_step(
     reached = dist_to_target < 1.0
     done = ~alive | reached
 
-    # 9. Compute risk ρ_t = max(0, drain_t) / (res_t + 0.5 * hp_t)
+    # 9. Compute risk ρ_t = drain / (drain + budget), bounded in [0, 1]
     res_rate_table = compiled.res_rate.to(new_state.hp.device)
     drain = (-res_rate_table[terrain_idx.long()]).clamp(min=0)  # positive drain
-    risk = drain / (new_state.resources + 0.5 * new_state.hp).clamp(min=1e-6)
+    budget = new_state.resources + 0.5 * new_state.hp
+    risk = drain / (drain + budget).clamp(min=1e-6)
 
     # 10. Reward
     reward = compute_reward(
