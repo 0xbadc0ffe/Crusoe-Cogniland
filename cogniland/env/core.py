@@ -36,22 +36,29 @@ def env_step(
     """
 
     old_terrain = state.terrain_idx.clone()  # needed for land-to-water transition
-    prev_cost_to_go = state.cost_to_go       # J_{t-1}
 
-    # 1. Movement
+    # 1. Ternary progress signal (computed BEFORE movement, from pre-move position)
+    if cost_to_go_maps is not None:
+        progress = compute_dijkstra_progress(
+            cost_to_go_maps, state.position, action, config.size,
+        )
+    else:
+        progress = torch.zeros(state.position.shape[0], device=state.position.device)
+
+    # 2. Movement
     new_state = apply_movement(state, action, config.size)
 
-    # 2. Compass update — unit direction (pos − target), magnitude dropped
+    # 3. Compass update — unit direction (pos − target), magnitude dropped
     compass_raw = (target_pos - new_state.position).float()           # [B, 2] — points toward target
     compass_euclidean = torch.norm(compass_raw, dim=1, keepdim=True).clamp(min=1e-8)
     compass_unit = compass_raw / compass_euclidean                     # [B, 2]
     new_state = new_state._replace(compass=compass_unit)
 
-    # 3. Terrain level (needed by minimap visibility)
+    # 4. Terrain level (needed by minimap visibility)
     terrain_idx = compute_terrain_levels(world_map, new_state.position, compiled)
     new_state = new_state._replace(terrain_idx=terrain_idx)
 
-    # 4. Minimap update
+    # 5. Minimap update
     minimap = compute_minimap_batch(
         world_map, new_state.position, config.minimap_max_ray,
         terrain_idx, config.minimap_occlude, config.minimap_clear_tolerance,
@@ -59,40 +66,37 @@ def env_step(
     )
     new_state = new_state._replace(minimap=minimap)
 
-    # 5. Movement costs & terrain effects
+    # 6. Movement costs & terrain effects
     new_state = apply_movement_costs(new_state, action, config, compiled)
     new_state = apply_terrain_effects(new_state, old_terrain, action, config, compiled)
 
-    # 6. Clamp
+    # 7. Clamp
     hp = torch.clamp(new_state.hp, 0.0, config.max_hp)
     resources = torch.clamp(new_state.resources, 0.0, config.max_resources)
     new_state = new_state._replace(hp=hp, resources=resources)
 
-    # 7. Update cost-to-go from maps
+    # 8. Update cost-to-go from maps
     if cost_to_go_maps is not None:
         device = new_state.position.device
         b_idx = torch.arange(new_state.position.shape[0], device=device)
         new_ctg = cost_to_go_maps[b_idx, new_state.position[:, 0], new_state.position[:, 1]]
         new_state = new_state._replace(cost_to_go=new_ctg)
-    else:
-        new_ctg = prev_cost_to_go  # fallback: no progress signal
 
-    # 8. Terminal conditions
+    # 9. Terminal conditions
     alive = new_state.hp > 0
     dist_to_target = (new_state.position - target_pos).float().abs().sum(dim=1)
     reached = dist_to_target < 1.0
     done = ~alive | reached
 
-    # 9. Compute risk ρ_t = drain / (drain + budget), bounded in [0, 1]
+    # 10. Compute risk ρ_t = drain / (drain + budget), bounded in [0, 1]
     res_rate_table = compiled.res_rate.to(new_state.hp.device)
     drain = (-res_rate_table[terrain_idx.long()]).clamp(min=0)  # positive drain
     budget = new_state.resources + 0.5 * new_state.hp
     risk = drain / (drain + budget).clamp(min=1e-6)
 
-    # 10. Reward
+    # 11. Reward
     reward = compute_reward(
-        prev_cost_to_go=prev_cost_to_go,
-        cost_to_go=new_state.cost_to_go,
+        progress=progress,
         cost=new_state.cost,
         dijkstra_cost=new_state.dijkstra_cost,
         alive=alive,
@@ -113,9 +117,56 @@ def env_step(
 # Reward (pure function — part of the environment specification)
 # ---------------------------------------------------------------------------
 
+def compute_dijkstra_progress(
+    cost_to_go_maps: torch.Tensor,
+    position: torch.Tensor,
+    action: torch.Tensor,
+    map_size: int,
+) -> torch.Tensor:
+    """Ternary progress signal based on action alignment with Dijkstra gradient.
+
+    At the agent's current position, the Dijkstra-optimal direction is the
+    cardinal neighbor with the lowest cost-to-go.  The progress signal is:
+        +1  if the action moves in that direction
+        -1  if the action moves opposite to that direction
+         0  if the action is orthogonal (or maps are unavailable)
+
+    Args:
+        cost_to_go_maps: [B, H, W] reverse-Dijkstra cost-to-go maps.
+        position: [B, 2] pre-move position (row, col).
+        action: [B] long action indices.
+        map_size: H (= W), used for boundary clamping.
+
+    Returns: [B] float in {-1, 0, +1}.
+    """
+    device = position.device
+    B = position.shape[0]
+    deltas = ACTION_DELTAS.to(device)  # [5, 2] (last = stay [0,0])
+
+    # Cost-to-go at each of the 4 cardinal neighbours (skip stay)
+    neighbor_ctg = torch.full((B, 4), float("inf"), device=device)
+    b_idx = torch.arange(B, device=device)
+    for a in range(4):
+        nr = torch.clamp(position[:, 0] + deltas[a, 0], 0, map_size - 1)
+        nc = torch.clamp(position[:, 1] + deltas[a, 1], 0, map_size - 1)
+        neighbor_ctg[:, a] = cost_to_go_maps[b_idx, nr, nc]
+
+    # Dijkstra-optimal action: the neighbour with lowest cost-to-go
+    best_action = neighbor_ctg.argmin(dim=1)  # [B]
+
+    # Optimal direction delta and action direction delta
+    best_delta = deltas[best_action]   # [B, 2]
+    action_delta = deltas[action]      # [B, 2]
+
+    # Dot product of the two direction vectors → {-1, 0, +1}
+    #   same direction → +1, opposite → -1, orthogonal → 0
+    progress = (best_delta * action_delta).sum(dim=1).float()  # [B]
+
+    return progress
+
+
 def compute_reward(
-    prev_cost_to_go: torch.Tensor,
-    cost_to_go: torch.Tensor,
+    progress: torch.Tensor,
     cost: torch.Tensor,
     dijkstra_cost: torch.Tensor,
     alive: torch.Tensor,
@@ -125,22 +176,18 @@ def compute_reward(
 ) -> torch.Tensor:
     """Compute shaped reward. Pure function, no side effects.
 
-    r_t = λ_p (J_{t-1} - J_t)                          # progress signal
-        - λ_ρ ρ_t                                       # risk penalty
-        - λ_s                                            # step penalty
+    r_t = λ_p · max(0, π_t)                             # progress: +1 forward, 0 otherwise
+        - λ_ρ ρ_t                                        # risk penalty
         + 1_reached (r_success + λ_t time*/time)         # success reward
         - 1_dead    λ_d r_success                        # death penalty
     """
     device = alive.device
 
-    # Progress: reduction in cost-to-go
-    r_progress = rw.lambda_p * (prev_cost_to_go - cost_to_go)
+    # Progress: only reward forward steps (positive Dijkstra alignment)
+    r_progress = rw.lambda_p * progress.clamp(min=0)
 
     # Risk penalty
     r_risk = -rw.lambda_rho * risk
-
-    # Step penalty (constant)
-    r_step = torch.tensor(-rw.lambda_s, device=device)
 
     # Time-efficiency ratio: optimal time / actual time, clamped to [0, 1]
     time_ratio = torch.clamp(dijkstra_cost / (cost + 1e-6), 0.0, 1.0)
@@ -156,7 +203,7 @@ def compute_reward(
         torch.zeros(1, device=device),
     )
 
-    return r_progress + r_risk + r_step + r_success + r_death
+    return r_progress + r_risk + r_success + r_death
 
 
 # ---------------------------------------------------------------------------

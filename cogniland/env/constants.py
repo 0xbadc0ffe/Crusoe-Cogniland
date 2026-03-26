@@ -12,6 +12,7 @@ ACTIONS = {
     "down": 1,
     "right": 2,
     "left": 3,
+    "stay": 4,
 }
 
 NUM_ACTIONS = len(ACTIONS)
@@ -23,6 +24,7 @@ ACTION_DELTAS = torch.tensor(
         [1, 0],   # down
         [0, 1],   # right
         [0, -1],  # left
+        [0, 0],   # stay
     ],
     dtype=torch.long,
 )

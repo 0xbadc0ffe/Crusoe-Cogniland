@@ -7,7 +7,7 @@ cnn_channels: 32         # Output channels of second/third CNN conv layer (first
 cnn_out_spatial: 4       # AdaptiveMaxPool2d output size → cnn_out = cnn_channels × cnn_out_spatial²
 scalar_hidden: 64        # Scalar MLP hidden width
 hidden_dim: 256          # Trunk hidden layer width (both layers)
-action_dim: 4            # Output actions (up, down, right, left)
+action_dim: 5            # Output actions (up, down, right, left, stay)
 
 training:
 
