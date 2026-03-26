@@ -1,0 +1,54 @@
+# DRC(3,3) — IMPALA V-trace agent config
+# Fully independent from ppo.yaml. Do NOT share keys between the two.
+name: drc
+
+# ── Network architecture (DRC(D=3, N=3) — Guez et al. 2019 / Chung et al. 2024) ──
+# Observation space (from BatchedIslandEnv.get_obs):
+#   "minimap": [B, 3, 45, 45]  — channel 0=height, 1=target-blob, 2=visibility
+#   "scalars":  [B, 5]          — compass_x, compass_y, terrain_idx, resources, hp
+minimap_channels: 3       # must match env observation (3 channels)
+scalar_dim: 5             # must match env observation (5 scalars)
+action_dim: 5             # must match NUM_ACTIONS
+
+drc_channels: 56          # C — hidden channels for all ConvLSTM cells (~2.08M params)
+drc_depth: 3              # D — number of stacked, separate ConvLSTM cells
+drc_thinking_steps: 3     # N — recurrent think-steps per environment step (D×N = 9 passes)
+cnn_out_spatial: 6        # spatial size after AdaptiveMaxPool2d at readout (6×6)
+scalar_hidden: 64         # width of the scalar MLP branch
+hidden_dim: 512           # width of the shared MLP trunk
+
+training:
+  dataset:
+    train_path: "data/train_seed42_n128.pt"
+    val_path:   "data/val_seed42_n16.pt"
+    test_path:  "data/test_seed42_n16.pt"
+    curriculum_switch_steps: 5_000_000
+    curriculum_easy_radius: 50
+
+  # ── IMPALA rollout ──────────────────────────────────────────────────────────
+  parallel_envs:     256          # number of parallel actors (IMPALA scale)
+  moves_per_rollout: 20           # T — unroll length per actor
+  total_env_moves:   2_002_944_000   # total environment interactions
+
+  # ── IMPALA V-trace hyperparameters (Chung et al. 2024 §A.1) ───────────────
+  discount_factor: 0.97           # γ — matches paper
+  rho_bar: 1.0                    # IS weight clipping for V-trace targets
+  c_bar:   1.0                    # trace coefficient clipping
+
+  # ── Losses (mean per-step losses, NOT summed) ──────────────────────────────
+  value_loss_weight:   0.25       # matches paper (0.25, not 0.5)
+  entropy_bonus_weight: 0.01      # matches paper (0.01, not 0.05)
+  max_grad_norm: 40.0             # paper clips at 2.5e-4 of sum; use 40.0 for safety with mean
+
+  # ── Optimiser (Adam — paper §A.1) ─────────────────────────────────────────
+  learning_rate:     4.0e-4       # initial LR (paper: 4e-4)
+  learning_rate_min: 4.0e-6       # final LR after linear anneal (paper: 4e-6)
+  anneal_lr: true
+  adam_beta1: 0.9
+  adam_beta2: 0.99
+  adam_eps:   1.5625e-7           # paper: ε = 1.5625e-7 (= 1/6400)
+
+  # ── Eval / checkpointing ───────────────────────────────────────────────────
+  eval_every_n_updates:       100
+  eval_episodes:               16
+  checkpoint_every_n_updates:   0  # 0 = best-only
