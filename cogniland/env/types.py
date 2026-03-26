@@ -163,9 +163,8 @@ class DatasetConfig:
 class RewardConfig:
     """Reward shaping parameters — part of the environment specification."""
     reach_bonus: float = 100.0    # r_success: sparse bonus on reaching target
-    lambda_p: float = 0.05       # progress signal weight (Dijkstra cost-to-go reduction)
+    lambda_p: float = 0.05       # progress signal weight (positive Dijkstra alignment only)
     lambda_rho: float = 0.5      # risk penalty weight
-    lambda_s: float = 0.001      # per-step penalty
     lambda_t: float = 40.0       # time-efficiency bonus weight at success
     lambda_d: float = 1.0        # death penalty = lambda_d * reach_bonus
     beta_raft: float = 10.0      # extra cost for land→water transitions in Dijkstra cost-to-go
@@ -177,13 +176,13 @@ class RewardConfig:
 
 _DEFAULT_TERRAINS = (
     #                        thresh  cost  res_rate  hp_rate  vis  color             tags
-    TerrainDef("ocean",      0.007,  1.0,  -0.7,     0.0,    10,  (5,35,225),    ("water",)),
-    TerrainDef("deep_water", 0.025,  1.25, -0.5,     0.0,     8,  (25,65,225),   ("water",)),
-    TerrainDef("water",      0.05,   1.5,  -0.3,     0.0,     6,  (65,105,225),  ("water",)),
-    TerrainDef("beach",      0.06,   1.75, -1.5,     0.0,     5,  (238,214,175), ("land",)),
-    TerrainDef("sandy",      0.1,    2.0,  -1.5,     0.0,     5,  (210,180,140), ("land",)),
-    TerrainDef("grassland",  0.25,   2.25, -1.5,     0.0,     5,  (34,139,34),   ("land",)),
-    TerrainDef("forest",     0.6,    3.0,   5.0,     8.0,     3,  (0,100,0),     ("land","forest")),
+    TerrainDef("ocean",      0.007,  1.0,  -1.0,     0.0,    16,  (5,35,225),    ("water",)),
+    TerrainDef("deep_water", 0.025,  1.25, -0.5,     0.0,    12,  (25,65,225),   ("water",)),
+    TerrainDef("water",      0.05,   1.5,  -0.2,     0.0,     8,  (65,105,225),  ("water",)),
+    TerrainDef("beach",      0.06,   1.75, -1.0,     0.0,     5,  (238,214,175), ("land",)),
+    TerrainDef("sandy",      0.1,    2.0,  -1.0,     0.0,     5,  (210,180,140), ("land",)),
+    TerrainDef("grassland",  0.25,   2.25, -1.0,     0.0,     5,  (34,139,34),   ("land",)),
+    TerrainDef("forest",     0.6,    3.0,   3.0,     5.0,     3,  (0,100,0),     ("land","forest")),
     TerrainDef("rocky",      0.7,    3.5,  -2.0,     0.0,    10,  (139,137,137), ("land",)),
     TerrainDef("mountains",  1.0,    4.0,  -5.0,     0.0,    22,  (255,250,250), ("land",)),
 )
@@ -366,7 +365,6 @@ class EnvConfig:
             reach_bonus=rw_cfg.get("reach_bonus", 100.0),
             lambda_p=rw_cfg.get("lambda_p", 0.05),
             lambda_rho=rw_cfg.get("lambda_rho", 0.5),
-            lambda_s=rw_cfg.get("lambda_s", 0.001),
             lambda_t=rw_cfg.get("lambda_t", 40.0),
             lambda_d=rw_cfg.get("lambda_d", 1.0),
             beta_raft=rw_cfg.get("beta_raft", 10.0),

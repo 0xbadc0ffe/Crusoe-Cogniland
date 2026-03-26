@@ -215,6 +215,6 @@ All environment parameters live in `configs/env/default.yaml`. Key groups:
 | Agent | `init_hp`, `max_hp`, `init_resources`, `max_resources` |
 | Terrain effects | `land_resource_drain`, `sea_resource_costs`, `mountain_resource_costs`, `forest_hp_gain`, `forest_resource_gain`, `no_res_hp_multiplier` |
 | Water transition | `land_to_water_resource_cost`, `land_to_water_hp_per_missing_res` |
-| Reward | `reward.reach_bonus`, `reward.lambda_p`, `reward.lambda_rho`, `reward.lambda_s`, `reward.lambda_t`, `reward.lambda_d`, `reward.beta_raft` |
+| Reward | `reward.reach_bonus`, `reward.lambda_p`, `reward.lambda_rho`, `reward.lambda_t`, `reward.lambda_d`, `reward.beta_raft` |
 | Curriculum | `dataset_path`, `curriculum_switch_steps`, `curriculum_easy_radius` |
 | Episode | `max_steps` |
