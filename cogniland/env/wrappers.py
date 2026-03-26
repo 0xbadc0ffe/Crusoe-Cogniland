@@ -20,13 +20,15 @@ class BatchedIslandEnv:
         config: EnvConfig,
         num_envs: int,
         world_maps: torch.Tensor | None = None,
-        curriculum_easy_radius: int = 40,
+        curriculum_extra_easy_radius: int = 25,
+        curriculum_easy_radius: int = 50,
     ):
         self.config = config
         self.num_envs = num_envs
         self.env = Islands(
             config,
             world_maps=world_maps,
+            curriculum_extra_easy_radius=curriculum_extra_easy_radius,
             curriculum_easy_radius=curriculum_easy_radius,
         )
         self.compiled = self.env.compiled
@@ -42,6 +44,7 @@ class BatchedIslandEnv:
 
     def set_curriculum_stage(self, stage: CurriculumStage) -> None:
         self._curriculum_stage = stage
+        self.env.set_curriculum_stage(stage)
 
     def reset(self, seed: int | None = None) -> dict[str, torch.Tensor]:
         self.state, self.target_pos = self.env.reset(

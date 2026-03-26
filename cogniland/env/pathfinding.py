@@ -64,11 +64,14 @@ def _build_reward_graph(
     wm: np.ndarray,
     thresholds_np: np.ndarray,
     costs_np: np.ndarray,
+    res_rates_np: np.ndarray,      # [num_terrains] signed resource rate (negative = drain)
     is_water: np.ndarray,          # [num_terrains] bool
     beta_raft: float,
 ) -> "csr_matrix":
-    """Build graph with c(s→s') = τ(s') + β_raft × 1_{land→water}.
+    """Build graph with c(s→s') = τ(s') − res_rate(s') + β_raft × 1_{land→water}.
 
+    Edge cost = move_cost − res_rate: draining terrains become more expensive,
+    resource-gaining terrains (forest) become cheaper.
     Used for the Dijkstra cost-to-go progress signal in the reward function.
     """
     from scipy.sparse import csr_matrix
@@ -80,24 +83,27 @@ def _build_reward_graph(
 
     water_mask = is_water[terrain]  # [H, W] bool
 
+    # Combined edge base cost: move_cost − res_rate per terrain
+    combined_np = costs_np - res_rates_np  # [num_terrains]
+
     # Horizontal edges
     r_h, c_h = np.mgrid[0:H, 0:W-1]
     src_h = (r_h * W + c_h).ravel()
     dst_h = (r_h * W + c_h + 1).ravel()
     # Forward: (r,c) → (r,c+1)
-    cost_h_fwd = costs_np[terrain[r_h, c_h + 1]].ravel()
+    cost_h_fwd = combined_np[terrain[r_h, c_h + 1]].ravel()
     raft_h_fwd = (~water_mask[r_h, c_h] & water_mask[r_h, c_h + 1]).ravel().astype(np.float64) * beta_raft
     # Backward: (r,c+1) → (r,c)
-    cost_h_bwd = costs_np[terrain[r_h, c_h]].ravel()
+    cost_h_bwd = combined_np[terrain[r_h, c_h]].ravel()
     raft_h_bwd = (~water_mask[r_h, c_h + 1] & water_mask[r_h, c_h]).ravel().astype(np.float64) * beta_raft
 
     # Vertical edges
     r_v, c_v = np.mgrid[0:H-1, 0:W]
     src_v = (r_v * W + c_v).ravel()
     dst_v = ((r_v + 1) * W + c_v).ravel()
-    cost_v_fwd = costs_np[terrain[r_v + 1, c_v]].ravel()
+    cost_v_fwd = combined_np[terrain[r_v + 1, c_v]].ravel()
     raft_v_fwd = (~water_mask[r_v, c_v] & water_mask[r_v + 1, c_v]).ravel().astype(np.float64) * beta_raft
-    cost_v_bwd = costs_np[terrain[r_v, c_v]].ravel()
+    cost_v_bwd = combined_np[terrain[r_v, c_v]].ravel()
     raft_v_bwd = (~water_mask[r_v + 1, c_v] & water_mask[r_v, c_v]).ravel().astype(np.float64) * beta_raft
 
     all_src  = np.concatenate([src_h, dst_h, src_v, dst_v])
@@ -187,10 +193,10 @@ def _reverse_dijkstra_single(args: tuple) -> np.ndarray:
     """
     from scipy.sparse.csgraph import dijkstra as scipy_dijkstra
 
-    wm_np, thresholds_np, costs_np, is_water_np, beta_raft, target_rc = args
+    wm_np, thresholds_np, costs_np, res_rates_np, is_water_np, beta_raft, target_rc = args
 
     H, W = wm_np.shape
-    graph = _build_reward_graph(wm_np, thresholds_np, costs_np, is_water_np, beta_raft)
+    graph = _build_reward_graph(wm_np, thresholds_np, costs_np, res_rates_np, is_water_np, beta_raft)
 
     tr, tc = int(target_rc[0]), int(target_rc[1])
     target_idx = tr * W + tc
@@ -206,9 +212,12 @@ def batch_reverse_dijkstra(
     is_water: torch.Tensor,         # [num_terrains] bool
     targets: torch.Tensor,          # [B, 2] long
     beta_raft: float,
+    res_rates: torch.Tensor | None = None,  # [num_terrains] signed resource rate
     n_workers: int | None = None,
 ) -> list[np.ndarray]:
     """Parallel reverse Dijkstra: cost-to-go from every cell to each target.
+
+    Edge cost = move_cost − res_rate + β_raft × 1_{land→water}.
 
     Returns list of B arrays, each [H, W] float64.
     """
@@ -218,9 +227,10 @@ def batch_reverse_dijkstra(
     costs_np = terrain_costs.cpu().numpy()
     thresholds_np = terrain_thresholds.cpu().numpy()
     is_water_np = is_water.cpu().numpy()
+    res_rates_np = res_rates.cpu().numpy() if res_rates is not None else np.zeros_like(costs_np)
 
     args = [
-        (world_maps[i].cpu().numpy(), thresholds_np, costs_np, is_water_np, beta_raft,
+        (world_maps[i].cpu().numpy(), thresholds_np, costs_np, res_rates_np, is_water_np, beta_raft,
          (targets[i, 0].item(), targets[i, 1].item()))
         for i in range(B)
     ]

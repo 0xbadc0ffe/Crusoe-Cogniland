@@ -10,66 +10,45 @@
 #SBATCH --output=logs/sweep_%A_%a.log
 #SBATCH --error=logs/sweep_%A_%a.err
 #SBATCH --export=ALL,SRC_DIR=/cluster/raid/home/fwang
-#SBATCH --array=0-11
+#SBATCH --array=0-26
 
 # ── Sweep grid ─────────────────────────────────────────────────────────────────
 #
-#   Each job is one hand-picked config exploring a different axis.
-#   Baseline (job 0) uses default.yaml values as-is.
+#   Full 3×3×3 grid over progress signal, risk penalty, and death penalty.
+#   All other hyperparameters held at default.yaml values.
 #
-#   ID  Description                 Override
-#   --  --------------------------  ----------------------------------------
-#    0  baseline                    (none — default.yaml)
-#    1  higher progress weight      lambda_p=0.08
-#    2  lower progress weight       lambda_p=0.02
-#    3  higher risk penalty         lambda_rho=0.7
-#    4  lower risk penalty          lambda_rho=0.2
-#    5  higher reach bonus          reach_bonus=200
-#    6  lower reach bonus           reach_bonus=100
-#    7  higher time bonus           lambda_t=80
-#    8  higher death penalty        lambda_d=1.5
-#    9  higher raft cost            beta_raft=20
-#   10  higher LR                   learning_rate=1e-3
-#   11  lower LR                    learning_rate=2e-4
+#   Axis            Values                      Baseline
+#   --------------  --------------------------  --------
+#   lambda_p        0.05* | 0.20  | 0.50         0.05
+#   lambda_rho      0.05  | 0.10* | 0.30         0.10
+#   lambda_d        0.00  | 0.50  | 1.00*        1.00
 #
-#   Total: 12 jobs
+#   (* = baseline value)
+#   Total: 3 × 3 × 3 = 27 jobs  (array indices 0–26)
+#
+#   Index mapping (row-major: lambda_p outermost, lambda_d innermost):
+#     lp_idx   = IDX / 9
+#     lrho_idx = (IDX / 3) % 3
+#     ld_idx   = IDX % 3
 #
 # ───────────────────────────────────────────────────────────────────────────────
 
-# Overrides per job (empty string = baseline)
-OVERRIDES=(
-    ""                                                     #  0: baseline
-    "env.reward.lambda_p=0.08"                             #  1: higher progress
-    "env.reward.lambda_p=0.02"                             #  2: lower progress
-    "env.reward.lambda_rho=0.7"                            #  3: higher risk penalty
-    "env.reward.lambda_rho=0.2"                            #  4: lower risk penalty
-    "env.reward.reach_bonus=200"                           #  5: higher reach bonus
-    "env.reward.reach_bonus=100"                           #  6: lower reach bonus
-    "env.reward.lambda_t=80"                               #  7: higher time bonus
-    "env.reward.lambda_d=1.5"                              #  8: higher death penalty
-    "env.reward.beta_raft=20"                              #  9: higher raft cost
-    "models.training.learning_rate=1e-3"                   # 10: higher LR
-    "models.training.learning_rate=2e-4"                   # 11: lower LR
-)
-
-NAMES=(
-    "baseline"
-    "lp_0.08"
-    "lp_0.02"
-    "lrho_0.7"
-    "lrho_0.2"
-    "reach_200"
-    "reach_100"
-    "lt_80"
-    "ld_1.5"
-    "raft_20"
-    "lr_1e-3"
-    "lr_2e-4"
-)
+LP_VALUES=(0.05 0.20 0.50)
+LRHO_VALUES=(0.05 0.10 0.30)
+LD_VALUES=(0.00 0.50 1.00)
 
 IDX=$SLURM_ARRAY_TASK_ID
-OVERRIDE=${OVERRIDES[$IDX]}
-NAME=${NAMES[$IDX]}
+
+LP_IDX=$((IDX / 9))
+LRHO_IDX=$(( (IDX / 3) % 3 ))
+LD_IDX=$((IDX % 3))
+
+LP=${LP_VALUES[$LP_IDX]}
+LRHO=${LRHO_VALUES[$LRHO_IDX]}
+LD=${LD_VALUES[$LD_IDX]}
+
+NAME="lp${LP}_lrho${LRHO}_ld${LD}"
+OVERRIDE="env.reward.lambda_p=${LP} env.reward.lambda_rho=${LRHO} env.reward.lambda_d=${LD}"
 
 # ── Environment ────────────────────────────────────────────────────────────────
 CONDA_ENV="/cluster/raid/home/fwang/.conda/envs/crusoe"
@@ -83,15 +62,23 @@ cd "$PROJECT_DIR"
 echo "Job ID:        $SLURM_JOB_ID (array task $IDX)"
 echo "Node:          $(hostname)"
 echo "Date:          $(date)"
-echo "Config:        $NAME  |  $OVERRIDE"
+echo "Config:        $NAME"
+echo "Overrides:     $OVERRIDE"
+echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+
+# ── GPU sanity check ───────────────────────────────────────────────────────────
+python -c "import torch; assert torch.cuda.is_available(), 'No CUDA'" || {
+    echo "ERROR: GPU not available on $(hostname) — requeue with: scontrol requeue $SLURM_JOB_ID"
+    exit 1
+}
 
 # ── WandB ──────────────────────────────────────────────────────────────────────
 set -a; source "$PROJECT_DIR/.env"; set +a
 
-export WANDB_TAGS="sweep,new_reward_sweep,$NAME"
+export WANDB_TAGS="sweep,reward_sweep,$NAME"
 export WANDB_RUN_NAME="$NAME"
-export WANDB_GROUP="sweep_$(date +%Y%m%d)"
+export WANDB_GROUP="reward_sweep_$(date +%Y%m%d)"
 
 # ── Training ───────────────────────────────────────────────────────────────────
 python train.py \

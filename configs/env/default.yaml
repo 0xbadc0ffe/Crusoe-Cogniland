@@ -53,8 +53,8 @@ terrains:
 # ── Reward shaping ──
 reward:
   reach_bonus: 150.0               # Sparse bonus on reaching target
-  lambda_p: 0.04                   # Progress signal weight (positive Dijkstra alignment only)
-  lambda_rho: 1                    # Risk penalty weight
+  lambda_p: 0.05                   # Progress signal weight (positive Dijkstra alignment only)
+  lambda_rho: 0.1                  # Risk penalty weight
   lambda_t: 40.0                   # Time-efficiency bonus weight at success
   lambda_d: 1.0                    # Death penalty = lambda_d * reach_bonus
-  beta_raft: 10.0                  # Extra cost for land→water transitions in cost-to-go
+  beta_raft: 20.0                  # Extra cost for land→water transitions in cost-to-go
