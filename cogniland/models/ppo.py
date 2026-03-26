@@ -234,7 +234,9 @@ class PPOAgent:
         training_cfg = cfg.models.training
         dataset_cfg = training_cfg.get("dataset", {})
         curriculum_switch_steps = dataset_cfg.get("curriculum_switch_steps", 0)
-        curriculum_easy_radius = dataset_cfg.get("curriculum_easy_radius", 40)
+        curriculum_switch_steps_2 = dataset_cfg.get("curriculum_switch_steps_2", 0)
+        curriculum_extra_easy_radius = dataset_cfg.get("curriculum_extra_easy_radius", 25)
+        curriculum_easy_radius = dataset_cfg.get("curriculum_easy_radius", 50)
 
         # Load map dataset if configured (train/val/test splits)
         dataset: MapDataset | None = None
@@ -255,6 +257,7 @@ class PPOAgent:
             self.env_config,
             num_envs=cfg.models.training.parallel_envs,
             world_maps=dataset.train_maps if dataset else None,
+            curriculum_extra_easy_radius=curriculum_extra_easy_radius,
             curriculum_easy_radius=curriculum_easy_radius,
         )
         optimizer = optim.Adam(model.parameters(), lr=cfg.models.training.learning_rate, eps=1e-5)
@@ -271,8 +274,8 @@ class PPOAgent:
         # Curriculum setup
         curriculum_active = curriculum_switch_steps > 0
         if curriculum_active:
-            env.set_curriculum_stage(CurriculumStage.EASY)
-            print(f"Curriculum: EASY stage until global_step={curriculum_switch_steps}")
+            env.set_curriculum_stage(CurriculumStage.EXTRA_EASY)
+            print(f"Curriculum: EXTRA_EASY stage until global_step={curriculum_switch_steps}, then EASY until {curriculum_switch_steps_2}, then NORMAL")
 
         obs = env.reset(seed=cfg.env.map_generation.seed)
         global_step = 0
@@ -296,6 +299,7 @@ class PPOAgent:
             self.env_config,
             num_envs=max_eval_eps,
             world_maps=dataset.val_maps if dataset else None,
+            curriculum_extra_easy_radius=curriculum_extra_easy_radius,
             curriculum_easy_radius=curriculum_easy_radius,
         )
         self.eval_env.reset(seed=eval_seed)
@@ -329,11 +333,16 @@ class PPOAgent:
             buffer, obs, episode_stats = _collect_rollout(env, model, obs, rollout_steps)
             global_step += num_envs * rollout_steps
 
-            # Curriculum: switch EASY → NORMAL when threshold is reached
-            if curriculum_active and global_step >= curriculum_switch_steps:
-                env.set_curriculum_stage(CurriculumStage.NORMAL)
-                curriculum_active = False
-                print(f"[Update {update}] Curriculum switched to NORMAL (global_step={global_step})")
+            # Curriculum: step through EXTRA_EASY → EASY → NORMAL
+            if curriculum_active:
+                stage = env._curriculum_stage
+                if stage == CurriculumStage.EXTRA_EASY and global_step >= curriculum_switch_steps:
+                    env.set_curriculum_stage(CurriculumStage.EASY)
+                    print(f"[Update {update}] Curriculum switched to EASY (global_step={global_step})")
+                elif stage == CurriculumStage.EASY and curriculum_switch_steps_2 > 0 and global_step >= curriculum_switch_steps_2:
+                    env.set_curriculum_stage(CurriculumStage.NORMAL)
+                    curriculum_active = False
+                    print(f"[Update {update}] Curriculum switched to NORMAL (global_step={global_step})")
 
             # Log episode stats from rollout
             log_rollout_stats(logger, episode_stats, step=update)
@@ -586,7 +595,7 @@ class PPOAgent:
             "train/model/ppo/return_estimation_variance": return_estimation_variance,
         }
 
-    def _run_eval(self, cfg, logger=None, global_step: int = 0, split: str = "val", c_rad: int=40):
+    def _run_eval(self, cfg, logger=None, global_step: int = 0, split: str = "val"):
         """Orchestrator: run deterministic + stochastic eval, merge metrics, log."""
         import matplotlib
         matplotlib.use("Agg")
@@ -606,7 +615,6 @@ class PPOAgent:
                 self.env_config,
                 num_envs=self._max_eval_eps,
                 world_maps=self._test_maps,
-                curriculum_easy_radius=c_rad,
             )
             test_env.reset(seed=self._eval_seed + 1000)
             runner = EvalRunner(test_env, self.env_config, self.device)

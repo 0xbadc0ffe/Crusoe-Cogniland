@@ -9,6 +9,7 @@ swap `torch.*` -> `jnp.*` and these functions become jit-compilable.
 from __future__ import annotations
 
 import functools
+import math
 
 import torch
 
@@ -28,6 +29,7 @@ def env_step(
     config: EnvConfig,
     compiled: CompiledTerrainData,
     cost_to_go_maps: torch.Tensor | None = None,
+    compass_noise_deg: float = 0.0,
 ) -> StepResult:
     """Execute one batched step.  Pure function — no side effects.
 
@@ -52,6 +54,14 @@ def env_step(
     compass_raw = (target_pos - new_state.position).float()           # [B, 2] — points toward target
     compass_euclidean = torch.norm(compass_raw, dim=1, keepdim=True).clamp(min=1e-8)
     compass_unit = compass_raw / compass_euclidean                     # [B, 2]
+    if compass_noise_deg > 0.0:
+        max_rad = compass_noise_deg * math.pi / 180.0
+        theta = (torch.rand(compass_unit.shape[0], device=compass_unit.device) * 2.0 - 1.0) * max_rad
+        cos_t = torch.cos(theta)
+        sin_t = torch.sin(theta)
+        x = compass_unit[:, 0] * cos_t - compass_unit[:, 1] * sin_t
+        y = compass_unit[:, 0] * sin_t + compass_unit[:, 1] * cos_t
+        compass_unit = torch.stack([x, y], dim=1)
     new_state = new_state._replace(compass=compass_unit)
 
     # 4. Terrain level (needed by minimap visibility)
@@ -177,9 +187,12 @@ def compute_reward(
     """Compute shaped reward. Pure function, no side effects.
 
     r_t = λ_p · max(0, π_t)                             # progress: +1 forward, 0 otherwise
-        - λ_ρ ρ_t                                        # risk penalty
-        + 1_reached (r_success + λ_t time*/time)         # success reward
-        - 1_dead    λ_d r_success                        # death penalty
+        − λ_ρ · ρ_t                                      # risk penalty
+        + 1_reached · (r_success + λ_t · time*/time)    # success reward with time bonus
+        − 1_dead    · λ_d · r_success                   # death penalty
+
+    ρ_t = drain_t / (drain_t + res_t + 0.5 · hp_t),  drain_t = max(0, −res_rate_t)
+    time*/time ∈ [0,1]: Dijkstra optimal cost / actual agent cost
     """
     device = alive.device
 

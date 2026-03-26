@@ -138,7 +138,7 @@ def _sample_land_position(
     size = world_map.shape[0]
     wm = world_map.numpy()
     while True:
-        if stage == CurriculumStage.EASY:
+        if stage in (CurriculumStage.EXTRA_EASY, CurriculumStage.EASY):
             r = rng.randint(max(0, center - radius), min(size - 1, center + radius))
             c = rng.randint(max(0, center - radius), min(size - 1, center + radius))
             if (r - center) ** 2 + (c - center) ** 2 > radius * radius:
@@ -189,7 +189,7 @@ def _make_preview(
             ax.scatter([target[1]], [target[0]], c="red", s=60, zorder=5, marker="*",
                        edgecolors="black", linewidths=0.5)
 
-            if stage == CurriculumStage.EASY:
+            if stage in (CurriculumStage.EXTRA_EASY, CurriculumStage.EASY):
                 circle = plt.Circle(
                     (center, center), radius,
                     fill=False, edgecolor="yellow", linewidth=1.5, linestyle="--",
@@ -283,12 +283,12 @@ def main() -> None:
 
     if not args.no_preview and n_train >= 3:
         print("Generating spawn/target preview images ...")
-        for stage in [CurriculumStage.EASY, CurriculumStage.NORMAL]:
+        for stage, radius in [(CurriculumStage.EXTRA_EASY, 25), (CurriculumStage.EASY, 50), (CurriculumStage.NORMAL, 50)]:
             preview_path = out_dir / f"dataset_preview_{stage.value}.png"
             _make_preview(
                 saved_maps["train"], config, stage, preview_path,
                 n_maps=min(3, n_train),
-                easy_radius=50,
+                easy_radius=radius,
             )
 
 
