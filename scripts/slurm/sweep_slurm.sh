@@ -11,10 +11,11 @@
 #SBATCH --error=logs/sweep_%A_%a.err
 #SBATCH --export=ALL,SRC_DIR=/cluster/raid/home/fwang
 #SBATCH --array=0-26
+#SBATCH --exclude=node01,node02,node03
 
 # ── Sweep grid ─────────────────────────────────────────────────────────────────
 #
-#   Full 3×3×3 grid over progress signal, risk penalty, and death penalty.
+#   Full 3x3x3 grid over progress signal, risk penalty, and death penalty.
 #   All other hyperparameters held at default.yaml values.
 #
 #   Axis            Values                      Baseline
@@ -24,7 +25,7 @@
 #   lambda_d        0.00  | 0.50  | 1.00*        1.00
 #
 #   (* = baseline value)
-#   Total: 3 × 3 × 3 = 27 jobs  (array indices 0–26)
+#   Total: 3 x 3 x 3 = 27 jobs  (array indices 0-26)
 #
 #   Index mapping (row-major: lambda_p outermost, lambda_d innermost):
 #     lp_idx   = IDX / 9
@@ -67,9 +68,9 @@ echo "Overrides:     $OVERRIDE"
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
-# ── GPU sanity check ───────────────────────────────────────────────────────────
+# ── GPU sanity check ──────────────────────────────────────────────────────────
 python -c "import torch; assert torch.cuda.is_available(), 'No CUDA'" || {
-    echo "ERROR: GPU not available on $(hostname) — requeue with: scontrol requeue $SLURM_JOB_ID"
+    echo "ERROR: GPU not available on $(hostname) -- aborting job $SLURM_JOB_ID"
     exit 1
 }
 
