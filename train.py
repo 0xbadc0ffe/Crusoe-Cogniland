@@ -13,7 +13,10 @@ from omegaconf import DictConfig
 @hydra.main(version_base=None, config_path="configs", config_name="main")
 def main(cfg: DictConfig) -> None:
     from cogniland.models import build_model
-    model = build_model(cfg)
+    from cogniland.env.types import EnvConfig
+    env_config = EnvConfig.from_hydra(cfg)
+    device = env_config.resolved_device()
+    model = build_model(cfg, env_config, device)
     model.train(cfg)
 
 

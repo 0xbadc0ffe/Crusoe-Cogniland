@@ -105,16 +105,19 @@ def main():
     # Build the model using the historically accurate configuration
     print("Building model architecture from historical config...")
     from cogniland.models import build_model
-    model = build_model(cfg)
-
-    # Load the checkpoint
-    print("Loading checkpoint weights...")
+    from cogniland.env.types import EnvConfig
 
     # Handle device dynamically avoiding missing 'device' attributes
     if getattr(cfg, "device", "cpu") == "auto":
         device_str = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
     else:
         device_str = getattr(cfg, "device", "cpu")
+
+    env_config = EnvConfig.from_hydra(cfg)
+    model = build_model(cfg, env_config, device_str)
+
+    # Load the checkpoint
+    print("Loading checkpoint weights...")
 
     device = torch.device(device_str)
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
