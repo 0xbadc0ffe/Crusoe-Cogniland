@@ -52,13 +52,13 @@ def log_rollout_stats(logger, episode_stats: dict, step: int) -> None:
 
 def _make_run_name(cfg) -> str:
     model = cfg.models.name
-    env_mode = "hard" if cfg.env.get("hard_mode", False) else "easy"
+    env_mode = "sweep_reward"
     return f"{model}_{env_mode}"
 
 
 def _make_group_name(cfg) -> str:
     model = cfg.models.name
-    env_mode = "hard" if cfg.env.get("hard_mode", False) else "easy"
+    env_mode = "sweep_reward"
     lr = cfg.models.training.get("learning_rate", 3e-4)
     lr_str = f"lr{lr:.0e}".replace("-0", "-").replace("+0", "")
     return f"{model}_{env_mode}_{lr_str}"
