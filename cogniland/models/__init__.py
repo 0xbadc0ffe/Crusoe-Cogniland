@@ -1,16 +1,14 @@
-"""Model registry — build_model(cfg) returns a self-contained agent."""
-
 from cogniland.env.types import EnvConfig
+from cogniland.models.ppo import PPOAgent
+from cogniland.models.drc import DRCAgent
 
-
-def build_model(cfg):
-    """Build model from Hydra config. Returns a self-contained agent with .train(cfg)."""
-    env_config = EnvConfig.from_hydra(cfg)
-    device = env_config.resolved_device()
-    name = cfg.models.name
-
-    if name in ("ppo", "ppo_mini"):
-        from cogniland.models.ppo import PPOAgent
+def build_model(cfg, env_config: EnvConfig, device: str):
+    """Factory method to build the agent based on config."""
+    model_name = cfg.models.name
+    
+    if model_name == "ppo":
         return PPOAgent(cfg, env_config, device)
+    elif model_name == "drc":
+        return DRCAgent(cfg, env_config, device)
     else:
-        raise ValueError(f"Unknown model: {name}")
+        raise ValueError(f"Unknown model name: {model_name}")
