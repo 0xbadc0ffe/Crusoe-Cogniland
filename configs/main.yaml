@@ -1,6 +1,6 @@
 defaults:
   - env: default
-  - models: ppo
+  - models: ppo_1m
   - _self_
 
 # Global device setting — "auto" picks CUDA if available

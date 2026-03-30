@@ -72,7 +72,7 @@ export WANDB_GROUP="lambda_p_sweep_$(date +%Y%m%d)"
 
 # ── Training ───────────────────────────────────────────────────────────────────
 python train.py \
-    models=ppo \
+    models=ppo_1m \
     logging.wandb.mode=online \
     $OVERRIDE
 
