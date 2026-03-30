@@ -116,28 +116,25 @@ def render_trajectory(world_map, positions, target, reached_target, env_idx,
     fig, ax = plt.subplots(figsize=(14, 14), dpi=150)
     ax.imshow(rgb, origin="upper", interpolation="nearest")
 
-    # Visit-frequency heatmap overlay
+    # Per-segment visit count: colour each step red→black by revisit count
     visit_counts = np.zeros(wm.shape, dtype=np.float32)
+    pos = np.array(positions)
+    seg_counts = []
     for r, c in positions:
         visit_counts[r, c] += 1
+        seg_counts.append(visit_counts[r, c])
 
-    if visit_counts.max() > 0:
-        norm_visits = visit_counts / visit_counts.max()
-        overlay = np.zeros((*wm.shape, 4), dtype=np.float32)
-        overlay[..., 0] = 1.0                    # R: full red
-        overlay[..., 1] = 1.0 - norm_visits      # G: yellow (high) → red (low)
-        overlay[..., 2] = 0.0                    # B: 0
-        overlay[..., 3] = norm_visits * 0.75     # A: transparent where unvisited
-        ax.imshow(overlay, origin="upper", interpolation="nearest")
-
-    pos = np.array(positions)
-    ax.plot(pos[:, 1], pos[:, 0], "white", linewidth=3, alpha=0.6)
-    ax.plot(pos[:, 1], pos[:, 0], "r-", linewidth=1.5, alpha=0.9)
+    max_count = 10.0  # cap: 1 visit = red, ≥10 = black
+    for i in range(len(pos) - 1):
+        t = min(seg_counts[i + 1], max_count) / max_count  # 0→1
+        color = (1.0 - t, 0.0, 0.0)  # red → black
+        ax.plot(pos[i:i+2, 1], pos[i:i+2, 0], color=color,
+                linewidth=0.8, alpha=0.9, solid_capstyle="round")
 
     ax.scatter(pos[0, 1], pos[0, 0], c="lime", s=120, marker="o",
                edgecolors="k", linewidth=1.5, zorder=5, label="Start")
     ax.scatter(pos[-1, 1], pos[-1, 0], c="red", s=120, marker="X",
-               edgecolors="k", linewidth=1.5, zorder=5, label="End")
+               edgecolors="k", linewidth=1.5, zorder=5, label="End", alpha=0.5)
     tgt = target.cpu().numpy()
     ax.scatter(tgt[1], tgt[0], c="gold", s=160, marker="*",
                edgecolors="k", linewidth=1.5, zorder=5, label="Target")

@@ -105,14 +105,18 @@ def maps_to_thumbnails(maps: torch.Tensor, compiled, size: int) -> list[pygame.S
 # Shared drawing helpers
 # ---------------------------------------------------------------------------
 
-def draw_star(surface, cx, cy, r_outer, r_inner, color=(255, 215, 0), n_points=5):
+def draw_star(surface, cx, cy, r_outer, r_inner=None, color=(255, 215, 0),
+              outline=(0, 0, 0), n_points=5):
+    """Draw a matplotlib-style 5-pointed star (inner radius ≈ 0.38 × outer)."""
+    if r_inner is None:
+        r_inner = r_outer * 0.38
     pts = []
     for i in range(2 * n_points):
         r = r_outer if i % 2 == 0 else r_inner
         angle = math.pi * i / n_points - math.pi / 2
         pts.append((cx + r * math.cos(angle), cy + r * math.sin(angle)))
     pygame.draw.polygon(surface, color, pts)
-    pygame.draw.polygon(surface, (0, 0, 0), pts, 1)
+    pygame.draw.polygon(surface, outline, pts, 1)
 
 
 def terrain_color(level, compiled):
@@ -662,8 +666,19 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=
         mm_x, mm_y = MAP_X + MAP_DISPLAY_SIZE + 30, MAP_Y
         screen.blit(font_small.render("Agent view  (▲ = target)", True, COLORS["panel_fg"]),
                     (mm_x, mm_y - 16))
-        screen.blit(heightmap_to_surface(state.minimap[0, 0], MINIMAP_DISPLAY_SIZE, _compiled),
-                    (mm_x, mm_y))
+        mm_surf = heightmap_to_surface(state.minimap[0, 0], MINIMAP_DISPLAY_SIZE, _compiled)
+
+        # Show target as a gold pixel on the minimap when within visibility
+        target_ch = state.minimap[0, 1]  # target indicator channel
+        if target_ch.any():
+            ty, tx = (target_ch > 0).nonzero(as_tuple=False)[0].tolist()
+            mm_diameter = target_ch.shape[0]
+            mm_scale = MINIMAP_DISPLAY_SIZE / mm_diameter
+            px = int(tx * mm_scale + mm_scale / 2)
+            py = int(ty * mm_scale + mm_scale / 2)
+            mm_surf.set_at((px, py), (255, 215, 0))
+
+        screen.blit(mm_surf, (mm_x, mm_y))
         cx_mm, cy_mm = mm_x + MINIMAP_DISPLAY_SIZE // 2, mm_y + MINIMAP_DISPLAY_SIZE // 2
         pygame.draw.circle(screen, COLORS["player"], (cx_mm, cy_mm), 3)
 
@@ -844,6 +859,8 @@ class HumanDemo:
         self.moves_count = 0
         self._risk_sum   = 0.0
         self._risk_count = 0
+        self._hp_history  = [self.state.hp[0].item()]
+        self._res_history = [self.state.resources[0].item()]
 
     def _update_seen(self):
         vis = self.state.minimap[0, 2].numpy()
@@ -870,6 +887,8 @@ class HumanDemo:
         result = self.env.step(self.state, action.to(self.env._device), self.target_pos)
         self.state = result.state
         self.moves_count += 1
+        self._hp_history.append(self.state.hp[0].item())
+        self._res_history.append(self.state.resources[0].item())
         self._update_seen()
 
         if not result.info["alive"][0]:
@@ -903,6 +922,17 @@ class HumanDemo:
         mm_x, mm_y = self.MAP_DISPLAY + 30, 30
         surf = heightmap_to_surface(self.state.minimap[0, 0],
                                      self.MINIMAP_SIZE, self._compiled)
+
+        # Show target as a gold pixel on the minimap when within visibility
+        target_ch = self.state.minimap[0, 1]
+        if target_ch.any():
+            ty, tx = (target_ch > 0).nonzero(as_tuple=False)[0].tolist()
+            mm_diameter = target_ch.shape[0]
+            mm_scale = self.MINIMAP_SIZE / mm_diameter
+            px = int(tx * mm_scale + mm_scale / 2)
+            py = int(ty * mm_scale + mm_scale / 2)
+            surf.set_at((px, py), (255, 215, 0))
+
         mm_rect = pygame.Rect(mm_x, mm_y, self.MINIMAP_SIZE, self.MINIMAP_SIZE)
         self.screen.blit(surf, mm_rect.topleft)
 
@@ -956,9 +986,48 @@ class HumanDemo:
                 self.screen.blit(font.render(text, True, color), (ui_x, ui_y))
             ui_y += 26 if font == self.font_medium else 20
 
+    def _draw_hp_res_plot(self, x, y, w, h):
+        """Draw HP + Resources combined real-time plot (matches AI agent panel)."""
+        font_tiny = pygame.font.Font(None, 18)
+        combined = [hp + res for hp, res in zip(self._hp_history, self._res_history)]
+
+        plot_surf = pygame.Surface((w, h))
+        plot_surf.fill((15, 15, 25))
+        pygame.draw.line(plot_surf, COLORS["gray"], (0, h - 1), (w, h - 1), 1)
+        pygame.draw.line(plot_surf, COLORS["gray"], (0, 0), (0, h - 1), 1)
+
+        # Dotted line at y = 100
+        y100 = h - 1 - int(100 / 200 * (h - 2))
+        for dx in range(0, w, 8):
+            pygame.draw.line(plot_surf, (200, 190, 60),
+                             (dx, y100), (min(dx + 4, w - 1), y100), 1)
+
+        n_steps = max(len(combined) - 1, 1)
+        def _px(step): return int(step / n_steps * (w - 1))
+        def _py(val):  return h - 1 - int(min(max(val, 0), 200) / 200 * (h - 2))
+
+        pts = [(_px(i), _py(v)) for i, v in enumerate(combined)]
+        if len(pts) >= 2:
+            pygame.draw.lines(plot_surf, (70, 200, 120), False, pts, 2)
+
+        for yval, label in [(200, "200"), (100, "100"), (0, "0")]:
+            plot_surf.blit(font_tiny.render(label, True, COLORS["gray"]),
+                           (2, _py(yval) - 7))
+
+        self.screen.blit(self.font_small.render("HP + Resources", True, COLORS["black"]),
+                         (x, y))
+        self.screen.blit(plot_surf, (x, y + 18))
+
     def _draw_right_panel(self):
         right_x = self.MAP_DISPLAY + self.MINIMAP_SIZE + 55
         y = 10
+
+        # HP + Resources plot
+        plot_w = WINDOW_W - right_x - 8
+        plot_h = 150
+        self._draw_hp_res_plot(right_x, y, plot_w, plot_h)
+        y += plot_h + 30
+
         self.screen.blit(self.font_medium.render("Controls", True, COLORS["black"]),
                          (right_x, y)); y += 26
         for line in ["WASD / Arrows: Move", "Space: Stay", "R: New game", "ESC: Menu"]:

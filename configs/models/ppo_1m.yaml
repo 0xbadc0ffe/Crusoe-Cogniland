@@ -1,0 +1,48 @@
+name: ppo
+
+# ── Network architecture (~1.04M parameters) ──
+scalar_dim: 5            # Number of scalar inputs (compass_x, compass_y, terrain_idx, resources, hp)
+minimap_channels: 3      # Minimap input channels (ch0 = heightmap, ch1 = target indicator, ch2 = visibility mask)
+cnn_channels: 64         # Output channels of second/third CNN conv layer (first = cnn_channels // 2)  → cnn_out = 64×5×5 = 1600
+cnn_out_spatial: 5       # AdaptiveMaxPool2d output size → cnn_out = cnn_channels × cnn_out_spatial²
+scalar_hidden: 128       # Scalar MLP hidden width
+hidden_dim: 448          # Trunk hidden layer width (both layers)
+action_dim: 5            # Output actions (up, down, right, left, stay)
+
+training:
+
+  # ── Data pipeline ──
+  dataset:
+    train_path: "data/train_seed42_n128.pt"
+    val_path: "data/val_seed42_n16.pt"
+    test_path: "data/test_seed42_n16.pt"
+    curriculum_switch_steps: 6_000_000   # 0 = disabled; switch EXTRA_EASY → EASY at this global_step
+    curriculum_switch_steps_2: 16_000_000 # switch EASY → NORMAL at this global_step
+    curriculum_extra_easy_radius: 25     # radius (cells) around map center for EXTRA_EASY spawn/target
+    curriculum_easy_radius: 50           # radius (cells) around map center for EASY spawn/target
+
+  # ── Rollout collection ──
+  parallel_envs: 320             # How many environments run in parallel during rollout
+  moves_per_rollout: 256         # How many moves each env makes before the model learns
+  total_env_moves: 80_000_000    # Total moves budget across all envs for the entire training
+
+  # ── PPO optimisation ──
+  epochs_per_update: 4          # How many times the model re-studies each rollout's data
+  minibatch_size: 4096          # Transitions per gradient step
+  learning_rate: 5e-4           # Adam optimiser initial learning rate
+  anneal_lr: true               # Linearly decay LR to 0 over training
+
+  # ── Advantage estimation (GAE) ──
+  discount_factor: 0.999         # γ — how much future rewards matter (1.0 = greedy long-term)
+  gae_lambda: 0.95              # λ — bias-variance tradeoff in advantage estimates
+
+  # ── Loss coefficients ──
+  policy_clip_range: 0.2        # ε — max allowed policy ratio change per update
+  value_loss_weight: 0.5        # Weight of critic loss in the total loss
+  entropy_bonus_weight: 0.01    # Weight of entropy bonus (promotes exploration)
+  max_grad_norm: 0.5            # Gradient clipping threshold for stability
+
+  # ── Evaluation & checkpointing ──
+  eval_every_n_updates: 500      # Run evaluation every N training updates
+  eval_episodes: 16             # Number of full episodes per evaluation
+  checkpoint_every_n_updates: 0 # Save periodic checkpoint every N updates; 0 = best-only
