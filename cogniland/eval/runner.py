@@ -13,13 +13,13 @@ from typing import Callable
 import numpy as np
 import torch
 
-from cogniland.env.pathfinding import batch_dijkstra_from_sources
+from cogniland.env.pathfinding import batch_dijkstra_from_sources, reconstruct_dijkstra_path
 from cogniland.env.types import EnvConfig
 from cogniland.env.wrappers import BatchedIslandEnv
 from cogniland.eval.metrics import (
     compute_danger_fraction,
-    compute_directness,
     compute_exploration,
+    compute_path_adherence,
     compute_risk_exposure,
     compute_terrain_visit_fractions,
 )
@@ -102,7 +102,23 @@ class EvalRunner:
             terrain_thresholds=self._compiled.thresholds.cpu(),
         )  # list of n_eps arrays [H, W]
 
-        # No dijkstra_costs needed (path_efficiency removed; directness uses spawn→final)
+        # Reconstruct Dijkstra paths and build dilated corridor masks
+        CORRIDOR_RADIUS = 4
+        dijkstra_corridor = torch.zeros(n_episodes, H, W, dtype=torch.bool, device=device)
+        for i in range(n_episodes):
+            tgt = (int(initial_targets[i, 0].item()), int(initial_targets[i, 1].item()))
+            src = (int(initial_spawns[i, 0].item()), int(initial_spawns[i, 1].item()))
+            path_cells = reconstruct_dijkstra_path(dist_maps[i], src, tgt)
+            # Dilate: mark all cells within Manhattan (L1) radius of any path cell
+            for r, c in path_cells:
+                for dr in range(-CORRIDOR_RADIUS, CORRIDOR_RADIUS + 1):
+                    dc_max = CORRIDOR_RADIUS - abs(dr)
+                    nr = r + dr
+                    if nr < 0 or nr >= H:
+                        continue
+                    c_lo = max(0, c - dc_max)
+                    c_hi = min(W, c + dc_max + 1)
+                    dijkstra_corridor[i, nr, c_lo:c_hi] = True
 
         # --------------- Tracking tensors ---------------
         total_rewards = torch.zeros(n_episodes, device=device)
@@ -128,6 +144,15 @@ class EvalRunner:
 
         # Exploration: bool map of observed cells (updated via minimap visibility mask)
         observed = torch.zeros(n_episodes, H, W, dtype=torch.bool, device=device)
+
+        # Path adherence: unique cells visited by the agent
+        visited_cells = torch.zeros(n_episodes, H, W, dtype=torch.bool, device=device)
+        # Mark spawn positions
+        visited_cells[
+            torch.arange(n_episodes, device=device),
+            initial_spawns[:, 0],
+            initial_spawns[:, 1],
+        ] = True
 
         # Minimap offset grid for mapping patch coords to world coords [1, D, D]
         max_ray = env_config.minimap_max_ray
@@ -207,6 +232,13 @@ class EvalRunner:
             running_idx = torch.where(still_running)[0]
             terrain_visits[running_idx, pre_move_terrain[running_idx].long()] += 1
 
+            # Track unique cells visited by the agent (for path adherence)
+            post_pos = eval_env.state.position  # [N, 2]
+            visit_mask = still_running & ~just_finished
+            if visit_mask.any():
+                vi = torch.where(visit_mask)[0]
+                visited_cells[vi, post_pos[vi, 0], post_pos[vi, 1]] = True
+
             # Risk exposure: drain / (resources + hp / 2)
             drain_t = (-terrain_res_rates[eval_env.state.terrain_idx.long()]).clamp(min=0)
             risk_t = drain_t / (current_resources + current_hp / 2.0 + 1e-6)
@@ -233,8 +265,11 @@ class EvalRunner:
                     final_cost[i] = pre_step_cost[i]  # 1-step approximation (negligible error)
                     if newly_reached[i]:
                         final_positions[i] = initial_targets[i]
+                        # Mark target cell as visited
+                        visited_cells[i, initial_targets[i, 0], initial_targets[i, 1]] = True
                     else:
                         final_positions[i] = pre_step_pos[i]
+                        visited_cells[i, pre_step_pos[i, 0], pre_step_pos[i, 1]] = True
                 final_hp[new_finalized] = current_hp[new_finalized]
 
             is_finalized = is_finalized | new_finalized
@@ -266,7 +301,7 @@ class EvalRunner:
         resource_mean = resource_sum / resource_count.clamp(min=1)
         hp_mean = hp_sum / hp_count.clamp(min=1)
 
-        directness = compute_directness(initial_spawns, final_positions, total_moves)
+        path_adherence = compute_path_adherence(visited_cells, dijkstra_corridor)
         exploration = compute_exploration(observed)
         terrain_visit_frac = compute_terrain_visit_fractions(terrain_visits)
         risk_exposure = compute_risk_exposure(risk_sum, risk_count)
@@ -291,7 +326,7 @@ class EvalRunner:
                 "final_resources": final_resources[i].item(),
                 "mean_resources": resource_mean[i].item(),
                 "max_resources": max_resources[i].item(),
-                "directness": directness[i].item(),
+                "path_adherence": path_adherence[i].item(),
                 "risk_exposure": risk_exposure[i].item(),
                 "exploration": exploration[i].item(),
                 "terrain_cost": final_cost[i].item(),

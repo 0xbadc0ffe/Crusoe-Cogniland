@@ -239,3 +239,40 @@ def batch_reverse_dijkstra(
         dist_maps = list(pool.map(_reverse_dijkstra_single, args))
 
     return dist_maps
+
+
+# ---------------------------------------------------------------------------
+# Dijkstra path reconstruction (for eval metrics)
+# ---------------------------------------------------------------------------
+
+def reconstruct_dijkstra_path(
+    dist_map: np.ndarray,       # [H, W] distance from source to every cell
+    source: tuple[int, int],    # (row, col) start
+    target: tuple[int, int],    # (row, col) goal
+) -> set[tuple[int, int]]:
+    """Trace the shortest path from source to target using a forward distance map.
+
+    Greedy backtrack from target: at each cell, step to the 4-connected
+    neighbor with the smallest dist_from_source value.  Returns the set of
+    (row, col) cells on the path (including source and target).
+    """
+    H, W = dist_map.shape
+    DELTAS = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
+    path: set[tuple[int, int]] = set()
+    r, c = target
+    path.add((r, c))
+
+    while (r, c) != source:
+        best_d, best_rc = float("inf"), (r, c)
+        for dr, dc in DELTAS:
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < H and 0 <= nc < W and dist_map[nr, nc] < best_d:
+                best_d = dist_map[nr, nc]
+                best_rc = (nr, nc)
+        if best_rc == (r, c):
+            break  # unreachable — shouldn't happen with valid maps
+        r, c = best_rc
+        path.add((r, c))
+
+    return path

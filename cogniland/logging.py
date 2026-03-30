@@ -81,7 +81,7 @@ def _make_run_config(cfg) -> dict:
         # ── Reward shaping ────────────────────────────────────────────────
         "reward/reach_bonus":  rw.get("reach_bonus"),
         "reward/lambda_p":     rw.get("lambda_p", env.get("lambda_p")),
-        "reward/lambda_rho":   rw.get("lambda_rho"),
+        "reward/lambda_s":     rw.get("lambda_s"),
         "reward/lambda_t":     rw.get("lambda_t"),
         "reward/lambda_d":     rw.get("lambda_d"),
         "reward/beta_raft":    rw.get("beta_raft"),
@@ -137,7 +137,7 @@ _TEST_SUMMARY_METRICS: list[tuple[str, bool]] = [
     ("success_rate",   True),
     ("return",         False),
     ("episode_length", False),
-    ("directness",     False),
+    ("path_adherence",     False),
     ("exploration",    False),
     ("risk_exposure",  False),
     ("final_hp",       False),
@@ -176,7 +176,7 @@ class WandBLogger:
             self._run.summary.update({
                 "test_det/env/success_rate":      None,
                 "test_det/env/return_mean":       None,
-                "test_det/env/directness_mean":   None,
+                "test_det/env/path_adherence_mean": None,
                 "test_det/env/exploration_mean":  None,
                 "test_det/env/risk_exposure_mean":None,
             })
