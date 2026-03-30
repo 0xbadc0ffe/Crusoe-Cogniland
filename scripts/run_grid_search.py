@@ -94,14 +94,14 @@ def create_wandb_report(project: str, entity: str, group_name: str):
             runsets=[runset],
             panels=[
                 wr.ScatterPlot(
-                    title="Directness vs Return",
-                    x="test_det/env/directness_mean",
+                    title="Path Adherence vs Return",
+                    x="test_det/env/path_adherence_mean",
                     y="test_det/env/return_mean",
                 ),
                 wr.ScatterPlot(
-                    title="Risk Exposure vs Directness",
+                    title="Risk Exposure vs Path Adherence",
                     x="test_det/env/risk_exposure_mean",
-                    y="test_det/env/directness_mean",
+                    y="test_det/env/path_adherence_mean",
                 ),
                 wr.ScatterPlot(
                     title="Danger Fraction vs Exploration",

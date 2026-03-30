@@ -10,21 +10,20 @@ import numpy as np
 import torch
 
 
-def compute_directness(
-    initial_spawns: torch.Tensor,    # [N, 2] spawn positions
-    final_positions: torch.Tensor,   # [N, 2] agent final positions
-    total_moves: torch.Tensor,       # [N] number of steps taken
+def compute_path_adherence(
+    visited_cells: torch.Tensor,     # [N, H, W] bool — unique cells visited by agent
+    dijkstra_corridor: torch.Tensor, # [N, H, W] bool — dilated Dijkstra path
 ) -> torch.Tensor:
-    """D = manhattan(spawn, final) / n_steps.
+    """Fraction of agent's unique visited cells inside the Dijkstra corridor.
 
-    Measures how directly the agent moved toward its final position,
-    independently of terrain costs.  ~1 = nearly straight path,
-    lower values = more detours.
+    A = |C_agent ∩ D_r(C_dijkstra)| / |C_agent|
 
-    Range: (0, 1].
+    where D_r is a dilation of radius r around the optimal path cells.
+    Range: [0, 1].  1 = agent stayed within the corridor, lower = more rerouting.
     """
-    manhattan = (initial_spawns - final_positions).abs().sum(dim=1).float()
-    return (manhattan / total_moves.clamp(min=1)).clamp(max=1.0)
+    overlap = (visited_cells & dijkstra_corridor).sum(dim=(1, 2)).float()
+    agent_total = visited_cells.sum(dim=(1, 2)).float().clamp(min=1)
+    return overlap / agent_total
 
 
 def compute_risk_exposure(

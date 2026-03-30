@@ -64,8 +64,10 @@ def _disconnect_forest(
     """Return a modified heightmap where parts of the forest are erased.
 
     Forest tiles whose heightmap value < forest_threshold and where
-    blob noise < blob_threshold are set to (grassland_threshold - epsilon),
-    making them classify as grassland after terrain quantisation.
+    blob noise < blob_threshold are linearly remapped from the forest band
+    [grassland_thr, forest_thr) into [0.20, grassland_thr), preserving the
+    simplex-noise structure so the observable heightmap stays spatially
+    continuous with surrounding terrain.
     """
     h = hm.numpy().copy()
     size = h.shape[0]
@@ -78,8 +80,12 @@ def _disconnect_forest(
     noise = _blob_noise(size, blob_sigma, seed)
     erase = target & (noise < blob_threshold)
 
-    grassland_upper = float(thresholds[grassland_idx])
-    h[erase] = grassland_upper - 1e-4
+    grassland_upper = float(thresholds[grassland_idx])   # 0.25
+    forest_upper = float(thresholds[forest_idx])         # 0.60
+    remap_lower = 0.20
+    forest_span = forest_upper - grassland_upper         # 0.35
+    remap_span = grassland_upper - remap_lower           # 0.05
+    h[erase] = remap_lower + (h[erase] - grassland_upper) / forest_span * remap_span
 
     return torch.from_numpy(h)
 

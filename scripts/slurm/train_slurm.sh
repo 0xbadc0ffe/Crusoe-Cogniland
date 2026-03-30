@@ -25,6 +25,13 @@ echo "Node:     $(hostname)"
 echo "Date:     $(date)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
+# ── GPU sanity check ──────────────────────────────────────────────────────────
+python -c "import torch; assert torch.cuda.is_available(), 'No CUDA'" || {
+    echo "ERROR: GPU not available on $(hostname) — requeueing job $SLURM_JOB_ID"
+    scontrol requeue "$SLURM_JOB_ID"
+    exit 1
+}
+
 # ── WandB (optional: set to disabled for a dry run) ──────────────────────────
 set -a; source "$PROJECT_DIR/.env"; set +a   # load .env (exports WANDB_API_KEY etc.)
 # export WANDB_MODE=disabled                  # uncomment to disable wandb
