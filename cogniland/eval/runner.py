@@ -94,13 +94,9 @@ class EvalRunner:
         initial_spawns = eval_env.state.position.clone()   # [n_eps, 2]
         initial_targets = eval_env.target_pos.clone()      # [n_eps, 2]
 
-        # Run Dijkstra from each spawn — one call per episode, returns full distance map.
-        # Distance to target AND to final position are both read from dist_maps after the loop.
-        per_env_maps = eval_env.env.world_maps[eval_env.env._env_map_idx]  # [n_eps, H, W]
-        dist_maps = batch_dijkstra_from_sources(
-            per_env_maps.cpu(), self._compiled.move_costs.cpu(), initial_spawns.cpu(),
-            terrain_thresholds=self._compiled.thresholds.cpu(),
-        )  # list of n_eps arrays [H, W]
+        # Reuse forward Dijkstra maps already computed by Islands.reset(),
+        # avoiding a redundant batch_dijkstra_from_sources call.
+        dist_maps = eval_env.env._fwd_dist_maps  # list of n_eps arrays [H, W]
 
         # Reconstruct Dijkstra paths and build dilated corridor masks
         CORRIDOR_RADIUS = 4

@@ -424,29 +424,34 @@ def compute_minimap_batch(
     diameter = 2 * max_ray + 1
     device = positions.device
 
-    maps = torch.zeros(B, 3, diameter, diameter, device=device)
-    patches = torch.zeros(B, diameter, diameter, device=device)
+    # 1. Vectorized patch extraction via padding + unfold-style gather
+    #    Pad the world map(s) by max_ray on each side so every position can
+    #    be gathered without boundary checks.
+    if per_env:
+        # [B, H, W] → [B, H+2*max_ray, W+2*max_ray]
+        padded = torch.nn.functional.pad(world_map, (max_ray, max_ray, max_ray, max_ray), value=0.0)
+    else:
+        # [H, W] → expand to [B, H+2*max_ray, W+2*max_ray]
+        padded = torch.nn.functional.pad(world_map, (max_ray, max_ray, max_ray, max_ray), value=0.0)
+        padded = padded.unsqueeze(0).expand(B, -1, -1)
 
-    # 1. Slice out patches sequentially
-    for b in range(B):
-        wm = world_map[b] if per_env else world_map  # [H, W]
-        cy, cx = positions[b, 0].item(), positions[b, 1].item()
+    # Position in padded coordinates (original pos + max_ray is the center)
+    # Top-left corner of the diameter×diameter patch = original position (no offset needed
+    # because padding shifted everything by max_ray).
+    cy = positions[:, 0]  # [B]
+    cx = positions[:, 1]  # [B]
 
-        y0, y1 = cy - max_ray, cy + max_ray + 1
-        x0, x1 = cx - max_ray, cx + max_ray + 1
+    # Build gather indices: for each batch element, a diameter×diameter grid of row/col offsets
+    offsets = torch.arange(diameter, device=device)  # [D]
+    # Row indices: cy[b] + offsets[i] for each b,i  → [B, D, 1] + [1, D, 1] broadcast
+    row_idx = (cy.unsqueeze(1) + offsets.unsqueeze(0)).unsqueeze(2).expand(B, diameter, diameter)  # [B, D, D]
+    col_idx = (cx.unsqueeze(1) + offsets.unsqueeze(0)).unsqueeze(1).expand(B, diameter, diameter)  # [B, D, D]
 
-        sy0 = max(y0, 0)
-        sy1 = min(y1, size)
-        sx0 = max(x0, 0)
-        sx1 = min(x1, size)
-
-        dy0 = sy0 - y0
-        dy1 = dy0 + (sy1 - sy0)
-        dx0 = sx0 - x0
-        dx1 = dx0 + (sx1 - sx0)
-
-        if sy0 < sy1 and sx0 < sx1:
-            patches[b, dy0:dy1, dx0:dx1] = wm[sy0:sy1, sx0:sx1]
+    # Flatten spatial dims for gather, then reshape back
+    padded_W = size + 2 * max_ray
+    flat_idx = row_idx * padded_W + col_idx  # [B, D, D]
+    padded_flat = padded.reshape(B, -1)  # [B, H_pad * W_pad]
+    patches = torch.gather(padded_flat, 1, flat_idx.reshape(B, -1)).reshape(B, diameter, diameter)
 
     # Pre-compute distance grid from center
     coords = torch.arange(diameter, device=device).float() - max_ray
@@ -464,24 +469,37 @@ def compute_minimap_batch(
     else:
         final_masks = dist_masks
 
-    # Build target indicator channel
+    # 2. Vectorized target indicator (3×3 block around target if within patch)
     target_mask = torch.zeros(B, diameter, diameter, device=device)
     if target_pos is not None:
-        for b in range(B):
-            cy, cx = positions[b, 0].item(), positions[b, 1].item()
-            ty, tx = target_pos[b, 0].item(), target_pos[b, 1].item()
-            # Offset of target relative to patch top-left corner
-            patch_y = int(ty - cy + max_ray)
-            patch_x = int(tx - cx + max_ray)
-            if 0 <= patch_y < diameter and 0 <= patch_x < diameter:
-                # Draw a 3x3 block to prevent the signal from fading during CNN Pooling
-                y_start = max(0, patch_y - 1)
-                y_end   = min(diameter, patch_y + 2)
-                x_start = max(0, patch_x - 1)
-                x_end   = min(diameter, patch_x + 2)
-                target_mask[b, y_start:y_end, x_start:x_end] = 1.0
+        # Offset of target relative to patch top-left corner
+        patch_y = target_pos[:, 0] - cy + max_ray  # [B]
+        patch_x = target_pos[:, 1] - cx + max_ray  # [B]
+
+        # Which envs have the target within the patch?
+        in_view = (patch_y >= 0) & (patch_y < diameter) & (patch_x >= 0) & (patch_x < diameter)
+
+        if in_view.any():
+            # Build a 3×3 block around each visible target using scatter
+            dy_offsets = torch.tensor([-1, -1, -1, 0, 0, 0, 1, 1, 1], device=device)
+            dx_offsets = torch.tensor([-1, 0, 1, -1, 0, 1, -1, 0, 1], device=device)
+
+            # Indices of envs with visible target
+            view_idx = in_view.nonzero(as_tuple=True)[0]  # [V]
+            vy = patch_y[view_idx].unsqueeze(1) + dy_offsets.unsqueeze(0)  # [V, 9]
+            vx = patch_x[view_idx].unsqueeze(1) + dx_offsets.unsqueeze(0)  # [V, 9]
+
+            # Clamp to patch bounds
+            vy = vy.clamp(0, diameter - 1).long()
+            vx = vx.clamp(0, diameter - 1).long()
+
+            # Scatter 1.0 into target_mask
+            # Expand batch indices: [V, 9]
+            bi = view_idx.unsqueeze(1).expand_as(vy)
+            target_mask[bi, vy, vx] = 1.0
 
     # Combine
+    maps = torch.zeros(B, 3, diameter, diameter, device=device)
     maps[:, 0] = patches * final_masks
     maps[:, 1] = target_mask * final_masks  # target indicator, gated by visibility
     maps[:, 2] = final_masks

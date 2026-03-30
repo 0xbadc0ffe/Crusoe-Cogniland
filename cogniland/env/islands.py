@@ -258,6 +258,7 @@ class Islands:
             per_env_maps.cpu(), self._compiled.move_costs.cpu(), spawn_pos.cpu(),
             terrain_thresholds=self._compiled.thresholds.cpu(),
         )
+        self._fwd_dist_maps = fwd_dist_maps  # cache for EvalRunner reuse
         dijkstra_cost = torch.tensor([
             fwd_dist_maps[i][target_pos[i, 0].item(), target_pos[i, 1].item()]
             for i in range(batch_size)
