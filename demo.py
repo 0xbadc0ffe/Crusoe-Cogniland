@@ -127,11 +127,14 @@ def terrain_color(level, compiled):
     return COLORS["white"]
 
 
-def heightmap_to_surface(world_map, display_size, compiled):
+def heightmap_to_surface(world_map, display_size, compiled, vis_mask=None):
     """Render a 2-D heightmap tensor → scaled pygame Surface (slow path for small surfaces)."""
     H, W = world_map.shape[:2]
     wm_np   = world_map.numpy() if world_map.dim() == 2 else world_map[..., 0].numpy()
     rgb     = _fast_colorize(wm_np, compiled)
+    if vis_mask is not None:
+        mask_np = vis_mask.numpy() if hasattr(vis_mask, 'numpy') else vis_mask
+        rgb[mask_np < 0.5] = 0
     surf    = pygame.Surface((W, H))
     pygame.surfarray.blit_array(surf, rgb.transpose(1, 0, 2))
     return pygame.transform.scale(surf, (display_size, display_size))
@@ -666,21 +669,22 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=
         mm_x, mm_y = MAP_X + MAP_DISPLAY_SIZE + 30, MAP_Y
         screen.blit(font_small.render("Agent view  (▲ = target)", True, COLORS["panel_fg"]),
                     (mm_x, mm_y - 16))
-        mm_surf = heightmap_to_surface(state.minimap[0, 0], MINIMAP_DISPLAY_SIZE, _compiled)
+        mm_surf = heightmap_to_surface(state.minimap[0, 0], MINIMAP_DISPLAY_SIZE, _compiled,
+                                       vis_mask=state.minimap[0, 2])
 
-        # Show target as a gold pixel on the minimap when within visibility
+        screen.blit(mm_surf, (mm_x, mm_y))
+        cx_mm, cy_mm = mm_x + MINIMAP_DISPLAY_SIZE // 2, mm_y + MINIMAP_DISPLAY_SIZE // 2
+        pygame.draw.circle(screen, COLORS["player"], (cx_mm, cy_mm), 3)
+
+        # Show target as a star on the minimap when within visibility
         target_ch = state.minimap[0, 1]  # target indicator channel
         if target_ch.any():
             ty, tx = (target_ch > 0).nonzero(as_tuple=False)[0].tolist()
             mm_diameter = target_ch.shape[0]
             mm_scale = MINIMAP_DISPLAY_SIZE / mm_diameter
-            px = int(tx * mm_scale + mm_scale / 2)
-            py = int(ty * mm_scale + mm_scale / 2)
-            mm_surf.set_at((px, py), (255, 215, 0))
-
-        screen.blit(mm_surf, (mm_x, mm_y))
-        cx_mm, cy_mm = mm_x + MINIMAP_DISPLAY_SIZE // 2, mm_y + MINIMAP_DISPLAY_SIZE // 2
-        pygame.draw.circle(screen, COLORS["player"], (cx_mm, cy_mm), 3)
+            px = int(tx * mm_scale + mm_scale / 2) + mm_x
+            py = int(ty * mm_scale + mm_scale / 2) + mm_y
+            draw_star(screen, px, py, r_outer=5, r_inner=2)
 
         compass = state.compass[0]
         dyd, dxd = float(compass[0]), float(compass[1])
@@ -921,17 +925,8 @@ class HumanDemo:
     def _draw_minimap(self):
         mm_x, mm_y = self.MAP_DISPLAY + 30, 30
         surf = heightmap_to_surface(self.state.minimap[0, 0],
-                                     self.MINIMAP_SIZE, self._compiled)
-
-        # Show target as a gold pixel on the minimap when within visibility
-        target_ch = self.state.minimap[0, 1]
-        if target_ch.any():
-            ty, tx = (target_ch > 0).nonzero(as_tuple=False)[0].tolist()
-            mm_diameter = target_ch.shape[0]
-            mm_scale = self.MINIMAP_SIZE / mm_diameter
-            px = int(tx * mm_scale + mm_scale / 2)
-            py = int(ty * mm_scale + mm_scale / 2)
-            surf.set_at((px, py), (255, 215, 0))
+                                     self.MINIMAP_SIZE, self._compiled,
+                                     vis_mask=self.state.minimap[0, 2])
 
         mm_rect = pygame.Rect(mm_x, mm_y, self.MINIMAP_SIZE, self.MINIMAP_SIZE)
         self.screen.blit(surf, mm_rect.topleft)
@@ -950,6 +945,18 @@ class HumanDemo:
                 hy = int(ey + 8*math.sin(a+math.pi+s))
                 pygame.draw.line(self.screen, (255, 220, 50), (ex, ey), (hx, hy), 2)
         pygame.draw.circle(self.screen, COLORS["player"], mm_rect.center, 3)
+
+        # Show target as a star on the minimap when within visibility
+        target_ch = self.state.minimap[0, 1]
+        if target_ch.any():
+            ty, tx = (target_ch > 0).nonzero(as_tuple=False)[0].tolist()
+            mm_diameter = target_ch.shape[0]
+            mm_scale = self.MINIMAP_SIZE / mm_diameter
+            # blit_array transposes (row,col) → (x,y), so screen x=col, y=row
+            px = int(tx * mm_scale + mm_scale / 2) + mm_x
+            py = int(ty * mm_scale + mm_scale / 2) + mm_y
+            draw_star(self.screen, px, py, r_outer=5, r_inner=2)
+
         pygame.draw.rect(self.screen, COLORS["black"], mm_rect, 2)
         self.screen.blit(self.font_small.render("Agent view  (▲ = target)", True, COLORS["black"]),
                          (mm_x, mm_y - 16))

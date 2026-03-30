@@ -13,7 +13,7 @@ map_generation:
 agent:
   init_hp: 100.0
   max_hp: 100.0
-  init_resources: 50.0
+  init_resources: 100.0
   max_resources: 100.0
   land_to_water_resource_cost: 20.0   # Boat construction cost
   no_res_hp_multiplier: 2.0           # HP lost per missing resource unit
@@ -42,11 +42,11 @@ custom_map:
 terrains:
   - { name: ocean,      threshold: 0.007, move_cost: 1.0,  res_rate: -1.0, hp_rate: 0.0, visibility: 16, color: [5, 35, 225],      tags: [water] }
   - { name: deep_water, threshold: 0.025, move_cost: 1.25, res_rate: -0.5, hp_rate: 0.0, visibility: 12, color: [25, 65, 225],     tags: [water] }
-  - { name: water,      threshold: 0.05,  move_cost: 1.5,  res_rate: -0.2, hp_rate: 0.0, visibility:  8, color: [65, 105, 225],    tags: [water] }
-  - { name: beach,      threshold: 0.06,  move_cost: 1.75, res_rate: -1.0, hp_rate: 0.0, visibility:  5, color: [238, 214, 175],   tags: [land] }
-  - { name: sandy,      threshold: 0.1,   move_cost: 2.0,  res_rate: -1.0, hp_rate: 0.0, visibility:  5, color: [210, 180, 140],   tags: [land] }
-  - { name: grassland,  threshold: 0.25,  move_cost: 2.25, res_rate: -1.0, hp_rate: 0.0, visibility:  5, color: [34, 139, 34],     tags: [land] }
-  - { name: forest,     threshold: 0.6,   move_cost: 3.0,  res_rate:  3.0, hp_rate: 5.0, visibility:  3, color: [0, 100, 0],       tags: [land, forest] }
+  - { name: water,      threshold: 0.05,  move_cost: 1.5,  res_rate: -0.2, hp_rate: 0.0, visibility: 10, color: [65, 105, 225],    tags: [water] }
+  - { name: beach,      threshold: 0.06,  move_cost: 1.75, res_rate: -1.0, hp_rate: 0.0, visibility:  7, color: [238, 214, 175],   tags: [land] }
+  - { name: sandy,      threshold: 0.1,   move_cost: 2.0,  res_rate: -1.0, hp_rate: 0.0, visibility:  7, color: [210, 180, 140],   tags: [land] }
+  - { name: grassland,  threshold: 0.25,  move_cost: 2.25, res_rate: -1.0, hp_rate: 0.0, visibility:  7, color: [34, 139, 34],     tags: [land] }
+  - { name: forest,     threshold: 0.6,   move_cost: 3.0,  res_rate:  3.0, hp_rate: 5.0, visibility:  5, color: [0, 100, 0],       tags: [land, forest] }
   - { name: rocky,      threshold: 0.7,   move_cost: 3.5,  res_rate: -2.0, hp_rate: 0.0, visibility: 10, color: [139, 137, 137],   tags: [land] }
   - { name: mountains,  threshold: 1.0,   move_cost: 4.0,  res_rate: -5.0, hp_rate: 0.0, visibility: 22, color: [255, 250, 250],   tags: [land] }
 

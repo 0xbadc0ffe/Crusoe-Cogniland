@@ -458,8 +458,9 @@ def compute_minimap_batch(
     dy_grid, dx_grid = torch.meshgrid(coords, coords, indexing="ij")
     dist_grid = torch.sqrt(dy_grid ** 2 + dx_grid ** 2)  # [D, D]
 
-    # Batch distance visibility mask
+    # Batch distance visibility mask (clamp to max_ray so circle fits in patch)
     vis_radii = compiled.visibility.to(device)[terrain_indices.long()]  # [B]
+    vis_radii = torch.clamp(vis_radii, max=max_ray)
     dist_masks = (dist_grid.unsqueeze(0) <= vis_radii.view(B, 1, 1)).float()  # [B, D, D]
 
     # Batch occlusion mask
@@ -469,7 +470,7 @@ def compute_minimap_batch(
     else:
         final_masks = dist_masks
 
-    # 2. Vectorized target indicator (3×3 block around target if within patch)
+    # 2. Vectorized target indicator (single cell at target if within patch)
     target_mask = torch.zeros(B, diameter, diameter, device=device)
     if target_pos is not None:
         # Offset of target relative to patch top-left corner
@@ -480,23 +481,10 @@ def compute_minimap_batch(
         in_view = (patch_y >= 0) & (patch_y < diameter) & (patch_x >= 0) & (patch_x < diameter)
 
         if in_view.any():
-            # Build a 3×3 block around each visible target using scatter
-            dy_offsets = torch.tensor([-1, -1, -1, 0, 0, 0, 1, 1, 1], device=device)
-            dx_offsets = torch.tensor([-1, 0, 1, -1, 0, 1, -1, 0, 1], device=device)
-
-            # Indices of envs with visible target
             view_idx = in_view.nonzero(as_tuple=True)[0]  # [V]
-            vy = patch_y[view_idx].unsqueeze(1) + dy_offsets.unsqueeze(0)  # [V, 9]
-            vx = patch_x[view_idx].unsqueeze(1) + dx_offsets.unsqueeze(0)  # [V, 9]
-
-            # Clamp to patch bounds
-            vy = vy.clamp(0, diameter - 1).long()
-            vx = vx.clamp(0, diameter - 1).long()
-
-            # Scatter 1.0 into target_mask
-            # Expand batch indices: [V, 9]
-            bi = view_idx.unsqueeze(1).expand_as(vy)
-            target_mask[bi, vy, vx] = 1.0
+            vy = patch_y[view_idx].clamp(0, diameter - 1).long()
+            vx = patch_x[view_idx].clamp(0, diameter - 1).long()
+            target_mask[view_idx, vy, vx] = 1.0
 
     # Combine
     maps = torch.zeros(B, 3, diameter, diameter, device=device)
