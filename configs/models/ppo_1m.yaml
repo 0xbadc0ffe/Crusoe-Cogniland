@@ -43,6 +43,6 @@ training:
   max_grad_norm: 0.5            # Gradient clipping threshold for stability
 
   # ── Evaluation & checkpointing ──
-  eval_every_n_updates: 500      # Run evaluation every N training updates
+  eval_every_n_updates: 100      # Run evaluation every N training updates
   eval_episodes: 16             # Number of full episodes per evaluation
   checkpoint_every_n_updates: 0 # Save periodic checkpoint every N updates; 0 = best-only

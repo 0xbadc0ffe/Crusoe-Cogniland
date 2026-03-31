@@ -378,6 +378,9 @@ class PPOAgent:
                 print(f"  deterministic success: {det_sr:.3f}, "
                       f"stochastic success: {sto_sr:.3f}")
 
+                last_ckpt_path = f"{ckpt_dir}/ckpt_last.pt"
+                save_checkpoint(model, optimizer, global_step, path=last_ckpt_path)
+
                 if det_sr > best_val_sr:
                     best_val_sr = det_sr
                     save_checkpoint(model, optimizer, global_step, path=best_ckpt_path)
