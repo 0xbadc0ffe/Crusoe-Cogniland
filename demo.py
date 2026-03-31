@@ -172,17 +172,27 @@ def discover_checkpoints(artifacts_dir="artifacts"):
 
 
 def load_actor_critic(ckpt_path, device="cpu"):
-    model = ActorCritic(
-        scalar_dim=MODEL_SCALAR_DIM,
-        minimap_channels=MODEL_MINIMAP_CHANNELS,
-        hidden_dim=MODEL_HIDDEN_DIM,
-        action_dim=MODEL_ACTION_DIM,
-        cnn_channels=MODEL_CNN_CHANNELS,
-        cnn_out_spatial=MODEL_CNN_OUT_SPATIAL,
-        scalar_hidden=MODEL_SCALAR_HIDDEN,
-    ).to(device)
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-    model.load_state_dict(ckpt["model_state_dict"])
+    sd = ckpt["model_state_dict"]
+    # Infer architecture dims from checkpoint weights
+    cnn_channels    = sd["cnn.3.weight"].shape[0]          # e.g. 64 or 32
+    minimap_channels = sd["cnn.0.weight"].shape[1]         # e.g. 3
+    scalar_dim      = sd["scalar_net.0.weight"].shape[1]   # e.g. 5
+    scalar_hidden   = sd["scalar_net.0.weight"].shape[0]   # e.g. 128 or 64
+    hidden_dim      = sd["trunk.0.weight"].shape[0]        # e.g. 448 or 256
+    action_dim      = sd["actor.weight"].shape[0]          # e.g. 5
+    cnn_out_flat    = sd["trunk.0.weight"].shape[1] - scalar_hidden
+    cnn_out_spatial = int((cnn_out_flat // cnn_channels) ** 0.5)
+    model = ActorCritic(
+        scalar_dim=scalar_dim,
+        minimap_channels=minimap_channels,
+        hidden_dim=hidden_dim,
+        action_dim=action_dim,
+        cnn_channels=cnn_channels,
+        cnn_out_spatial=cnn_out_spatial,
+        scalar_hidden=scalar_hidden,
+    ).to(device)
+    model.load_state_dict(sd)
     model.eval()
     return model
 
