@@ -450,11 +450,11 @@ def _vtrace_update(
         ev = (1.0 - explained_var_num / (explained_var_den + 1e-8)).item()
 
     return {
-        "train/model/drc/policy_loss":          pg_loss.item(),
-        "train/model/drc/value_loss":           vf_loss.item(),
-        "train/model/drc/entropy":              entropy_loss.item(),
-        "train/model/drc/mean_importance_ratio": mean_rho,
-        "train/model/drc/explained_variance":   ev,
+        "train/model/policy_loss":          pg_loss.item(),
+        "train/model/value_loss":           vf_loss.item(),
+        "train/model/entropy":              entropy_loss.item(),
+        "train/model/mean_importance_ratio": mean_rho,
+        "train/model/explained_variance":   ev,
     }
 
 
@@ -637,7 +637,7 @@ class DRCAgent:
             train_metrics = _vtrace_update(model, optimizer, buffer, bootstrap_value, cfg)
 
             current_lr = optimizer.param_groups[0]["lr"]
-            train_metrics["train/model/drc/learning_rate"] = current_lr
+            train_metrics["train/model/learning_rate"] = current_lr
             train_metrics["train/sps"] = int(global_step / (time.time() - start_time))
             logger.log(train_metrics, step=update)
 

@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
-#SBATCH --time=72:00:00
+#SBATCH --time=48:00:00
 #SBATCH --exclude=node01,node02,node03
 #SBATCH --output=logs/train_%j.log
 #SBATCH --error=logs/train_%j.err
