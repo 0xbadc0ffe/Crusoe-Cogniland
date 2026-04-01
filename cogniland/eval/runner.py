@@ -134,12 +134,13 @@ class EvalRunner:
 
         terrain_visits = torch.zeros(n_episodes, self._compiled.num_terrains, device=device)
 
-        # Risk exposure: drain_t / (resources_t + hp_t / 2), mean across episode
-        risk_sum = torch.zeros(n_episodes, device=device)
+        # Risk exposure: Ulcer Index of survival budget u_t = res_t + hp_t
+        u0 = env_config.init_hp + env_config.init_resources  # initial budget
+        drawdown_sq_sum = torch.zeros(n_episodes, device=device)
         risk_count = torch.zeros(n_episodes, device=device)
 
-        # Exploration: bool map of observed cells (updated via minimap visibility mask)
-        observed = torch.zeros(n_episodes, H, W, dtype=torch.bool, device=device)
+        # Exploration: per-cell visibility counts n(x,y) for entropy metric
+        vis_counts = torch.zeros(n_episodes, H, W, dtype=torch.int32, device=device)
 
         # Path adherence: unique cells visited by the agent
         visited_cells = torch.zeros(n_episodes, H, W, dtype=torch.bool, device=device)
@@ -172,14 +173,14 @@ class EvalRunner:
             p = eval_env.state.position[i].cpu().tolist()
             trajectories[i] = [tuple(p)]
 
-        # Seed observed mask with initial visibility at spawn
+        # Seed visibility counts with initial visibility at spawn
         _init_vis = eval_env.state.minimap[:, 2]  # [N, D, D] visibility mask (ch2)
         _init_pos = eval_env.state.position        # [N, 2]
         _world_rows = (_init_pos[:, 0].view(-1, 1, 1) + dy_grid).clamp(0, H - 1)
         _world_cols = (_init_pos[:, 1].view(-1, 1, 1) + dx_grid).clamp(0, W - 1)
         _vis = _init_vis > 0.5
         _ep = torch.arange(n_episodes, device=device).view(-1, 1, 1).expand(n_episodes, D, D)
-        observed[_ep[_vis], _world_rows[_vis], _world_cols[_vis]] = True
+        vis_counts[_ep[_vis], _world_rows[_vis], _world_cols[_vis]] += 1
 
         # --------------- Episode loop ---------------
         for _move in range(env_config.max_steps):
@@ -235,13 +236,13 @@ class EvalRunner:
                 vi = torch.where(visit_mask)[0]
                 visited_cells[vi, post_pos[vi, 0], post_pos[vi, 1]] = True
 
-            # Risk exposure: drain / (resources + hp / 2)
-            drain_t = (-terrain_res_rates[eval_env.state.terrain_idx.long()]).clamp(min=0)
-            risk_t = drain_t / (current_resources + current_hp / 2.0 + 1e-6)
-            risk_sum[still_running] += risk_t[still_running]
+            # Risk exposure: Ulcer Index — accumulate ((u0 - u_t) / u0)^2
+            u_t = current_resources + current_hp
+            drawdown = ((u0 - u_t) / u0).clamp(min=0)
+            drawdown_sq_sum[still_running] += (drawdown[still_running]) ** 2
             risk_count[still_running] += 1
 
-            # Exploration via minimap visibility mask (accounts for occlusion).
+            # Exploration: accumulate per-cell visibility counts (accounts for occlusion).
             # Exclude just-finished episodes: their minimap has been reset by auto-reset.
             explore_idx = torch.where(still_running & ~just_finished)[0]
             if explore_idx.numel() > 0:
@@ -252,7 +253,7 @@ class EvalRunner:
                 world_cols = (pos_g[:, 1].view(G, 1, 1) + dx_grid).clamp(0, W - 1)  # [G, D, D]
                 visible = vis_masks > 0.5                                  # [G, D, D]
                 ep_idx = explore_idx.view(G, 1, 1).expand(G, D, D)
-                observed[ep_idx[visible], world_rows[visible], world_cols[visible]] = True
+                vis_counts[ep_idx[visible], world_rows[visible], world_cols[visible]] += 1
 
             # Capture final state for just-finished episodes before auto-reset clears them
             new_finalized = just_finished & ~is_finalized
@@ -298,9 +299,9 @@ class EvalRunner:
         hp_mean = hp_sum / hp_count.clamp(min=1)
 
         path_adherence = compute_path_adherence(visited_cells, dijkstra_corridor)
-        exploration = compute_exploration(observed)
+        exploration = compute_exploration(vis_counts)
         terrain_visit_frac = compute_terrain_visit_fractions(terrain_visits)
-        risk_exposure = compute_risk_exposure(risk_sum, risk_count)
+        risk_exposure = compute_risk_exposure(drawdown_sq_sum, risk_count)
 
         # --------------- Build EpisodeResult list ---------------
         map_ids = eval_env.env._env_map_idx.tolist()

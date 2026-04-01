@@ -568,6 +568,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=
     base_rgb = _fast_colorize(env.world_map.numpy(), _compiled)
 
     seen_mask = np.zeros((map_size, map_size), dtype=bool)
+    vis_counts = np.zeros((map_size, map_size), dtype=np.int32)
     _D = 2 * env_config.minimap_max_ray + 1
     _dy, _dx = np.meshgrid(np.arange(_D) - env_config.minimap_max_ray,
                            np.arange(_D) - env_config.minimap_max_ray, indexing="ij")
@@ -577,11 +578,15 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=
         cy, cx = int(st.position[0, 0].item()), int(st.position[0, 1].item())
         rows = np.clip(cy + _dy, 0, map_size - 1)
         cols = np.clip(cx + _dx, 0, map_size - 1)
-        seen_mask[rows[vis > 0.5], cols[vis > 0.5]] = True
+        visible = vis > 0.5
+        seen_mask[rows[visible], cols[visible]] = True
+        vis_counts[rows[visible], cols[visible]] += 1
 
     update_seen(state)
 
-    risk_sum = risk_count = 0
+    u0 = env_config.init_hp + env_config.init_resources
+    drawdown_sq_sum = 0.0
+    risk_count = 0
     font_large = pygame.font.Font(None, 36)
     font_med   = pygame.font.Font(None, 26)
     font_small = pygame.font.Font(None, 22)
@@ -622,11 +627,10 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=
                     action = model.get_deterministic_action(obs)
                 last_action = action.item()
 
-                t_idx = int(state.terrain_idx[0].item())
-                drain = max(0.0, -_compiled.res_rate[t_idx].item())
                 res   = state.resources[0].item()
                 hp    = state.hp[0].item()
-                risk_sum   += drain / (res + hp / 2.0 + 1e-6)
+                u_t = res + hp
+                drawdown_sq_sum += (max(0.0, (u0 - u_t) / u0)) ** 2
                 risk_count += 1
 
                 result = env.step(state, action, target_pos)
@@ -716,8 +720,15 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=
         s        = state
         hp_val   = s.hp[0].item(); hp_ratio = hp_val / env_config.max_hp
         res_val  = s.resources[0].item()
-        risk_m   = risk_sum / max(risk_count, 1)
-        expl_pct = 100.0 * seen_mask.sum() / seen_mask.size
+        risk_m   = (drawdown_sq_sum / max(risk_count, 1)) ** 0.5
+        # Normalised entropy of visibility distribution
+        _vc_flat = vis_counts.ravel().astype(np.float64)
+        _total = _vc_flat.sum()
+        if _total > 0:
+            _p = _vc_flat[_vc_flat > 0] / _total
+            expl_ent = -(_p * np.log(_p)).sum() / np.log(vis_counts.size)
+        else:
+            expl_ent = 0.0
         dist_val = (s.position[0].float() - target_pos[0].float()).abs().sum().item()
 
         for lbl, val, col in [
@@ -729,7 +740,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=
             ("Moves",     f"{step_count}",              COLORS["panel_fg"]),
             ("Risk Exp.", f"{risk_m:.3f}",
                           COLORS["red"] if risk_m > 0.5 else COLORS["panel_fg"]),
-            ("Explored",  f"{expl_pct:.1f}%",           COLORS["panel_fg"]),
+            ("Exploration", f"{expl_ent:.3f}",            COLORS["panel_fg"]),
             ("Distance",  f"{dist_val:.1f}",            COLORS["panel_fg"]),
             ("Terrain",   _compiled.terrain_names[int(s.terrain_idx[0].item())].capitalize(),
                           COLORS["panel_fg"]),
@@ -813,7 +824,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=
             screen.blit(ms, ms.get_rect(center=(WINDOW_W//2, cy_ov-50)))
             for k, line in enumerate([
                 f"Moves: {step_count}  •  Time cost: {s.cost[0].item():.2f}",
-                f"Risk exposure: {risk_m:.3f}  •  Explored: {expl_pct:.1f}%",
+                f"Risk exposure: {risk_m:.3f}  •  Exploration: {expl_ent:.3f}",
             ]):
                 surf = font_med.render(line, True, COLORS["white"])
                 screen.blit(surf, surf.get_rect(center=(WINDOW_W//2, cy_ov+k*32)))
@@ -863,6 +874,7 @@ class HumanDemo:
 
         H = W = config.size
         self.seen_mask = np.zeros((H, W), dtype=bool)
+        self._vis_counts = np.zeros((H, W), dtype=np.int32)
         self._update_seen()
 
         wm = self.env.world_map.numpy()
@@ -871,7 +883,8 @@ class HumanDemo:
         self.game_over   = False
         self.won         = False
         self.moves_count = 0
-        self._risk_sum   = 0.0
+        self._u0 = self.env.config.init_hp + self.env.config.init_resources
+        self._drawdown_sq_sum = 0.0
         self._risk_count = 0
         self._hp_history  = [self.state.hp[0].item()]
         self._res_history = [self.state.resources[0].item()]
@@ -886,16 +899,17 @@ class HumanDemo:
         dy_g, dx_g = np.meshgrid(np.arange(D)-mr, np.arange(D)-mr, indexing="ij")
         rows = np.clip(cy + dy_g, 0, H-1)
         cols = np.clip(cx + dx_g, 0, W-1)
-        self.seen_mask[rows[vis > 0.5], cols[vis > 0.5]] = True
+        visible = vis > 0.5
+        self.seen_mask[rows[visible], cols[visible]] = True
+        self._vis_counts[rows[visible], cols[visible]] += 1
 
     def _move(self, action):
         if self.game_over:
             return
-        t_idx = int(self.state.terrain_idx[0].item())
-        drain = max(0.0, -self._compiled.res_rate[t_idx].item())
         res   = self.state.resources[0].item()
         hp    = self.state.hp[0].item()
-        self._risk_sum   += drain / (res + hp / 2.0 + 1e-6)
+        u_t = res + hp
+        self._drawdown_sq_sum += (max(0.0, (self._u0 - u_t) / self._u0)) ** 2
         self._risk_count += 1
 
         result = self.env.step(self.state, action.to(self.env._device), self.target_pos)
@@ -977,8 +991,8 @@ class HumanDemo:
         s, ec = self.state, self.env.config
         hp_r   = s.hp[0] / ec.max_hp
         res_r  = s.resources[0] / ec.max_resources
-        risk_m = self._risk_sum / max(self._risk_count, 1)
-        expl   = 100.0 * self.seen_mask.sum() / self.seen_mask.size
+        risk_m = (self._drawdown_sq_sum / max(self._risk_count, 1)) ** 0.5
+        expl_ent = self._compute_exploration()
 
         for text, font, color in [
             ("Live Stats",                                       self.font_medium, COLORS["black"]),
@@ -990,7 +1004,7 @@ class HumanDemo:
                 COLORS["red"] if res_r < 0.2 else COLORS["black"]),
             (f"Risk Exp:  {risk_m:.3f}",                         self.font_small,
                 COLORS["red"] if risk_m > 0.5 else COLORS["black"]),
-            (f"Explored:  {expl:.1f}%",                          self.font_small,  COLORS["black"]),
+            (f"Exploration: {expl_ent:.3f}",                       self.font_small,  COLORS["black"]),
             ("",                                                 self.font_small,  COLORS["black"]),
             ("Position",                                         self.font_medium, COLORS["black"]),
             (f"Pos:    ({s.position[0][0]}, {s.position[0][1]})", self.font_small, COLORS["black"]),
@@ -1063,6 +1077,14 @@ class HumanDemo:
                                        True, COLORS["black"]),
                 (right_x + 18, y)); y += 20
 
+    def _compute_exploration(self):
+        _vc = self._vis_counts.ravel().astype(np.float64)
+        _tot = _vc.sum()
+        if _tot > 0:
+            _p = _vc[_vc > 0] / _tot
+            return -(_p * np.log(_p)).sum() / np.log(self._vis_counts.size)
+        return 0.0
+
     def _draw_game_over(self):
         overlay = pygame.Surface((WINDOW_W, WINDOW_H))
         overlay.set_alpha(180); overlay.fill(COLORS["black"])
@@ -1072,15 +1094,15 @@ class HumanDemo:
             lines = [
                 f"Reached target in {self.moves_count} moves",
                 f"Final time cost: {self.state.cost[0]:.2f}",
-                f"Mean risk exposure: {self._risk_sum / max(self._risk_count, 1):.3f}",
-                f"Map explored: {100.0 * self.seen_mask.sum() / self.seen_mask.size:.1f}%",
+                f"Risk exposure (ρ): {(self._drawdown_sq_sum / max(self._risk_count, 1)) ** 0.5:.3f}",
+                f"Exploration (E): {self._compute_exploration():.3f}",
             ]
         else:
             title, color = "GAME OVER", COLORS["red"]
             lines = [
                 f"HP reached zero after {self.moves_count} moves",
                 f"Time cost: {self.state.cost[0]:.2f}",
-                f"Mean risk exposure: {self._risk_sum / max(self._risk_count, 1):.3f}",
+                f"Risk exposure (ρ): {(self._drawdown_sq_sum / max(self._risk_count, 1)) ** 0.5:.3f}",
             ]
         cy = WINDOW_H // 2
         ts = self.font_large.render(title, True, color)

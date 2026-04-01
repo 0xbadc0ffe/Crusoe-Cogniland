@@ -53,8 +53,8 @@ terrains:
 # ── Reward shaping ──
 reward:
   reach_bonus: 150.0               # Sparse bonus on reaching target
-  lambda_p: 0.08                   # Cost-to-go progress weight
+  lambda_p: 0.3                    # Cost-to-go progress weight
   lambda_s: 0.02                   # Per-step penalty
-  lambda_t: 40.0                   # Time-efficiency bonus weight at success
+  lambda_t: 100.0                  # Time-efficiency bonus weight at success
   lambda_d: 0.10                   # Death penalty = lambda_d * reach_bonus
   beta_raft: 20.0                  # Extra cost for land→water transitions in cost-to-go
