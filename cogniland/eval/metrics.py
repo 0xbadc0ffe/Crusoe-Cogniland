@@ -27,15 +27,17 @@ def compute_path_adherence(
 
 
 def compute_risk_exposure(
-    risk_sum: torch.Tensor,    # [N] accumulated per-step risk values
-    risk_count: torch.Tensor,  # [N] number of steps accumulated
+    drawdown_sq_sum: torch.Tensor,  # [N] accumulated ((u0 - u_t) / u0)^2
+    risk_count: torch.Tensor,       # [N] number of steps accumulated
 ) -> torch.Tensor:
-    """Mean per-step risk: drain_t / (resources_t + hp_t / 2).
+    """Ulcer-Index-style risk exposure: RMS of relative drawdowns.
 
-    > 1.0 → average step drains more than the combined HP+resource buffer.
-    < 1.0 → agent is comfortably provisioned on average.
+    ρ = sqrt( (1/T) Σ ((u0 - u_t) / u0)^2 )
+
+    where u_t = res_t + hp_t is the survival budget and u0 = init budget.
+    Range [0, 1].  Low = healthy budget throughout; high = prolonged or acute depletion.
     """
-    return risk_sum / risk_count.clamp(min=1)
+    return (drawdown_sq_sum / risk_count.clamp(min=1)).sqrt()
 
 
 def compute_danger_fraction(
@@ -47,11 +49,23 @@ def compute_danger_fraction(
 
 
 def compute_exploration(
-    observed: torch.Tensor,  # [N, H, W] bool
+    vis_counts: torch.Tensor,  # [N, H, W] int — per-cell visibility counts n(x,y)
 ) -> torch.Tensor:
-    """Fraction of map cells ever observed during the episode."""
-    H, W = observed.shape[1], observed.shape[2]
-    return observed.sum(dim=(1, 2)).float() / (H * W)
+    """Normalised entropy of the visibility distribution.
+
+    E = -1/log(H*W) * Σ p(x,y) log p(x,y)   over observed cells
+
+    where p(x,y) = n(x,y) / Σ n.  Range [0, 1].
+    High = broad visual attention; low = concentrated on a narrow region.
+    """
+    N, H, W = vis_counts.shape
+    flat = vis_counts.view(N, -1).float()          # [N, H*W]
+    total = flat.sum(dim=1, keepdim=True).clamp(min=1)  # [N, 1]
+    p = flat / total                                # [N, H*W]
+    log_p = torch.where(p > 0, p.log(), torch.zeros_like(p))
+    entropy = -(p * log_p).sum(dim=1)              # [N]
+    log_hw = np.log(H * W)
+    return entropy / log_hw
 
 
 def compute_terrain_visit_fractions(
