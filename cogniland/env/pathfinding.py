@@ -83,8 +83,11 @@ def _build_reward_graph(
 
     water_mask = is_water[terrain]  # [H, W] bool
 
-    # Combined edge base cost: move_cost − res_rate per terrain
-    combined_np = costs_np - res_rates_np  # [num_terrains]
+    # Combined edge base cost: move_cost − res_rate per terrain.
+    # Clamp to a small positive floor so resource-rich terrain (e.g. forest where
+    # res_rate > move_cost) never produces negative edge weights — negative weights
+    # break Dijkstra and create negative cycles that cause -inf cost-to-go values.
+    combined_np = np.maximum(costs_np - res_rates_np, 0.1)  # [num_terrains]
 
     # Horizontal edges
     r_h, c_h = np.mgrid[0:H, 0:W-1]

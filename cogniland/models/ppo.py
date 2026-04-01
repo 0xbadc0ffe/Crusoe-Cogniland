@@ -361,7 +361,7 @@ class PPOAgent:
             train_metrics = self._ppo_update(optimizer, flat_data, advantages, returns, cfg)
 
             current_lr = optimizer.param_groups[0]["lr"]
-            train_metrics["train/model/ppo/learning_rate"] = current_lr
+            train_metrics["train/model/learning_rate"] = current_lr
             sps = int(global_step / (time.time() - start_time))
             train_metrics["train/sps"] = sps
             logger.log(train_metrics, step=update)
@@ -589,13 +589,13 @@ class PPOAgent:
 
         n_updates = max(n_updates, 1)
         return {
-            "train/model/ppo/policy_loss": total_pg_loss / n_updates,
-            "train/model/ppo/value_loss": total_vf_loss / n_updates,
-            "train/model/ppo/entropy": total_entropy / n_updates,
-            "train/model/ppo/clipfrac": total_clipfrac / n_updates,
-            "train/model/ppo/approx_kl": total_approx_kl / n_updates,
-            "train/model/ppo/explained_variance": explained_variance,
-            "train/model/ppo/return_estimation_variance": return_estimation_variance,
+            "train/model/policy_loss": total_pg_loss / n_updates,
+            "train/model/value_loss": total_vf_loss / n_updates,
+            "train/model/entropy": total_entropy / n_updates,
+            "train/model/clipfrac": total_clipfrac / n_updates,
+            "train/model/approx_kl": total_approx_kl / n_updates,
+            "train/model/explained_variance": explained_variance,
+            "train/model/return_estimation_variance": return_estimation_variance,
         }
 
     def _run_eval(self, cfg, logger=None, global_step: int = 0, split: str = "val"):
