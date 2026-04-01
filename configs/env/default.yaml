@@ -46,7 +46,7 @@ terrains:
   - { name: beach,      threshold: 0.06,  move_cost: 1.75, res_rate: -1.0, hp_rate: 0.0, visibility:  7, color: [238, 214, 175],   tags: [land] }
   - { name: sandy,      threshold: 0.1,   move_cost: 2.0,  res_rate: -1.0, hp_rate: 0.0, visibility:  7, color: [210, 180, 140],   tags: [land] }
   - { name: grassland,  threshold: 0.25,  move_cost: 2.25, res_rate: -1.0, hp_rate: 0.0, visibility:  7, color: [34, 139, 34],     tags: [land] }
-  - { name: forest,     threshold: 0.6,   move_cost: 3.0,  res_rate:  3.0, hp_rate: 5.0, visibility:  5, color: [0, 100, 0],       tags: [land, forest] }
+  - { name: forest,     threshold: 0.6,   move_cost: 3.0,  res_rate:  5.0, hp_rate: 5.0, visibility:  5, color: [0, 100, 0],       tags: [land, forest] }
   - { name: rocky,      threshold: 0.7,   move_cost: 3.5,  res_rate: -2.0, hp_rate: 0.0, visibility: 10, color: [139, 137, 137],   tags: [land] }
   - { name: mountains,  threshold: 1.0,   move_cost: 4.0,  res_rate: -5.0, hp_rate: 0.0, visibility: 22, color: [255, 250, 250],   tags: [land] }
 
