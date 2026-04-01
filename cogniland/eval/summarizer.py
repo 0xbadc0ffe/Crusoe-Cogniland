@@ -14,7 +14,7 @@ _TERRAIN_NAMES = [
 _SCALAR_METRIC_KEYS = [
     "min_hp", "final_hp", "mean_hp", "danger_fraction",
     "final_resources", "mean_resources", "max_resources",
-    "path_adherence", "risk_exposure", "exploration",
+    "directness", "risk_exposure", "exploration",
 ]
 
 

@@ -81,7 +81,7 @@ All remaining metrics are logged as **mean ± std** shaded-area charts (Vega pre
 | `max_resources` | [0, 100] | Peak resources reached during the episode. |
 | `directness` | [1, 100] | How efficiently the agent moved relative to the optimal path to its final position. See [Directness](#directness). |
 | `survival_margin` | (0, 100] | Minimum over all steps of the ratio between current resources/HP and what would be needed to complete the remaining journey. See [Survival Margin](#survival-margin). |
-| `exploration` | [0, 1] | Fraction of the 250×250 map cells the agent observed during the episode. See [Exploration (Coverage)](#exploration-coverage). |
+| `exploration` | [0, 1] | Fraction of land cells the agent observed during the episode. See [Exploration (Coverage)](#exploration-coverage). |
 
 ### Terrain distribution (`{split}_{mode}/terrain_distribution`)
 
@@ -188,17 +188,15 @@ survival_margin = torch.minimum(survival_margin, sm_t)  # running min
 
 ### Exploration (Coverage)
 
-**What it measures:** What fraction of the 250×250 map the agent observed during the episode.
+**What it measures:** What fraction of the land cells on the map the agent observed during the episode.
 
-**Computation:**
-
-An `observed` boolean tensor of shape `[n_episodes, H, W]` is maintained. At each step, for each running episode, all map cells within a disk of radius `vis_r` centred on the agent's current position are marked as observed:
+**Formula:**
 
 ```
-observed[i, r+dr, c+dc] = True   for all (dr, dc) with dr²+dc² ≤ vis_r²
+C = |C_obs ∩ L| / |L|
 ```
 
-where `vis_r = TERRAIN_VISIBILITY[terrain_idx]` depends on the terrain the agent is currently standing on.
+where `L` is the set of land cells on the map (height > `land_threshold`) and `C_obs` is the set of cells observed at least once during the episode. Visibility is determined by the minimap occlusion system (channel 2), so terrain-dependent visibility radii and line-of-sight occlusion are both accounted for.
 
 **Terrain visibility radii** (from `constants.py`):
 
@@ -214,20 +212,17 @@ where `vis_r = TERRAIN_VISIBILITY[terrain_idx]` depends on the terrain the agent
 | rocky | 7 | 8 |
 | mountains | 8 | 22 |
 
-The episode exploration fraction is:
+**Range:** [0, 1]. 0 = agent observed no land cells. Full land coverage (1.0) is practically unachievable within 1000 steps on a 250×250 map.
 
-```
-exploration = count(observed[i]) / (H × W)
-```
-
-**Range:** [0, 1]. 0 = agent never moved. Full map coverage (1.0) is practically unachievable within 1000 steps on a 250×250 map.
-
-**Implementation in code** (`runner.py`):
+**Implementation in code** (`metrics.py`):
 ```python
-exploration = observed.sum(dim=(1, 2)).float() / (H * W)
+observed = vis_counts > 0                              # [N, H, W]
+land_observed = (observed & land_mask).sum(dim=(1, 2)).float()
+land_total = land_mask.sum(dim=(1, 2)).float().clamp(min=1)
+exploration = land_observed / land_total
 ```
 
-Disk offsets for each unique visibility radius are precomputed in `EvalRunner.__init__` and cached as `_disk_offsets[vis_r]`.
+The `land_mask` is built per-episode from `world_maps[map_idx] > land_threshold`.
 
 ---
 
