@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=train_ppo1m
+#SBATCH --job-name=train_rppo
 #SBATCH -D ./
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=fiwang@ethz.ch
@@ -36,9 +36,8 @@ set -a; source "$PROJECT_DIR/.env"; set +a
 
 # ── Training ─────────────────────────────────────────────────────────────────
 python train.py \
-    models=ppo_1m \
-    models.training.total_env_moves=600_000_000 \
+    models=recurrent_ppo \
+    models.training.total_env_moves=300_000_000 \
     logging.wandb.mode=online
-    
 
 echo "Done: $(date)"

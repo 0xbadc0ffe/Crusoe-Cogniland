@@ -137,7 +137,7 @@ _TEST_SUMMARY_METRICS: list[tuple[str, bool]] = [
     ("success_rate",   True),
     ("return",         False),
     ("episode_length", False),
-    ("path_adherence",     False),
+    ("directness",     False),
     ("exploration",    False),
     ("risk_exposure",  False),
     ("final_hp",       False),
@@ -176,7 +176,7 @@ class WandBLogger:
             self._run.summary.update({
                 "test_det/env/success_rate":      None,
                 "test_det/env/return_mean":       None,
-                "test_det/env/path_adherence_mean": None,
+                "test_det/env/directness_mean": None,
                 "test_det/env/exploration_mean":  None,
                 "test_det/env/risk_exposure_mean":None,
             })

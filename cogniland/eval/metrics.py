@@ -10,20 +10,16 @@ import numpy as np
 import torch
 
 
-def compute_path_adherence(
-    visited_cells: torch.Tensor,     # [N, H, W] bool — unique cells visited by agent
-    dijkstra_corridor: torch.Tensor, # [N, H, W] bool — dilated Dijkstra path
+def compute_directness(
+    dijkstra_cost: torch.Tensor,  # [N] optimal traversal time (move_cost Dijkstra)
+    agent_cost: torch.Tensor,     # [N] actual cumulative traversal time
 ) -> torch.Tensor:
-    """Fraction of agent's unique visited cells inside the Dijkstra corridor.
+    """Time-efficiency ratio: T = time* / t_agent.
 
-    A = |C_agent ∩ D_r(C_dijkstra)| / |C_agent|
-
-    where D_r is a dilation of radius r around the optimal path cells.
-    Range: [0, 1].  1 = agent stayed within the corridor, lower = more rerouting.
+    Range [0, 1].  1 = agent matched the shortest-time path; lower = detours,
+    backtracking, or foraging reduced time efficiency.
     """
-    overlap = (visited_cells & dijkstra_corridor).sum(dim=(1, 2)).float()
-    agent_total = visited_cells.sum(dim=(1, 2)).float().clamp(min=1)
-    return overlap / agent_total
+    return torch.clamp(dijkstra_cost / agent_cost.clamp(min=1e-6), 0.0, 1.0)
 
 
 def compute_risk_exposure(
@@ -50,22 +46,19 @@ def compute_danger_fraction(
 
 def compute_exploration(
     vis_counts: torch.Tensor,  # [N, H, W] int — per-cell visibility counts n(x,y)
+    land_mask: torch.Tensor,   # [N, H, W] bool — True for land cells
 ) -> torch.Tensor:
-    """Normalised entropy of the visibility distribution.
+    """Coverage: fraction of land cells observed at least once.
 
-    E = -1/log(H*W) * Σ p(x,y) log p(x,y)   over observed cells
+    C = |C_obs ∩ L| / |L|
 
-    where p(x,y) = n(x,y) / Σ n.  Range [0, 1].
-    High = broad visual attention; low = concentrated on a narrow region.
+    where L is the set of land cells and C_obs is the set of cells observed
+    at least once during the episode.  Range [0, 1].
     """
-    N, H, W = vis_counts.shape
-    flat = vis_counts.view(N, -1).float()          # [N, H*W]
-    total = flat.sum(dim=1, keepdim=True).clamp(min=1)  # [N, 1]
-    p = flat / total                                # [N, H*W]
-    log_p = torch.where(p > 0, p.log(), torch.zeros_like(p))
-    entropy = -(p * log_p).sum(dim=1)              # [N]
-    log_hw = np.log(H * W)
-    return entropy / log_hw
+    observed = vis_counts > 0                              # [N, H, W]
+    land_observed = (observed & land_mask).view(vis_counts.shape[0], -1).sum(dim=1).float()
+    land_total = land_mask.view(vis_counts.shape[0], -1).sum(dim=1).float().clamp(min=1)
+    return land_observed / land_total
 
 
 def compute_terrain_visit_fractions(
