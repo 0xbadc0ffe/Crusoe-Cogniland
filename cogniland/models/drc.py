@@ -395,8 +395,8 @@ def _vtrace_update(
     N = T * B  # total samples
     device = buffer.actions[0].device
 
-    # Configurable chunk size — controls peak memory.  Default 1024.
-    chunk_size = training.get("update_chunk_size", 1024)
+    # Configurable chunk size — controls peak memory.  Default 64.
+    chunk_size = training.get("update_chunk_size", 64)
 
     # Stack rollout tensors → [T, B, ...]
     obs_minimaps = torch.stack(buffer.obs_minimaps)   # [T, B, C, H, W]
