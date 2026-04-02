@@ -96,9 +96,9 @@ class RecurrentActorCritic(nn.Module):
         nn.init.zeros_(self.rnn.bias_ih)
         nn.init.zeros_(self.rnn.bias_hh)
 
-        # ── Actor / critic heads ─────────────────────────────────────────
-        self.actor = _layer_init(nn.Linear(rnn_hidden_dim, action_dim), std=0.01)
-        self.critic = _layer_init(nn.Linear(rnn_hidden_dim, 1), std=1.0)
+        # ── Actor / critic heads (skip connection: trunk + RNN output) ───
+        self.actor = _layer_init(nn.Linear(hidden_dim + rnn_hidden_dim, action_dim), std=0.01)
+        self.critic = _layer_init(nn.Linear(hidden_dim + rnn_hidden_dim, 1), std=1.0)
 
     def _features(self, obs: dict[str, torch.Tensor]) -> torch.Tensor:
         """Extract features from observation (no RNN)."""
@@ -124,7 +124,8 @@ class RecurrentActorCritic(nn.Module):
         feat = self._features(obs)          # [B, hidden_dim]
         h_new = self.rnn(feat, h)           # [B, rnn_hidden_dim]
 
-        logits = self.actor(h_new)
+        combined = torch.cat([feat, h_new], dim=-1)  # [B, hidden_dim + rnn_hidden_dim]
+        logits = self.actor(combined)
         dist = torch.distributions.Categorical(logits=logits)
         if action is None:
             action = dist.sample()
@@ -133,14 +134,15 @@ class RecurrentActorCritic(nn.Module):
             action,
             dist.log_prob(action),
             dist.entropy(),
-            self.critic(h_new).squeeze(-1),
+            self.critic(combined).squeeze(-1),
             h_new,
         )
 
     def get_value(self, obs: dict[str, torch.Tensor], h: torch.Tensor) -> torch.Tensor:
         feat = self._features(obs)
         h_new = self.rnn(feat, h)
-        return self.critic(h_new).squeeze(-1)
+        combined = torch.cat([feat, h_new], dim=-1)
+        return self.critic(combined).squeeze(-1)
 
     @torch.no_grad()
     def get_deterministic_action(
@@ -149,7 +151,8 @@ class RecurrentActorCritic(nn.Module):
         """Returns (action, h_new) for deterministic evaluation."""
         feat = self._features(obs)
         h_new = self.rnn(feat, h)
-        action = self.actor(h_new).argmax(dim=-1)
+        combined = torch.cat([feat, h_new], dim=-1)
+        action = self.actor(combined).argmax(dim=-1)
         return action, h_new
 
     def init_hidden(self, batch_size: int, device: torch.device) -> torch.Tensor:
@@ -282,8 +285,7 @@ class RecurrentPPOAgent:
 
     def get_action_and_value(self, obs, action=None):
         h = self.model.init_hidden(obs["minimap"].shape[0], obs["minimap"].device)
-        act, lp, ent, val, _ = self.model(obs, h, action)
-        return act, lp, ent, val
+        return self.model(obs, h, action)[:4]  # drop h_new
 
     def get_deterministic_action(self, obs):
         h = self.model.init_hidden(obs["minimap"].shape[0], obs["minimap"].device)
@@ -321,7 +323,7 @@ class RecurrentPPOAgent:
         curriculum_switch_steps_2 = dataset_cfg.get("curriculum_switch_steps_2", 0)
         curriculum_extra_easy_radius = dataset_cfg.get("curriculum_extra_easy_radius", 25)
         curriculum_easy_radius = dataset_cfg.get("curriculum_easy_radius", 50)
-        seq_len = training_cfg.get("seq_len", 16)
+        seq_len = training_cfg.get("seq_len", 64)
 
         dataset: MapDataset | None = None
         if dataset_cfg:
