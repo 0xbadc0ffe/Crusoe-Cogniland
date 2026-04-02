@@ -380,12 +380,23 @@ def _vtrace_update(
     bootstrap_value: torch.Tensor,
     cfg,
 ) -> dict[str, float]:
-    """One V-trace gradient update over the entire rollout (no minibatches, like IMPALA)."""
+    """One V-trace gradient update over the entire rollout, with chunked forward passes.
+
+    Instead of one giant T*B forward pass (which OOMs on 24GB GPUs), we:
+      1. Forward-pass in chunks to get log_probs/values under current policy.
+      2. Compute V-trace targets (no grad).
+      3. Backward-pass in chunks with gradient accumulation.
+    This is mathematically equivalent to the full-batch update.
+    """
     training = cfg.models.training
 
     T = len(buffer.actions)
     B = buffer.actions[0].shape[0]
+    N = T * B  # total samples
     device = buffer.actions[0].device
+
+    # Configurable chunk size — controls peak memory.  Default 1024.
+    chunk_size = training.get("update_chunk_size", 1024)
 
     # Stack rollout tensors → [T, B, ...]
     obs_minimaps = torch.stack(buffer.obs_minimaps)   # [T, B, C, H, W]
@@ -396,27 +407,40 @@ def _vtrace_update(
     dones        = torch.stack(buffer.dones)          # [T, B]
     values_mu    = torch.stack(buffer.values)         # [T, B]
 
-    # Re-evaluate all [T, B] observations under current policy in one vectorised pass
-    flat_obs = {
-        "minimap":  obs_minimaps.reshape(T * B, *obs_minimaps.shape[2:]),
-        "scalars":  obs_scalars.reshape(T * B, *obs_scalars.shape[2:]),
-    }
-    flat_actions = actions.reshape(T * B)
+    # Flatten for chunked processing
+    flat_minimaps = obs_minimaps.reshape(N, *obs_minimaps.shape[2:])
+    flat_scalars  = obs_scalars.reshape(N, *obs_scalars.shape[2:])
+    flat_actions  = actions.reshape(N)
 
-    _, pi_log_probs_flat, entropy_flat, values_pi_flat = model.get_action_and_value(flat_obs, flat_actions)
+    # ── Phase 1: chunked forward (no grad) to get log_probs & values ────────
+    pi_log_probs_flat = torch.empty(N, device=device)
+    entropy_flat      = torch.empty(N, device=device)
+    values_pi_flat    = torch.empty(N, device=device)
 
-    pi_log_probs = pi_log_probs_flat.reshape(T, B)   # [T, B]
-    entropy      = entropy_flat.reshape(T, B)         # [T, B]
-    values_pi    = values_pi_flat.reshape(T, B)       # [T, B]
+    with torch.no_grad():
+        for start in range(0, N, chunk_size):
+            end = min(start + chunk_size, N)
+            chunk_obs = {
+                "minimap": flat_minimaps[start:end],
+                "scalars": flat_scalars[start:end],
+            }
+            _, lp, ent, val = model.get_action_and_value(chunk_obs, flat_actions[start:end])
+            pi_log_probs_flat[start:end] = lp
+            entropy_flat[start:end]      = ent
+            values_pi_flat[start:end]    = val
+
+    pi_log_probs = pi_log_probs_flat.reshape(T, B)
+    entropy      = entropy_flat.reshape(T, B)
+    values_pi    = values_pi_flat.reshape(T, B)
 
     # Log importance weights: log π(a|x) - log μ(a|x)
-    log_rhos = pi_log_probs - mu_log_probs.detach()   # [T, B]
+    log_rhos = pi_log_probs - mu_log_probs   # [T, B]  (all detached)
 
-    # V-trace targets  (no gradient through this)
+    # ── Phase 2: V-trace targets (no grad) ──────────────────────────────────
     vs, advantages = vtrace_from_logratios(
-        log_rhos=log_rhos.detach(),
+        log_rhos=log_rhos,
         rewards=rewards,
-        values=values_mu.detach(),        # use behaviour-policy values as baseline
+        values=values_mu.detach(),
         bootstrap=bootstrap_value,
         dones=dones,
         gamma=training.discount_factor,
@@ -424,21 +448,41 @@ def _vtrace_update(
         c_bar=training.get("c_bar", 1.0),
     )
 
-    # ── Losses (mean per-step, as in Chung et al. 2024) ─────────────────────
-    # Policy gradient — do NOT normalise advantages (paper explicitly requires this)
-    pg_loss    = -(advantages.detach() * pi_log_probs).mean()
+    # Flatten targets for chunked backward
+    flat_advantages = advantages.reshape(N).detach()
+    flat_vs         = vs.reshape(N).detach()
 
-    # Value loss on current-policy values vs V-trace targets
-    vf_loss    = 0.5 * ((values_pi - vs.detach()) ** 2).mean()
-
-    entropy_loss = entropy.mean()
-
-    loss = (pg_loss
-            + training.value_loss_weight * vf_loss
-            - training.entropy_bonus_weight * entropy_loss)
-
+    # ── Phase 3: chunked backward with gradient accumulation ────────────────
+    num_chunks = (N + chunk_size - 1) // chunk_size
     optimizer.zero_grad()
-    loss.backward()
+
+    total_pg   = 0.0
+    total_vf   = 0.0
+    total_ent  = 0.0
+
+    for start in range(0, N, chunk_size):
+        end = min(start + chunk_size, N)
+        chunk_obs = {
+            "minimap": flat_minimaps[start:end],
+            "scalars": flat_scalars[start:end],
+        }
+        _, lp, ent, val = model.get_action_and_value(chunk_obs, flat_actions[start:end])
+
+        # Per-chunk losses, scaled by (chunk_len / N) so gradients average correctly
+        weight = (end - start) / N
+        pg   = -(flat_advantages[start:end] * lp).mean()
+        vf   = 0.5 * ((val - flat_vs[start:end]) ** 2).mean()
+        ent_mean = ent.mean()
+
+        chunk_loss = weight * (pg + training.value_loss_weight * vf
+                               - training.entropy_bonus_weight * ent_mean)
+        chunk_loss.backward()
+
+        # Track for logging
+        total_pg  += weight * pg.item()
+        total_vf  += weight * vf.item()
+        total_ent += weight * ent_mean.item()
+
     nn.utils.clip_grad_norm_(model.parameters(), training.max_grad_norm)
     optimizer.step()
 
@@ -450,9 +494,9 @@ def _vtrace_update(
         ev = (1.0 - explained_var_num / (explained_var_den + 1e-8)).item()
 
     return {
-        "train/model/policy_loss":          pg_loss.item(),
-        "train/model/value_loss":           vf_loss.item(),
-        "train/model/entropy":              entropy_loss.item(),
+        "train/model/policy_loss":          total_pg,
+        "train/model/value_loss":           total_vf,
+        "train/model/entropy":              total_ent,
         "train/model/mean_importance_ratio": mean_rho,
         "train/model/explained_variance":   ev,
     }
