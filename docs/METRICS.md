@@ -1,6 +1,6 @@
 # Metrics Reference
 
-All metrics logged to WandB during training and evaluation. The **x-axis** in WandB is the **update** number (one PPO optimisation pass over a rollout buffer), not raw timesteps.
+All metrics logged to WandB during training and evaluation. Cross-references use `file.py:line`.
 
 ---
 
@@ -8,300 +8,158 @@ All metrics logged to WandB during training and evaluation. The **x-axis** in Wa
 
 | Term | Meaning |
 |------|---------|
-| **update** | One PPO training iteration: collect rollout → compute GAE → run minibatch updates. X-axis in WandB. |
-| **move** | One agent action in the environment (up/down/left/right). An episode is a sequence of moves. |
-| **global\_step** | Cumulative number of moves across all parallel envs since training start: `update × num_envs × rollout_steps`. |
-| **C\_agent** | Terrain-weighted cost accumulated by the agent during an episode (`EnvState.cost`). Each move adds `TERRAIN_COSTS[terrain_idx]` to this counter. |
-| **A\*** | Optimal terrain-weighted shortest path computed by `batch_astar()`. The cost of the A* path equals the sum of `TERRAIN_COSTS` along the optimal route on the actual map used in the episode. |
+| **update** | One PPO training iteration: collect rollout → GAE → minibatch updates. X-axis in WandB. |
+| **global_step** | Cumulative env moves since training start: `update * num_envs * rollout_steps`. |
+| **C_agent** | Terrain-weighted cost accumulated by the agent (`EnvState.cost`). Each move adds `move_cost[terrain]`. |
+| **dijkstra_cost** | Optimal terrain-weighted traversal cost spawn→target, computed by forward Dijkstra at reset. |
 
 ---
 
 ## Training metrics (`train/`)
 
-Logged every update. Computed from the rollout buffer collected from `num_envs` parallel environments over `rollout_steps` moves.
+Logged every update. Source: `ppo.py:591` (PPO) / `recurrent_ppo.py:619` (RNN PPO).
 
-### PPO algorithm (`train/model/ppo/`)
-
-| Metric | Formula | What it tells you |
-|--------|---------|-------------------|
-| `policy_loss` | `mean( max(−Â·r_t, −Â·clip(r_t, 1−ε, 1+ε)) )` where `r_t = π_θ(a)/π_θ_old(a)`, `Â = GAE advantage` | Clipped surrogate objective. Should decrease then stabilise. |
-| `value_loss` | `0.5 · mean( (V_pred − returns)² )` | Critic MSE against GAE returns. Should decrease. |
-| `entropy` | `mean( H(π) ) = mean( −∑ π(a) log π(a) )` | Policy randomness. Starts high, decreases as policy specialises. Too low = premature convergence. |
-| `clipfrac` | `mean( 𝟙[|r_t − 1| > ε] )` | Fraction of minibatch samples where PPO clipping activates. Healthy range: 0.05–0.2. If consistently high, LR may be too large. |
-| `approx_kl` | `mean( r_t − 1 − log(r_t) )` | Second-order KL approximation between old and new policy. If > 0.03 consistently, consider reducing LR. |
-| `learning_rate` | Current LR after optional linear annealing. | Tracks the LR schedule. |
-
-### Environment stats during rollout (`train/env/`)
-
-These are logged only for episodes that happen to **complete** within the current rollout window; partially-completed episodes are excluded. They are therefore noisier than eval metrics.
+### PPO algorithm (`train/model/`)
 
 | Metric | What it tells you |
 |--------|-------------------|
-| `episode_return_mean` | Mean cumulative reward of completed training episodes in this rollout. |
-| `episode_length_mean` | Mean episode length (moves) of completed training episodes. |
-| `success_rate` | Fraction of completed training episodes where the agent reached the target. |
+| `policy_loss` | Clipped surrogate objective. Should decrease then stabilise. |
+| `value_loss` | Critic MSE against GAE returns. Should decrease. |
+| `entropy` | Policy randomness `H(pi)`. Starts high, decreases as policy specialises. Too low = premature convergence. |
+| `clipfrac` | Fraction of samples where PPO clipping activates. Healthy: 0.05-0.2. Consistently high → LR too large. |
+| `approx_kl` | KL divergence approximation between old and new policy. > 0.03 consistently → reduce LR. |
+| `explained_variance` | How well the value function predicts returns. 1.0 = perfect, < 0 = worse than mean. |
+| `learning_rate` | Current LR after optional linear annealing. |
+
+### Environment stats (`train/env/`)
+
+Logged by `log_rollout_stats()` in `logging.py:24`. Only covers episodes that **completed** within the rollout window (partial episodes excluded — noisier than eval metrics).
+
+| Metric | Source |
+|--------|--------|
+| `episode_return_mean` | Mean cumulative reward of completed episodes |
+| `episode_length_mean` | Mean episode length (moves) |
+| `success_rate` | Fraction that reached the target |
 
 ### Throughput
 
-| Metric | Formula | What it tells you |
-|--------|---------|-------------------|
-| `train/sps` | `global_step / wall_time` | Moves processed per second. Pure throughput; GPU-bound code shows higher values. |
+| Metric | Formula |
+|--------|---------|
+| `train/sps` | `global_step / wall_time` — moves processed per second |
 
 ---
 
 ## Evaluation metrics
 
-Logged every 10 updates (val splits) and once at the end of training (test split). Two policies are evaluated in parallel:
+Logged periodically during training (val) and once at end (test). Source: `runner.py:64` → `summarizer.py:24`.
 
-- **det** — deterministic policy: action = `argmax π(a | obs)`.
-- **stoch** — stochastic policy: action sampled from `π(· | obs)`.
+Two policies evaluated in parallel:
+- **det** — deterministic: `argmax pi(a|obs)` 
+- **stoch** — stochastic: sampled from `pi(.|obs)`
 
-Each produces a separate WandB section: `val_det/`, `val_stoch/`, `test_det/`.
+Namespaces: `val_det/env/`, `val_stoch/env/`, `test_det/env/`, `test_stoch/env/`.
 
-### Scalar metric (`{split}_{mode}/env/`)
+### Scalar metrics
 
-| Metric | Formula | What it tells you |
-|--------|---------|-------------------|
-| `success_rate` | `n_success / n_episodes` | Primary performance metric — fraction of eval episodes where the agent reached the target. Logged as a plain scalar line. |
+| Metric | Range | What it measures | Implementation |
+|--------|-------|-----------------|----------------|
+| `success_rate` | [0, 1] | Fraction of episodes reaching target. Primary metric. | `summarizer.py:33` |
+| `return_{mean,std,...}` | (-inf, +inf) | Cumulative reward per episode. | `summarizer.py:37` |
+| `episode_length_{mean,...}` | [1, 1000] | Steps per episode. | `summarizer.py:38` |
+| `directness_{mean,...}` | [0, 1] | Time efficiency: `dijkstra_cost / agent_cost`. 1.0 = optimal path. | `metrics.py:13` |
+| `risk_exposure_{mean,...}` | [0, 1] | Ulcer Index of survival budget. RMS of relative drawdowns. | `metrics.py:25` |
+| `exploration_{mean,...}` | [0, 1] | Fraction of land cells observed at least once. | `metrics.py:47` |
+| `danger_fraction_{mean,...}` | [0, 1] | Fraction of steps with HP below danger threshold (50.0). | `metrics.py:39` |
+| `min_hp_{mean,...}` | [0, 100] | Lowest HP at any step during episode. | `runner.py:189` |
+| `final_hp_{mean,...}` | [0, 100] | HP at termination. | `runner.py:236` |
+| `mean_hp_{mean,...}` | [0, 100] | Time-averaged HP. | `runner.py:265` |
+| `final_resources_{mean,...}` | [0, 100] | Resources at termination. | `runner.py:263` |
+| `mean_resources_{mean,...}` | [0, 100] | Time-averaged resources. | `runner.py:264` |
+| `max_resources_{mean,...}` | [0, 100] | Peak resources during episode. | `runner.py:200` |
 
-### Per-episode charts (`{split}_{mode}/env/`)
+Each non-rate metric is logged as `{prefix}/{name}_mean`, `_std`, `_max`, `_min`. The `_std/_max/_min` variants go to `run.summary` only (no time-series plot). See `logging.py:186`.
 
-All remaining metrics are logged as **mean ± std** shaded-area charts (Vega preset `crusoe/eval_mean_std`). Each chart accumulates one data point per eval step, showing training progress over time.
+### Terrain distribution
 
-| Metric | Range | What it tells you |
-|--------|-------|-------------------|
-| `return` | (−∞, +∞) | Cumulative reward per episode. Primary signal alongside success rate. |
-| `episode_length` | [1, 1000] | How long episodes last. Successful episodes may be shorter (efficient path) or longer (cautious path). |
-| `min_hp` | [0, 100] | Minimum HP observed at any step during the episode. Low values indicate the agent came close to death. |
-| `final_hp` | [0, 100] | HP at episode termination (death → 0; success/timeout → positive). |
-| `mean_hp` | [0, 100] | Running mean of HP across all steps: `(1/T) ∑_t hp_t`. |
-| `danger_fraction` | [0, 1] | Fraction of moves with HP below the danger threshold (30 by default). See [Danger Fraction](#danger-fraction). |
-| `final_resources` | [0, 100] | Resources at episode end. |
-| `mean_resources` | [0, 100] | Running mean of resources: `(1/T) ∑_t res_t`. |
-| `max_resources` | [0, 100] | Peak resources reached during the episode. |
-| `directness` | [1, 100] | How efficiently the agent moved relative to the optimal path to its final position. See [Directness](#directness). |
-| `survival_margin` | (0, 100] | Minimum over all steps of the ratio between current resources/HP and what would be needed to complete the remaining journey. See [Survival Margin](#survival-margin). |
-| `exploration` | [0, 1] | Fraction of land cells the agent observed during the episode. See [Exploration (Coverage)](#exploration-coverage). |
+Logged as a growing WandB Table under `{namespace}/terrain_distribution` using custom Vega spec `crusoe/terrain_distribution`. Shows how terrain visit fractions evolve over training. Val splits only. See `logging.py:245`.
 
-### Terrain distribution (`{split}_{mode}/terrain_distribution`)
+### Trajectory images
 
-A Vega stacked area chart (preset `crusoe/terrain_distribution`) showing how terrain visit fractions evolve over training. The Y-axis is the **fraction of episode steps** spent on each terrain type (summing to 1 across terrains at each eval step). The chart accumulates rows across all eval steps.
+Logged as `wandb.Image` under `trajectories/env_{i}`. Deterministic policy only, first `max_saved_per_eval` episodes (default 3). Shows terrain-colored map + agent path + fog-of-war for unseen cells. See `utils.py:83`.
+
+### Per-episode tables
+
+Logged as `wandb.Table` under `{namespace}/tables/episodes` with columns: episode, outcome, return, episode_length, final_hp, trajectory. See `logging.py:217`, `summarizer.py:60`.
 
 ---
 
 ## Behavioral metrics — detailed specification
 
-### Directness
+### Directness (time efficiency)
 
-**What it measures:** How directly the agent moves toward its final position, independently of terrain costs or survivability constraints.
+**What it measures:** How efficiently the agent traverses terrain relative to the optimal shortest-time path.
 
-**Computation:**
-
-```
-         ‖x_spawn − x_final‖₁
-D = ─────────────────────────────
-              N_steps
-```
-
-Where `‖x_spawn − x_final‖₁` is the Manhattan distance between the spawn and the agent's final position, and `N_steps` is the total number of steps taken.
-
-A value close to 1 indicates a nearly straight path; lower values indicate detours (e.g. for terrain-time cost or survivability). Using Manhattan distance matches the grid movement model (4 cardinal directions, no diagonals).
-
-**Range:** (0, 1]. Clamped to a maximum of 1.
-
-**Implementation in code** (`metrics.py`):
-```python
-manhattan = (initial_spawns - final_positions).abs().sum(dim=1).float()
-directness = (manhattan / total_moves.clamp(min=1)).clamp(max=1.0)
-```
-
----
-
-### Survival Margin
-
-**What it measures:** At every step during the episode, the agent's *projected viability* for completing the remaining journey — specifically whether its current HP and resources would be sufficient to cover the optimal remaining path. Reports the **worst-case ratio** across the entire episode.
-
-**Intuition:** A survival margin > 1.0 means the agent was always carrying more HP/resources than needed (comfortable margin). A margin < 1.0 means there was a point where the agent was projected to run out of HP or resources before reaching the target via the shortest remaining route.
-
-**Per-step computation:**
-
-Let `dist_t` be the Euclidean distance from the agent to the target at step `t`, and `dist_0` the initial distance. The remaining A* cost is approximated as:
+**Formula** (`metrics.py:22`):
 
 ```
-C_remaining(t) = C_astar(spawn → target) × (dist_t / dist_0)
+D = dijkstra_cost / agent_cost
 ```
 
-This scales the initial optimal cost by the fraction of distance still remaining, giving a terrain-weighted estimate of the remaining journey cost.
+Where `dijkstra_cost` is the optimal terrain-weighted traversal cost from spawn to target (forward Dijkstra, computed at reset), and `agent_cost` is the accumulated `EnvState.cost` (sum of `move_cost[terrain]` along the agent's actual path).
 
-From the environment's resource drain rates, two conversion factors are precomputed once from `EnvConfig`:
+**Range:** [0, 1], clamped. 1.0 = agent matched the optimal path. Lower values indicate detours, backtracking, or foraging stops that increased total terrain cost.
 
-```
-terrain_drains = [sea[0], sea[1], sea[2], land, land, land, 0.0, mtn[0], mtn[1]]
-             = [3.0,    2.0,    1.5,   1.0, 1.0, 1.0,  0.0, 1.5,    3.0   ]  (defaults)
+**Design choice:** Uses terrain-weighted cost rather than Manhattan distance. This means a detour through cheaper terrain (e.g., water shortcut) can score *higher* than a straight line through expensive terrain.
 
-k_R  = mean(terrain_drains) / mean(TERRAIN_COSTS)   ≈ 0.767
-k_HP = k_R × no_res_hp_multiplier                   ≈ 1.534  (multiplier default = 2.0)
-```
+### Risk Exposure (Ulcer Index)
 
-These factors convert "expected remaining terrain cost" into "expected HP drain" and "expected resource drain" respectively.
+**What it measures:** The severity and duration of survival budget depletion over the episode. Based on the Ulcer Index from finance.
 
-The projected requirements at step `t` are:
+**Formula** (`metrics.py:25`, accumulated in `runner.py:209`):
 
 ```
-Ĉ_HP(t) = C_remaining(t) × k_HP       (HP the agent would consume)
-Ĉ_R(t)  = C_remaining(t) × k_R        (resources the agent would consume)
+u_t = resources_t + hp_t                          (survival budget at step t)
+u_0 = init_resources + init_hp = 200              (initial budget)
+
+rho = sqrt( (1/T) * sum_t ((u_0 - u_t) / u_0)^2 )
 ```
 
-The per-step survival margin is the binding constraint (whichever resource is tighter):
+**Range:** [0, 1]. Low = healthy budget throughout. High = prolonged or acute depletion. Unlike a simple "min HP" metric, this captures *how long* the agent spent in a depleted state, not just the worst moment.
 
-```
-SM_t = min( hp_t / (Ĉ_HP(t) + ε),   resources_t / (Ĉ_R(t) + ε) )
-```
-
-**Episode summary:**
-
-```
-survival_margin = min over all running steps t of SM_t
-```
-
-Only steps where the episode is still active (not done, not dead) contribute to the minimum.
-
-**Boundary handling:**
-- `inf` values (e.g. when `dist_0 = 0`) are clipped to 100.
-- NaN values are set to 0.
-
-**Range:** (0, 100]. Values > 1 indicate the agent was always well-provisioned. Values < 1 indicate a resource crisis at some point in the episode.
-
-**Implementation in code** (`runner.py`, precomputed in `__init__`):
-```python
-c_remaining = astar_costs * (dist_to_target / initial_dist)
-c_hat_hp = c_remaining * self._k_HP
-c_hat_r  = c_remaining * self._k_R
-sm_t = torch.minimum(
-    current_hp / (c_hat_hp + 1e-6),
-    current_resources / (c_hat_r + 1e-6),
-)
-survival_margin = torch.minimum(survival_margin, sm_t)  # running min
-```
-
----
+**Design choice:** The Ulcer Index penalises both depth and duration of drawdowns. An agent that drops to 50% budget for 100 steps scores worse than one that drops to 10% for 1 step (if the total squared-drawdown-sum is larger).
 
 ### Exploration (Coverage)
 
-**What it measures:** What fraction of the land cells on the map the agent observed during the episode.
+**What it measures:** Fraction of land cells the agent observed during the episode.
 
-**Formula:**
+**Formula** (`metrics.py:47`):
 
 ```
-C = |C_obs ∩ L| / |L|
+C = |cells_observed ∩ land_cells| / |land_cells|
 ```
 
-where `L` is the set of land cells on the map (height > `land_threshold`) and `C_obs` is the set of cells observed at least once during the episode. Visibility is determined by the minimap occlusion system (channel 2), so terrain-dependent visibility radii and line-of-sight occlusion are both accounted for.
+Visibility is determined by the minimap system (terrain-dependent radius + line-of-sight occlusion via channel 2). Accumulated via per-cell visibility counters in `runner.py:122`.
 
-**Terrain visibility radii** (from `constants.py`):
-
-| Terrain | Index | Visibility radius |
-|---------|-------|------------------|
-| ocean | 0 | 10 |
-| deep\_water | 1 | 8 |
-| water | 2 | 6 |
-| beach | 3 | 4 |
-| sandy | 4 | 4 |
-| grassland | 5 | 4 |
-| forest | 6 | 4 |
-| rocky | 7 | 8 |
-| mountains | 8 | 22 |
-
-**Range:** [0, 1]. 0 = agent observed no land cells. Full land coverage (1.0) is practically unachievable within 1000 steps on a 250×250 map.
-
-**Implementation in code** (`metrics.py`):
-```python
-observed = vis_counts > 0                              # [N, H, W]
-land_observed = (observed & land_mask).sum(dim=(1, 2)).float()
-land_total = land_mask.sum(dim=(1, 2)).float().clamp(min=1)
-exploration = land_observed / land_total
-```
-
-The `land_mask` is built per-episode from `world_maps[map_idx] > land_threshold`.
-
----
+**Range:** [0, 1]. Full land coverage (1.0) is practically unachievable within 1000 steps on a 250x250 map. Typical values for successful agents are 0.05-0.15.
 
 ### Danger Fraction
 
-**What it measures:** Fraction of episode steps where the agent was in a critically low HP state.
+**What it measures:** Fraction of episode steps with HP below the danger threshold.
+
+**Formula** (`metrics.py:39`):
 
 ```
 danger_fraction = (steps with hp_t < hp_danger_threshold) / episode_length
 ```
 
-Default threshold: `hp_danger_threshold = 30.0` (out of `max_hp = 100.0`).
-
-**Range:** [0, 1]. 0 = agent never entered danger zone. 1 = agent was always in danger (e.g. spawned with low HP and never recovered).
+Default threshold: 50.0 (configurable via `logging.eval.hp_danger_threshold` in `main.yaml`).
 
 ---
 
-### HP and Resource Metrics
+## Test summary
 
-Tracked per episode as running accumulators:
+At training end, `log_final_test_summary()` (`logging.py:304`) pushes all test metrics to `run.summary` (WandB runs table columns) and logs a readable `wandb.Table` under `test/summary_table` comparing det vs stoch on key metrics.
 
-| Key | Description |
-|-----|-------------|
-| `min_hp` | `min_t(hp_t)` — lowest HP at any step |
-| `final_hp` | HP at episode termination |
-| `mean_hp` | `(1/T) ∑_t hp_t` — time-averaged HP |
-| `final_resources` | Resources at episode termination |
-| `mean_resources` | `(1/T) ∑_t res_t` — time-averaged resources |
-| `max_resources` | `max_t(res_t)` — peak resources reached during episode |
+## Behavioral test evaluation
 
----
-
-## Terrain types
-
-| Index | Name | Mov. cost | Visibility | Resource drain / step |
-|-------|------|-----------|------------|----------------------|
-| 0 | ocean | 0.5 | 10 | −3.0 |
-| 1 | deep\_water | 0.75 | 8 | −2.0 |
-| 2 | water | 1.0 | 6 | −1.5 |
-| 3 | beach | 1.5 | 4 | −1.0 |
-| 4 | sandy | 2.0 | 4 | −1.0 |
-| 5 | grassland | 1.5 | 4 | −1.0 |
-| 6 | forest | 3.5 | 4 | +2.0 res (or +5.0 HP if below max) |
-| 7 | rocky | 3.5 | 8 | −1.5 |
-| 8 | mountains | 4.0 | 22 | −3.0 |
-
-Resource drain: each move drains resources by the listed amount. If resources reach 0, the shortfall is multiplied by `no_res_hp_multiplier` (default 2.0) and deducted from HP instead. Forest is the only regenerating terrain: it heals HP at 5.0/step until `max_hp`, then grants resources at 2.0/step.
-
----
-
-## Trajectory images (`trajectories/`)
-
-Logged as `wandb.Image` panels under `trajectories/env_0`, `trajectories/env_1`, etc. (deterministic policy only, first 4 eval episodes). Each image shows the full island map with the agent's path overlaid.
-
-| Element | Meaning |
-|---------|---------|
-| Terrain colours | Blue = ocean/water, green = grassland/forest, tan = beach/sand, grey = rocky, white = mountains |
-| Path line | Agent's route from spawn to final position |
-| Green circle | Spawn position |
-| Red cross | Final position |
-| Gold star | Target position |
-| Caption | Outcome + episode length |
-
----
-
-## Reward function
-
-The per-move reward is the sum of six components. All coefficients are set in `configs/env/default.yaml` and can be overridden via Hydra CLI.
-
-| Component | Formula | Default | Purpose |
-|-----------|---------|---------|---------|
-| `r_dist` | `(dist_prev − dist_t) × coef` | coef = 0.25 | Dense signal: reward moving toward target. |
-| `r_reach` | `+bonus` if agent reached target | +60.0 | Sparse: large reward for success. |
-| `r_death` | `+penalty` if HP ≤ 0 | −40.0 | Sparse: penalise dying. |
-| `r_time` | constant per move | −0.01 | Dense: discourage dawdling. |
-| `r_hp` | `−coef × max(thresh − hp_t, 0)` | coef = 0.05, thresh = 50.0 | Soft penalty for dangerously low HP. |
-| `r_resource` | `−coef × max(thresh − res_t, 0)` | coef = 0.05, thresh = 30.0 | Soft penalty for dangerously low resources. |
-
-**Total per-move reward:**
-```
-r_t = r_dist + r_reach + r_death + r_time − r_hp − r_resource
-```
+After the standard test eval, a behavioral eval runs the deterministic policy on each of the 9 hand-crafted maps from `custom_maps.py`. Results logged under `test/behavioral/{map_name}/success`, `/return`, `/episode_length`, plus trajectory images. See `ppo.py:438`.
