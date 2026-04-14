@@ -29,6 +29,7 @@ from cogniland.env.constants import ACTIONS, NUM_ACTIONS
 from cogniland.env.islands import Islands
 from cogniland.env.types import CustomMapConfig, EnvConfig, EnvState, MapGenConfig, MinimapConfig
 from cogniland.models.ppo import ActorCritic
+from cogniland.models.recurrent_ppo import RecurrentActorCritic
 
 # ---------------------------------------------------------------------------
 # Config
@@ -36,6 +37,28 @@ from cogniland.models.ppo import ActorCritic
 _CONFIGS_DIR = Path(__file__).resolve().parent / "configs"
 _model_cfg = OmegaConf.load(_CONFIGS_DIR / "models" / "ppo.yaml")
 _env_cfg   = OmegaConf.load(_CONFIGS_DIR / "env"    / "default.yaml")
+
+
+def _build_env_config(map_generation=None, custom_map=None, minimap=None):
+    """Build an EnvConfig from configs/env/default.yaml (matches eval.py).
+
+    The dataclass defaults in cogniland.env.types drift from the YAML
+    (init_resources, terrain visibilities, …). Models trained against the
+    YAML break silently if we instantiate EnvConfig() directly.
+    """
+    fake_cfg = OmegaConf.create({"env": _env_cfg, "device": "cpu"})
+    cfg = EnvConfig.from_hydra(fake_cfg)
+    overrides = {}
+    if map_generation is not None:
+        overrides["map_generation"] = map_generation
+    if custom_map is not None:
+        overrides["custom_map"] = custom_map
+    if minimap is not None:
+        overrides["minimap"] = minimap
+    if overrides:
+        from dataclasses import replace
+        cfg = replace(cfg, **overrides)
+    return cfg
 
 MODEL_SCALAR_DIM       = _model_cfg.get("scalar_dim", 7)
 MODEL_MINIMAP_CHANNELS = _model_cfg.get("minimap_channels", 2)
@@ -183,17 +206,33 @@ def load_actor_critic(ckpt_path, device="cpu"):
     action_dim      = sd["actor.weight"].shape[0]          # e.g. 5
     cnn_out_flat    = sd["trunk.0.weight"].shape[1] - scalar_hidden
     cnn_out_spatial = int((cnn_out_flat // cnn_channels) ** 0.5)
-    model = ActorCritic(
-        scalar_dim=scalar_dim,
-        minimap_channels=minimap_channels,
-        hidden_dim=hidden_dim,
-        action_dim=action_dim,
-        cnn_channels=cnn_channels,
-        cnn_out_spatial=cnn_out_spatial,
-        scalar_hidden=scalar_hidden,
-    ).to(device)
+
+    is_recurrent = "rnn.weight_ih" in sd
+    if is_recurrent:
+        rnn_hidden_dim = sd["rnn.weight_hh"].shape[0]
+        model = RecurrentActorCritic(
+            scalar_dim=scalar_dim,
+            minimap_channels=minimap_channels,
+            hidden_dim=hidden_dim,
+            rnn_hidden_dim=rnn_hidden_dim,
+            action_dim=action_dim,
+            cnn_channels=cnn_channels,
+            cnn_out_spatial=cnn_out_spatial,
+            scalar_hidden=scalar_hidden,
+        ).to(device)
+    else:
+        model = ActorCritic(
+            scalar_dim=scalar_dim,
+            minimap_channels=minimap_channels,
+            hidden_dim=hidden_dim,
+            action_dim=action_dim,
+            cnn_channels=cnn_channels,
+            cnn_out_spatial=cnn_out_spatial,
+            scalar_hidden=scalar_hidden,
+        ).to(device)
     model.load_state_dict(sd)
     model.eval()
+    model.is_recurrent = is_recurrent
     return model
 
 
@@ -548,13 +587,8 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=
     model  = load_actor_critic(ckpt_path, device)
     print(f"Loaded model from {ckpt_path}")
 
-    env_config = EnvConfig(
+    env_config = _build_env_config(
         map_generation=MapGenConfig(seed=42),
-        minimap=MinimapConfig(
-            max_ray=ENV_MM_MAX_RAY,
-            occlude=ENV_MM_OCCLUDE,
-            clear_tolerance=ENV_MM_CLR_TOL,
-        ),
         custom_map=CustomMapConfig(
             spawn_r=spawn_rc[0], spawn_c=spawn_rc[1],
             target_r=target_rc[0], target_c=target_rc[1],
@@ -600,6 +634,7 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=
     frames_per_step = 12
     frame_counter  = 0
     last_action    = None
+    rnn_hidden     = model.init_hidden(1, torch.device(device)) if model.is_recurrent else None
 
     def w2s(r, c):
         s = MAP_DISPLAY_SIZE / map_size
@@ -624,7 +659,10 @@ def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=
                 frame_counter = 0
                 obs = build_obs(state, env_config, _compiled)
                 with torch.no_grad():
-                    action = model.get_deterministic_action(obs)
+                    if model.is_recurrent:
+                        action, rnn_hidden = model.get_deterministic_action(obs, rnn_hidden)
+                    else:
+                        action = model.get_deterministic_action(obs)
                 last_action = action.item()
 
                 res   = state.resources[0].item()
