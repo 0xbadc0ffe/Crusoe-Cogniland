@@ -1,0 +1,30 @@
+agent:
+  name: ppo_rnn
+  type: ppo_rnn
+
+  lr: 2.5e-4
+  anneal_lr: true
+  num_steps: 128
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_eps: 0.1
+  entropy_coef: 0.01
+  value_coef: 0.5
+  clip_grad: 0.5
+  normalize_advantages: true
+  ppo_epochs: 4
+  num_minibatches: 4
+
+  hidden_size: 256
+  head_num_layers: 1
+  activation: relu
+
+  use_rnn: true
+  lstm_size: 256
+
+  checkpoint:
+    enabled: true
+    interval: 1000
+    keep_last: 3
+    save_best: true
+    checkpoint_dir: checkpoints

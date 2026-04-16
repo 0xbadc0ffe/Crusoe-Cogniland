@@ -1,0 +1,65 @@
+experiment_name: default
+results_path: results
+offline: false
+
+entity: cogniland
+project: cogniland-multitask
+
+seed: 42
+
+env_id: cogniland-strategy-v0
+num_tasks: 1
+task_embedding_dim: 7
+task_sampling: round_robin
+
+env:
+  map_size: 128
+  num_parallel_envs: 32
+  num_parallel_envs_eval: 4
+  max_steps: 1000
+
+  # Map dataset paths
+  train_maps: data/strategy/strategy_train.pt
+  val_maps: data/strategy/strategy_val.pt
+  test_maps: data/strategy/strategy_test.pt
+
+  # Minimap
+  minimap_max_ray: 22
+  occlude: true
+  clear_tolerance: 0.15
+
+  # Tile effects (can override TileEffects defaults)
+  init_hp: 100
+  hp_max: 100
+  wood_max: 100
+  craft_cost: 100
+
+  # Terrain visibility radii
+  terrain_vis_radius:
+    ocean: 16
+    deep_water: 12
+    water: 10
+    beach: 7
+    sandy: 7
+    grassland: 7
+    forest: 5
+    rocky: 10
+    mountains: 22
+
+  # Spawn/target
+  min_spawn_target_manhattan: 60
+
+# Task 0 reward
+reward:
+  reach_bonus: 100.0
+  step_penalty: 0.01
+  distance_shaping_coef: 0.1
+
+trainer:
+  num_train_frames: 5_000_000
+  num_eval_frames: 20_000
+  eval_interval_frames: 500_000
+  log_interval_episodes: 50
+
+metrics_tracker:
+  moving_avg_window_size: 100
