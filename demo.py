@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Cogniland strategy demo — play an RGB strategy map as a human.
+"""Cogniland demo — play an RGB map as a human.
 
-Uses the RGB dataset produced by scripts/generate_strategy_dataset.py.
+Uses the RGB dataset produced by scripts/generate_dataset.py.
 Each map is a 128x128x3 image; the game logic reads terrain classes from
 the accompanying terrain_idx grid and applies the tuned TileEffects drains.
 
@@ -13,7 +13,7 @@ Controls:
     ESC — back to menu
 
 Usage:
-    python scripts/generate_strategy_dataset.py --preview
+    python scripts/generate_dataset.py --preview
     python demo.py
 """
 
@@ -33,13 +33,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
-import generate_strategy_maps as gt
+import generate_maps as gt
 from tune_tile_effects import TileEffects, drain_for
 
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
-VAL_PATH = Path("data/strategy/strategy_val.pt")
+VAL_PATH = Path("data/maps/val.pt")
 MAP_SIZE = gt.CROP_SIZE  # 128
 
 WINDOW_W, WINDOW_H = 1200, 780
@@ -247,7 +247,7 @@ def render_minimap(rgb: np.ndarray, heightmap: np.ndarray,
 
 # ── Game state ──────────────────────────────────────────────────────────────
 
-class StrategyGame:
+class CognilandGame:
     def __init__(self, rgb: np.ndarray, heightmap: np.ndarray,
                  tidx: np.ndarray, berry_mask: np.ndarray,
                  biome: str, seed: int):
@@ -459,14 +459,14 @@ def screen_main_menu(screen, clock, val_ok: bool):
                 if ev.key == pygame.K_h and val_ok:                 return "human"
                 if ev.key == pygame.K_a:                            return "agent"
         screen.fill(COLORS["bg"])
-        title = ft.render("Cogniland — Strategy", True, COLORS["accent"])
+        title = ft.render("Cogniland", True, COLORS["accent"])
         screen.blit(title, title.get_rect(center=(WINDOW_W // 2, 160)))
         screen.blit(fm.render("Choose a mode", True, COLORS["fg"]),
                     (WINDOW_W // 2 - 110, 250))
 
         options = [
             ("H", "Human", "Play on a val map" if val_ok
-                           else "Val dataset missing — run generate_strategy_dataset.py",
+                           else "Val dataset missing — run generate_dataset.py",
              val_ok),
             ("A", "AI Agent", "No models yet — placeholder", True),
         ]
@@ -542,7 +542,7 @@ def screen_pick_map(screen, clock, dataset):
         clock.tick(30)
 
 
-def draw_craft_menu(screen, game: StrategyGame, fm, fs):
+def draw_craft_menu(screen, game: CognilandGame, fm, fs):
     """Overlay craft menu in the center of the screen."""
     overlay = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 180))
@@ -584,7 +584,7 @@ def draw_craft_menu(screen, game: StrategyGame, fm, fs):
     screen.blit(esc_txt, esc_txt.get_rect(center=(WINDOW_W // 2, by + box_h - 10)))
 
 
-def draw_game(screen, game: StrategyGame, fs, fm, fl, ft):
+def draw_game(screen, game: CognilandGame, fs, fm, fl, ft):
     screen.fill(COLORS["bg"])
 
     # ── Map ────────────────────────────────────────────────────────────────
@@ -739,7 +739,7 @@ def screen_play(screen, clock, dataset, idx: int):
     seed = int(dataset["seeds"][idx])
 
     def make_game():
-        return StrategyGame(rgb, heightmap, tidx, mask, biome, seed)
+        return CognilandGame(rgb, heightmap, tidx, mask, biome, seed)
 
     game = make_game()
     fs = pygame.font.Font(None, 22)
@@ -802,7 +802,7 @@ def screen_agent_stub(screen, clock):
             if ev.type == pygame.KEYDOWN:           return "menu"
         screen.fill(COLORS["bg"])
         m1 = fm.render("AI mode unavailable", True, COLORS["accent"])
-        m2 = fs.render("No trained models exist yet for the RGB strategy env.",
+        m2 = fs.render("No trained models exist yet for the RGB env.",
                        True, COLORS["fg"])
         m3 = fs.render("Press any key to go back.", True, COLORS["dim"])
         screen.blit(m1, m1.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2 - 40)))
@@ -817,7 +817,7 @@ def screen_agent_stub(screen, clock):
 def main():
     pygame.init()
     screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
-    pygame.display.set_caption("Cogniland — Strategy")
+    pygame.display.set_caption("Cogniland")
     clock = pygame.time.Clock()
 
     dataset = load_val_dataset()

@@ -70,7 +70,7 @@ The agent sees:
 
 ### Maps
 
-Maps are pre-generated and stored as `.pt` files in `data/strategy/`. Each file contains:
+Maps are pre-generated and stored as `.pt` files in `data/maps/`. Each file contains:
 
 ```python
 {
@@ -85,7 +85,7 @@ Maps are pre-generated and stored as `.pt` files in `data/strategy/`. Each file 
 
 Train: 256 maps (64 per biome). Val/Test: 16 maps (4 per biome). Biomes: balanced, archipelago, grassland, highland.
 
-To regenerate: `python scripts/generate_strategy_dataset.py`
+To regenerate: `python scripts/generate_dataset.py`
 
 ### Adding a new task
 

@@ -7,7 +7,7 @@ project: cogniland-multitask
 
 seed: 42
 
-env_id: cogniland-strategy-v0
+env_id: cogniland-v0
 num_tasks: 1
 task_embedding_dim: 7
 task_sampling: round_robin
@@ -19,9 +19,9 @@ env:
   max_steps: 1000
 
   # Map dataset paths
-  train_maps: data/strategy/strategy_train.pt
-  val_maps: data/strategy/strategy_val.pt
-  test_maps: data/strategy/strategy_test.pt
+  train_maps: data/maps/train.pt
+  val_maps: data/maps/val.pt
+  test_maps: data/maps/test.pt
 
   # Minimap
   minimap_max_ray: 22

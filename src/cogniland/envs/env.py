@@ -1,4 +1,4 @@
-"""Batched strategy game environment — pure numpy, no PyTorch/JAX inside.
+"""Batched Cogniland environment — pure numpy, no PyTorch/JAX inside.
 
 Runs B parallel games simultaneously. Each game has:
   - An agent with HP, wood, tool, position
@@ -22,7 +22,7 @@ import torch
 
 from cogniland.envs.tile_effects import TileEffects, drain_for
 
-# Terrain class names — must match generate_strategy_maps.py order
+# Terrain class names — must match generate_maps.py order
 TERRAIN_NAMES = [
     "ocean", "deep_water", "water", "beach", "sandy",
     "grassland", "forest", "rocky", "mountains",
@@ -284,8 +284,8 @@ def _cast_ray(
             cy += sy
 
 
-class StrategyEnv:
-    """Batched strategy game environment using pure numpy arrays."""
+class CognilandEnv:
+    """Batched Cogniland environment using pure numpy arrays."""
 
     def __init__(self, config: Any, maps_path: str, num_envs: int):
         self._config = config

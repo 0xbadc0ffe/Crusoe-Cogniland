@@ -1,4 +1,4 @@
-"""Terrain drain/heal parameters for the strategy game.
+"""Terrain drain/heal parameters for the Cogniland game.
 
 Single source of truth — copied from scripts/tune_tile_effects.py.
 """

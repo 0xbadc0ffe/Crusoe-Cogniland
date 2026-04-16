@@ -1,4 +1,4 @@
-"""Tests for the environment layer: TaskSampler, StrategyEnv, reward computation."""
+"""Tests for the environment layer: TaskSampler, CognilandEnv, reward computation."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from cogniland.envs.task_sampler import TaskSampler
-from cogniland.envs.strategy_env import StrategyEnv, MINIMAP_DIAMETER, NUM_ACTIONS
+from cogniland.envs.env import CognilandEnv, MINIMAP_DIAMETER, NUM_ACTIONS
 from cogniland.envs.tasks import compute_task_reward
 
 
@@ -22,11 +22,11 @@ from cogniland.envs.tasks import compute_task_reward
 # Helpers
 # ---------------------------------------------------------------------------
 
-VAL_MAPS = str(PROJECT_ROOT / "data" / "strategy" / "strategy_val.pt")
+VAL_MAPS = str(PROJECT_ROOT / "data/maps/val.pt")
 
 
 def _make_config(**overrides):
-    """Build a minimal config namespace matching what StrategyEnv expects."""
+    """Build a minimal config namespace matching what CognilandEnv expects."""
     env = SimpleNamespace(
         max_steps=200,
         min_spawn_target_manhattan=60,
@@ -107,14 +107,14 @@ class TestTaskSampler:
 
 
 # ---------------------------------------------------------------------------
-# StrategyEnv
+# CognilandEnv
 # ---------------------------------------------------------------------------
 
-class TestStrategyEnv:
+class TestCognilandEnv:
     @pytest.fixture
     def env(self):
         config = _make_config()
-        return StrategyEnv(config, VAL_MAPS, num_envs=4)
+        return CognilandEnv(config, VAL_MAPS, num_envs=4)
 
     def test_reset_shapes(self, env):
         obs = env.reset(seed=42)

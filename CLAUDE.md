@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Cogniland is a multi-task RL framework where agents learn to navigate procedurally generated 128x128 strategy maps. The agent starts at a random spawn point and must reach a target position while managing **HP** (health points) and **wood** (gathered from forests). Different terrain types impose HP drains, and the agent can **forage** (berries heal HP, forests yield wood) and **craft tools** (raft, rope, shoes) that reduce terrain costs. Maps are pre-generated in pools of 256 (train) / 16 (val/test) across 4 biomes.
+Cogniland is a multi-task RL framework where agents learn to navigate procedurally generated 128x128 maps. The agent starts at a random spawn point and must reach a target position while managing **HP** (health points) and **wood** (gathered from forests). Different terrain types impose HP drains, and the agent can **forage** (berries heal HP, forests yield wood) and **craft tools** (raft, rope, shoes) that reduce terrain costs. Maps are pre-generated in pools of 256 (train) / 16 (val/test) across 4 biomes.
 
 The framework supports three agents: **PPO-RNN** (JAX/Flax), **DreamerV3**, and **STORM**. New agents plug in via a `@register_agent` decorator — all training orchestration, evaluation, and logging are agent-agnostic.
 
@@ -19,7 +19,7 @@ conda activate crusoe
 pip install -e .
 
 # Generate map datasets (required before training)
-python scripts/generate_strategy_dataset.py
+python scripts/generate_dataset.py
 ```
 
 ---
@@ -72,8 +72,8 @@ scripts/train.py (OmegaConf)
 
 Trainer(config, agent).run()
   │
-  ├─ MultiTaskEnvWrapper(StrategyEnv)        # 32 parallel training envs
-  ├─ MultiTaskEnvWrapper(StrategyEnv)        # 4 eval envs
+  ├─ MultiTaskEnvWrapper(CognilandEnv)        # 32 parallel training envs
+  ├─ MultiTaskEnvWrapper(CognilandEnv)        # 4 eval envs
   ├─ RunLogger(config)                       # W&B init + artifact upload
   ├─ TaskSampler(num_tasks, num_envs)        # task assignment per segment
   │
@@ -117,19 +117,19 @@ Trainer(config, agent).run()
 | File | Purpose |
 |------|---------|
 | `scripts/train.py` | OmegaConf entry point. Parses `--env-config` + `--agent-config`, calls `load_agent(config)` then `Trainer(config, agent).run()`. |
-| `demo.py` | Playable pygame strategy game (human mode). Ground truth for game mechanics. |
+| `demo.py` | Playable pygame game (human mode). Ground truth for game mechanics. |
 | `configs/` | OmegaConf YAML config hierarchy. |
 
 ### `src/cogniland/envs/` — Environment
 
 | File | Purpose |
 |------|---------|
-| `strategy_env.py` | `StrategyEnv` — batched numpy env running B parallel games. 8 actions (4 cardinal, forage, 3 craft). Loads pre-generated maps from `.pt` files. Computes RGB minimap with occlusion. Auto-resets done envs. |
+| `env.py` | `CognilandEnv` — batched numpy env running B parallel games. 8 actions (4 cardinal, forage, 3 craft). Loads pre-generated maps from `.pt` files. Computes RGB minimap with occlusion. Auto-resets done envs. |
 | `tile_effects.py` | `TileEffects` dataclass + `drain_for()` — terrain HP drain table, tool modifiers, foraging params. Single source of truth. |
 | `tasks.py` | `compute_task_reward()` — task 0: sparse reach bonus + step penalty + distance shaping. Tasks 1-6 are stubs. |
-| `multitask_wrapper.py` | `MultiTaskEnvWrapper` — wraps `StrategyEnv`, applies task-specific rewards, provides task embeddings. |
+| `multitask_wrapper.py` | `MultiTaskEnvWrapper` — wraps `CognilandEnv`, applies task-specific rewards, provides task embeddings. |
 | `task_sampler.py` | `TaskSampler` — round-robin or random task assignment across parallel envs. |
-| `registry.py` | `make_env(env_id, config, train)` — factory creating `StrategyEnv` wrapped with `MultiTaskEnvWrapper`. |
+| `registry.py` | `make_env(env_id, config, train)` — factory creating `CognilandEnv` wrapped with `MultiTaskEnvWrapper`. |
 | `gym_adapter.py` | `GymAdapter` — state-based API adapter for DreamerV3/STORM compatibility. |
 | `simplexnoise/` | Simplex noise for map generation. |
 
@@ -180,8 +180,8 @@ Trainer(config, agent).run()
 | `scripts/run_sweep.py` | Local parallel W&B agent launcher (non-SLURM). |
 | `scripts/launch_sweep.sh` | SLURM job array submitter. |
 | `scripts/job_sweep.slurm` | SLURM job script. |
-| `scripts/generate_strategy_maps.py` | Map generation pipeline (4 biomes, simplex noise). |
-| `scripts/generate_strategy_dataset.py` | Builds train/val/test `.pt` datasets. |
+| `scripts/generate_maps.py` | Map generation pipeline (4 biomes, simplex noise). |
+| `scripts/generate_dataset.py` | Builds train/val/test `.pt` datasets. |
 | `scripts/tune_tile_effects.py` | HP drain parameter tuning simulation. |
 | `configs/env/cogniland.yaml` | Env config: map paths, parallel envs, reward coefficients. |
 | `configs/agent/ppo_rnn.yaml` | PPO-RNN hyperparameters. |

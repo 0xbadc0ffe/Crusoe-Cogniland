@@ -1,4 +1,4 @@
-"""Generate the RGB-based strategy dataset (train / val / test).
+"""Generate the RGB-based map dataset (train / val / test).
 
 Each map is a 128x128x3 uint8 RGB image (the observation the CNN will see),
 accompanied by an int8 terrain index grid and a boolean berry mask. The
@@ -9,10 +9,10 @@ During play, two extra channels will be stacked on top of the RGB image
 baked into the dataset — they are sampled at play time.
 
 Layout:
-    data/strategy/
-        strategy_train.pt    64 maps × 4 biomes = 256
-        strategy_val.pt       4 maps × 4 biomes =  16
-        strategy_test.pt      4 maps × 4 biomes =  16
+    data/maps/
+        train.pt    64 maps × 4 biomes = 256
+        val.pt       4 maps × 4 biomes =  16
+        test.pt      4 maps × 4 biomes =  16
         preview_val.png       small grid visualization
 
 Each .pt file is a dict:
@@ -29,8 +29,8 @@ The heightmap is kept so the runtime env can reuse height-based line-of-sight
 occlusion (mountains/forest shadow rays) rather than only class-based blocking.
 
 Usage:
-    python scripts/generate_strategy_dataset.py
-    python scripts/generate_strategy_dataset.py --preview --base-seed 100
+    python scripts/generate_dataset.py
+    python scripts/generate_dataset.py --preview --base-seed 100
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
-import generate_strategy_maps as gt
+import generate_maps as gt
 
 
 SPLITS_PER_BIOME = {"train": 64, "val": 4, "test": 4}
@@ -134,7 +134,7 @@ def _save_preview(split: dict, path: Path) -> None:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-seed", type=int, default=DEFAULT_BASE_SEED)
-    parser.add_argument("--output-dir", type=str, default="data/strategy")
+    parser.add_argument("--output-dir", type=str, default="data/maps")
     parser.add_argument("--preview", action="store_true",
                         help="Save a val-set preview PNG")
     args = parser.parse_args()
@@ -142,7 +142,7 @@ def main():
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Generating strategy dataset (base seed {args.base_seed})")
+    print(f"Generating map dataset (base seed {args.base_seed})")
     print(f"  per biome: train={SPLITS_PER_BIOME['train']} "
           f"val={SPLITS_PER_BIOME['val']} test={SPLITS_PER_BIOME['test']}")
 
@@ -150,7 +150,7 @@ def main():
     saved = {}
     for name, n in SPLITS_PER_BIOME.items():
         split, seed = _build_split(name, n, seed)
-        path = out_dir / f"strategy_{name}.pt"
+        path = out_dir / f"{name}.pt"
         torch.save(split, path)
         mb = path.stat().st_size / 1e6
         print(f"  saved {path.name}: {split['rgb'].shape[0]} maps  ({mb:.1f} MB)")

@@ -1,4 +1,4 @@
-"""Task reward definitions for the multi-task strategy game.
+"""Task reward definitions for the multi-task game.
 
 Each task is a function that computes per-step reward given env info.
 Task 0 (reach target) is fully implemented; tasks 1-6 are stubs.

@@ -1,6 +1,6 @@
 # Cogniland
 
-A multi-task reinforcement learning benchmark on procedurally generated strategy maps.
+A multi-task reinforcement learning benchmark on procedurally generated maps.
 
 An agent spawns on a 128x128 island and must reach a target while managing HP. Terrain drains health at different rates, forests provide wood, berries heal, and craftable tools (raft, rope, shoes) unlock efficient traversal of specific terrain families. The game is designed so that naive shortest-path navigation usually fails — survival requires strategic foraging, tool crafting, and terrain awareness.
 
@@ -14,7 +14,7 @@ conda activate crusoe
 pip install -e .
 
 # Generate map datasets (one-time, ~30s)
-python scripts/generate_strategy_dataset.py
+python scripts/generate_dataset.py
 ```
 
 ## Quick start
@@ -132,7 +132,7 @@ configs/sweeps/*.yaml          W&B sweep definitions
 
 src/cogniland/
   envs/                        Batched numpy environment
-    strategy_env.py              Game loop (8 actions, HP/wood/tools)
+    env.py              Game loop (8 actions, HP/wood/tools)
     tile_effects.py              Terrain drain table
     tasks.py                     Per-task reward functions
     multitask_wrapper.py         Reward routing + task embeddings
@@ -152,7 +152,7 @@ src/cogniland/
   config/                      Config loading, XLA setup
   metrics/                     Rolling stats tracker
 
-data/strategy/                 Pre-generated map datasets (.pt)
+data/maps/                 Pre-generated map datasets (.pt)
 demo.py                        Playable human demo (pygame)
 ```
 

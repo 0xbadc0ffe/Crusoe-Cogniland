@@ -1,4 +1,4 @@
-"""Tune tile-effect parameters for the Survival Kit strategy game.
+"""Tune tile-effect parameters for the Survival Kit game.
 
 Runs a small simulation over generated maps to verify whether a candidate
 parameter table satisfies the design goals:
@@ -25,7 +25,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
-import generate_strategy_maps as gt
+import generate_maps as gt
 
 
 # ── Parameter table ────────────────────────────────────────────────────────
@@ -300,7 +300,7 @@ def run_tuning(args: argparse.Namespace) -> None:
     print(f"Simulating {len(biomes)} biomes × {len(seeds)} seeds × {len(tool_configs) + 1} policies")
     for biome in biomes:
         for seed in seeds:
-            smap = gt.generate_strategy_map(seed, biome)
+            smap = gt.generate_map(seed, biome)
             hm = smap.heightmap.numpy()
             bm = smap.berry_mask.numpy()
             spawn, target = sample_spawn_target(hm, biome, seed)

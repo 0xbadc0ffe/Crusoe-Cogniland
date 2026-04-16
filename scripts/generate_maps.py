@@ -1,4 +1,4 @@
-"""Generate island maps for the Survival Kit strategy game.
+"""Generate island maps for the Survival Kit game.
 
 Four biomes (balanced, archipelago, highland, grassland), each with its own
 sink_mode + threshold profile. Each map is:
@@ -10,7 +10,7 @@ sink_mode + threshold profile. Each map is:
   5. Painted with a 1-pixel lethal border (black on render)
 
 Usage:
-    python scripts/generate_tool_strategy_maps.py --preview
+    python scripts/generate_maps.py --preview
 """
 
 from __future__ import annotations
@@ -237,7 +237,7 @@ def colorize_gradient(hm: np.ndarray, biome: str,
 # ── Map dataclass & full generation ─────────────────────────────────────────
 
 @dataclass
-class StrategyMap:
+class MapData:
     heightmap: torch.Tensor     # [CROP_SIZE, CROP_SIZE], includes deadly border
     berry_mask: torch.Tensor    # [CROP_SIZE, CROP_SIZE] bool
     biome: str
@@ -245,13 +245,13 @@ class StrategyMap:
     terrain_fractions: dict = field(default_factory=dict)
 
 
-def generate_strategy_map(seed: int, biome: str) -> StrategyMap:
+def generate_map(seed: int, biome: str) -> MapData:
     raw = generate_raw_heightmap(seed, biome)
     modified = apply_biome_mods(raw, biome, seed)
     cropped = center_crop(modified, CROP_SIZE)
     berry_mask = sample_berry_mask(cropped, biome, BERRY_FRAC, seed)
     bordered = paint_deadly_border(cropped)
-    return StrategyMap(
+    return MapData(
         heightmap=torch.from_numpy(bordered),
         berry_mask=torch.from_numpy(berry_mask),
         biome=biome,
@@ -260,11 +260,11 @@ def generate_strategy_map(seed: int, biome: str) -> StrategyMap:
     )
 
 
-def generate_strategy_dataset(base_seed: int, count_per_biome: int = 3) -> list[StrategyMap]:
-    maps: list[StrategyMap] = []
+def generate_dataset(base_seed: int, count_per_biome: int = 3) -> list[MapData]:
+    maps: list[MapData] = []
     for biome in ALL_BIOMES:
         for i in range(count_per_biome):
-            m = generate_strategy_map(base_seed + i, biome=biome)
+            m = generate_map(base_seed + i, biome=biome)
             maps.append(m)
             f = m.terrain_fractions
             berry_frac = m.berry_mask.float().mean().item()
@@ -276,7 +276,7 @@ def generate_strategy_dataset(base_seed: int, count_per_biome: int = 3) -> list[
 
 # ── Preview ─────────────────────────────────────────────────────────────────
 
-def _preview_grid(maps: list[StrategyMap], output_path: Path) -> None:
+def _preview_grid(maps: list[MapData], output_path: Path) -> None:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -301,7 +301,7 @@ def _preview_grid(maps: list[StrategyMap], output_path: Path) -> None:
         for row in range(len(biome_maps[biome]), nrows):
             axes[row, col].set_visible(False)
 
-    fig.suptitle("Strategy Maps", fontsize=14, y=1.01)
+    fig.suptitle("Maps", fontsize=14, y=1.01)
     plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -316,17 +316,17 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--count", type=int, default=3, help="Maps per biome")
     parser.add_argument("--preview", action="store_true")
-    parser.add_argument("--output-dir", type=str, default="data/strategy_maps")
+    parser.add_argument("--output-dir", type=str, default="data/maps")
     args = parser.parse_args()
     out_dir = Path(args.output_dir)
 
     print(f"Generating {args.count} maps per biome (seed={args.seed})")
-    maps = generate_strategy_dataset(args.seed, count_per_biome=args.count)
+    maps = generate_dataset(args.seed, count_per_biome=args.count)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     heightmaps = torch.stack([m.heightmap for m in maps])
     berry_masks = torch.stack([m.berry_mask for m in maps])
-    save_path = out_dir / f"strategy_seed{args.seed}_n{len(maps)}.pt"
+    save_path = out_dir / f"maps_seed{args.seed}_n{len(maps)}.pt"
     torch.save({
         "maps": heightmaps,
         "berry_masks": berry_masks,

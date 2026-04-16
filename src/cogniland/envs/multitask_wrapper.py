@@ -1,4 +1,4 @@
-"""Multi-task wrapper for StrategyEnv.
+"""Multi-task wrapper for the base environment.
 
 Wraps the base environment, delegates step/reset, applies task-specific
 rewards, and exposes task embeddings.
@@ -10,22 +10,22 @@ from typing import Any
 
 import numpy as np
 
-from cogniland.envs.strategy_env import StrategyEnv
+from cogniland.envs.env import CognilandEnv
 from cogniland.envs.task_sampler import TaskSampler
 from cogniland.envs.tasks import compute_task_reward
 
 
 class MultiTaskEnvWrapper:
-    """Wraps StrategyEnv with multi-task reward computation and embeddings.
+    """Wraps CognilandEnv with multi-task reward computation and embeddings.
 
     Attributes:
-        env: The underlying StrategyEnv
+        env: The underlying CognilandEnv
         task_ids: int array [B] — current task per env
     """
 
     def __init__(
         self,
-        env: StrategyEnv,
+        env: CognilandEnv,
         config: Any,
         num_tasks: int = 1,
         task_embedding_dim: int = 7,

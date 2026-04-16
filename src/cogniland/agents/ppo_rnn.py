@@ -29,7 +29,7 @@ from cogniland.agents.state import AgentState, RuntimeState
 # ---------------------------------------------------------------------------
 
 class ActorCriticRNN(nn.Module):
-    """CNN + MLP + LSTM actor-critic for strategy maps.
+    """CNN + MLP + LSTM actor-critic for Cogniland maps.
 
     Input:
         minimap:  [B, 3, 45, 45]  (channels-first, converted to channels-last internally)
