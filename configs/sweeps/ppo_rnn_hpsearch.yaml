@@ -1,0 +1,25 @@
+name: ppo_rnn_lr_sweep
+entity: cogniland
+project: cogniland-multitask
+method: random
+metric:
+  name: eval/aggregate/avg_reward
+  goal: maximize
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - --env-config
+  - configs/env/cogniland.yaml
+  - --agent-config
+  - configs/agent/ppo_rnn.yaml
+  - --sweep
+
+program: scripts/train.py
+
+parameters:
+  seed: {value: 42}
+  agent.lr: {distribution: log_uniform_values, min: 1e-5, max: 1e-3}
+  agent.entropy_coef: {distribution: log_uniform_values, min: 0.001, max: 0.1}
+  agent.clip_eps: {values: [0.1, 0.2, 0.3]}

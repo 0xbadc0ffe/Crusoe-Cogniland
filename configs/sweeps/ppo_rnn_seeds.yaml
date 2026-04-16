@@ -1,0 +1,20 @@
+name: ppo_rnn_multitask_k10
+entity: cogniland
+project: cogniland-multitask
+method: grid
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - --env-config
+  - configs/env/cogniland.yaml
+  - --agent-config
+  - configs/agent/ppo_rnn.yaml
+  - --sweep
+
+program: scripts/train.py
+
+parameters:
+  seed: {values: [42, 43, 44, 45, 46, 47, 48, 49, 50, 51]}
+  trainer.num_train_frames: {value: 5000000}
