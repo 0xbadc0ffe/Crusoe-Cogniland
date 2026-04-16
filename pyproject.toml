@@ -18,6 +18,8 @@ dependencies = [
     "tabulate",
     "numpy",
     "torch",
+    "einops",
+    "distrax",
 ]
 
 [tool.setuptools.packages.find]
