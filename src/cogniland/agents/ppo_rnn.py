@@ -404,8 +404,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
         # LR annealing setup
         total_updates = num_train_frames // (num_steps * num_envs)
 
-        # Reset env
-        obs, info = env.reset()
+        # Reset env — our env returns obs dict only (no info)
+        obs = env.reset()
         carry = _zero_carry(num_envs)
 
         # Episode tracking
@@ -438,8 +438,7 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
                 )
 
                 actions_np = np.asarray(actions_jax)
-                next_obs, rewards, terminated, truncated, info = env.step(actions_np)
-                dones = np.logical_or(terminated, truncated)
+                next_obs, rewards, dones, info = env.step(actions_np)
 
                 storage.append(Transition(
                     obs_minimap=minimap_jax,
@@ -563,7 +562,14 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
                         current_num_actions=jnp.array(num_actions),
                     ),
                 )
-                checkpoint_callback(_state, global_step)
+                if callable(checkpoint_callback):
+                    checkpoint_callback(_state, global_step)
+                elif hasattr(checkpoint_callback, 'on_validation_end'):
+                    checkpoint_callback.on_validation_end(
+                        agent_state=_state,
+                        step=global_step,
+                        metrics={},
+                    )
 
         # -- Build metrics --
         total_grad_steps = ppo_epochs * num_minibatches * max(n_updates, 1)
@@ -610,7 +616,7 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             task_emb_np = np.zeros((num_envs, task_embedding_dim), dtype=np.float32)
         task_emb_jax = jnp.asarray(task_emb_np)
 
-        obs, info = env.reset()
+        obs = env.reset()
         n_eval_envs = obs["minimap"].shape[0]
         carry = _zero_carry(n_eval_envs)
         # Adjust task_emb if eval uses different num envs
@@ -631,8 +637,7 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             )
 
             actions_np = np.asarray(actions_jax)
-            next_obs, rewards, terminated, truncated, info = env.step(actions_np)
-            dones = np.logical_or(terminated, truncated)
+            next_obs, rewards, dones, info = env.step(actions_np)
 
             # Reset carry for done episodes
             done_mask = jnp.asarray(dones).reshape(-1, 1)
