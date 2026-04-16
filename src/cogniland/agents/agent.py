@@ -4,7 +4,7 @@ This module defines the Agent dataclass that holds all agent methods.
 Factory functions return Agent instances instead of subclassing ContinualAgent.
 
 Example usage:
-    from cl.agents.storm import make_storm
+    from cogniland.agents.storm import make_storm
 
     # Create agent (factory returns Agent dataclass)
     agent = make_storm(config, obs_space, act_space)
