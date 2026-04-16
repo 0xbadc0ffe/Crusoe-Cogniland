@@ -1,1247 +1,849 @@
 #!/usr/bin/env python3
-"""Cogniland Demo — Play as human or watch a trained AI agent.
+"""Cogniland strategy demo — play an RGB strategy map as a human.
+
+Uses the RGB dataset produced by scripts/generate_strategy_dataset.py.
+Each map is a 128x128x3 image; the game logic reads terrain classes from
+the accompanying terrain_idx grid and applies the tuned TileEffects drains.
+
+Controls:
+    WASD / arrows — move
+    F — forage (forest → wood, berry → HP)
+    C — craft a tool (costs 100 wood, one tool only)
+    R — reset map
+    ESC — back to menu
 
 Usage:
-    # Generate demo maps first (once):
-    python scripts/generate_demo_maps.py
-
-    # Then launch:
+    python scripts/generate_strategy_dataset.py --preview
     python demo.py
-
-Main menu:
-    H — Play as Human
-    A — Watch AI Agent
-    ESC — Quit
 """
 
+from __future__ import annotations
+
 import math
-import os
-import re
+import random
 import sys
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
 import pygame
 import torch
-from omegaconf import OmegaConf
 
-from cogniland.env.constants import ACTIONS, NUM_ACTIONS
-from cogniland.env.islands import Islands
-from cogniland.env.types import CustomMapConfig, EnvConfig, EnvState, MapGenConfig, MinimapConfig
-from cogniland.models.ppo import ActorCritic
-from cogniland.models.recurrent_ppo import RecurrentActorCritic
+PROJECT_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-_CONFIGS_DIR = Path(__file__).resolve().parent / "configs"
-_model_cfg = OmegaConf.load(_CONFIGS_DIR / "models" / "ppo.yaml")
-_env_cfg   = OmegaConf.load(_CONFIGS_DIR / "env"    / "default.yaml")
+import generate_strategy_maps as gt
+from tune_tile_effects import TileEffects, drain_for
 
 
-def _build_env_config(map_generation=None, custom_map=None, minimap=None):
-    """Build an EnvConfig from configs/env/default.yaml (matches eval.py).
+# ── Config ──────────────────────────────────────────────────────────────────
 
-    The dataclass defaults in cogniland.env.types drift from the YAML
-    (init_resources, terrain visibilities, …). Models trained against the
-    YAML break silently if we instantiate EnvConfig() directly.
-    """
-    fake_cfg = OmegaConf.create({"env": _env_cfg, "device": "cpu"})
-    cfg = EnvConfig.from_hydra(fake_cfg)
-    overrides = {}
-    if map_generation is not None:
-        overrides["map_generation"] = map_generation
-    if custom_map is not None:
-        overrides["custom_map"] = custom_map
-    if minimap is not None:
-        overrides["minimap"] = minimap
-    if overrides:
-        from dataclasses import replace
-        cfg = replace(cfg, **overrides)
-    return cfg
+VAL_PATH = Path("data/strategy/strategy_val.pt")
+MAP_SIZE = gt.CROP_SIZE  # 128
 
-MODEL_SCALAR_DIM       = _model_cfg.get("scalar_dim", 7)
-MODEL_MINIMAP_CHANNELS = _model_cfg.get("minimap_channels", 2)
-MODEL_HIDDEN_DIM       = _model_cfg.get("hidden_dim", 128)
-MODEL_ACTION_DIM       = _model_cfg.get("action_dim", NUM_ACTIONS)
-MODEL_CNN_CHANNELS     = _model_cfg.get("cnn_channels", 32)
-MODEL_CNN_OUT_SPATIAL  = _model_cfg.get("cnn_out_spatial", 4)
-MODEL_SCALAR_HIDDEN    = _model_cfg.get("scalar_hidden", 64)
+WINDOW_W, WINDOW_H = 1200, 780
+MAP_DISPLAY = 512
+PANEL_X = MAP_DISPLAY + 60
+PANEL_W = WINDOW_W - PANEL_X - 20
 
-_env_mm = _env_cfg.get("minimap", _env_cfg)
-ENV_MM_MAX_RAY  = _env_mm.get("max_ray",          _env_cfg.get("minimap_max_ray",          22))
-ENV_MM_OCCLUDE  = _env_mm.get("occlude",           _env_cfg.get("minimap_occlude",          True))
-ENV_MM_CLR_TOL  = _env_mm.get("clear_tolerance",   _env_cfg.get("minimap_clear_tolerance",  0.1))
-_env_mg = _env_cfg.get("map_generation", _env_cfg)
-ENV_MAP_SIZE    = _env_mg.get("size", _env_cfg.get("size", 250))
-
-VAL_MAPS_PATH        = Path("data/val_seed42_n16.pt")
-BEHAVIORAL_MAPS_PATH = Path("data/test_behavior.pt")
-
-# ---------------------------------------------------------------------------
-# UI constants
-# ---------------------------------------------------------------------------
-WINDOW_W, WINDOW_H   = 1200, 800
-MAP_DISPLAY_SIZE     = 550
-MINIMAP_DISPLAY_SIZE = 220
-ACTION_NAMES         = {0: "↑", 1: "↓", 2: "→", 3: "←", 4: "•"}
+# Terrain-dependent visibility radii (in tiles) — from configs/env/default.yaml
+TERRAIN_VIS_RADIUS: dict[str, int] = {
+    "ocean":      16,
+    "deep_water": 12,
+    "water":      10,
+    "beach":       7,
+    "sandy":       7,
+    "grassland":   7,
+    "forest":      5,
+    "rocky":      10,
+    "mountains":  22,
+}
+DEFAULT_VIS_RADIUS = 7
+MINIMAP_RADIUS = 22  # max ray for minimap patch extraction
+MINIMAP_DISPLAY = 340  # pixel size of minimap on screen
+CLEAR_TOLERANCE = 0.15  # height diff above agent that blocks vision
 
 COLORS = {
-    "player":    (255,  50,  50),
-    "target":    ( 50, 255,  50),
-    "black":     (  0,   0,   0),
-    "white":     (255, 255, 255),
-    "gray":      (128, 128, 128),
-    "red":       (255,   0,   0),
-    "green_ui":  (  0, 220,   0),
-    "blue_ui":   ( 80, 140, 255),
-    "panel_bg":  ( 25,  25,  35),
-    "panel_fg":  (200, 200, 210),
-    "highlight": (255, 200,  50),
+    "bg":       (22, 22, 30),
+    "panel":    (32, 32, 42),
+    "fg":       (215, 215, 220),
+    "dim":      (120, 120, 130),
+    "white":    (255, 255, 255),
+    "player":   (255,  60,  60),
+    "target":   ( 60, 255,  80),
+    "hp_full":  ( 70, 210, 110),
+    "hp_mid":   (240, 190,  60),
+    "hp_low":   (240,  80,  70),
+    "wood":     (200, 140,  60),
+    "berry":    gt.BERRY_COLOR,
+    "accent":   ( 90, 160, 255),
+    "highlight":(255, 200,  60),
+    "craft_bg": ( 40,  40,  55),
+    "forage":   (120, 200,  80),
 }
 
-# ---------------------------------------------------------------------------
-# Demo-map helpers
-# ---------------------------------------------------------------------------
+ACTIONS = {
+    pygame.K_UP:    (-1, 0),  pygame.K_w: (-1, 0),
+    pygame.K_DOWN:  ( 1, 0),  pygame.K_s: ( 1, 0),
+    pygame.K_LEFT:  ( 0,-1),  pygame.K_a: ( 0,-1),
+    pygame.K_RIGHT: ( 0, 1),  pygame.K_d: ( 0, 1),
+}
+
+CRAFTABLE_TOOLS = ["raft", "rope", "shoes"]
+
+# Inferno-inspired color ramp for trajectory visit counts:
+# 1 visit = bright red/orange, more visits = darker
+INFERNO_RAMP = [
+    (220,  50,  30),   # 1 visit  — bright red
+    (180,  30,  20),   # 2 visits
+    (130,  20,  15),   # 3 visits
+    ( 90,  12,  10),   # 4 visits
+    ( 55,   5,   5),   # 5+ visits — very dark
+]
+
+TOOL_SYMBOLS = {"raft": "R", "rope": "P", "shoes": "S"}
 
 
-def _fast_colorize(world_map: np.ndarray, compiled) -> np.ndarray:
-    """Vectorised heightmap → [H, W, 3] uint8.  Much faster than colorize()."""
-    thresholds = compiled.thresholds.cpu().numpy()
-    color_lut  = compiled.color_lut.cpu().numpy()          # [T, 3] uint8
-    indices    = np.searchsorted(thresholds, world_map).clip(0, compiled.num_terrains - 1)
-    return color_lut[indices].astype(np.uint8)             # [H, W, 3]
+# ── Dataset ─────────────────────────────────────────────────────────────────
+
+def load_val_dataset():
+    if not VAL_PATH.exists():
+        return None
+    return torch.load(str(VAL_PATH), map_location="cpu", weights_only=False)
 
 
-def maps_to_thumbnails(maps: torch.Tensor, compiled, size: int) -> list[pygame.Surface]:
-    """Render each map as a scaled pygame Surface thumbnail."""
-    thumbs = []
-    for wm in maps:
-        rgb  = _fast_colorize(wm.numpy(), compiled)        # [H, W, 3]
-        surf = pygame.Surface((wm.shape[1], wm.shape[0]))
-        pygame.surfarray.blit_array(surf, rgb.transpose(1, 0, 2))
-        thumbs.append(pygame.transform.scale(surf, (size, size)))
-    return thumbs
+def _sample_spawn_target(tidx: np.ndarray, seed: int,
+                         min_manhattan: int = 60) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Pick two distinct land cells at least `min_manhattan` apart."""
+    water_idx = gt.TERRAIN_NAMES.index("water")
+    land = np.argwhere(tidx > water_idx)
+    rng = random.Random(seed)
+    if len(land) < 2:
+        return (MAP_SIZE // 2, MAP_SIZE // 2), (MAP_SIZE // 2, MAP_SIZE // 2)
+    for _ in range(500):
+        i, j = rng.randrange(len(land)), rng.randrange(len(land))
+        s = tuple(int(x) for x in land[i])
+        t = tuple(int(x) for x in land[j])
+        if abs(s[0] - t[0]) + abs(s[1] - t[1]) >= min_manhattan:
+            return s, t
+    return tuple(int(x) for x in land[0]), tuple(int(x) for x in land[-1])
 
 
-# ---------------------------------------------------------------------------
-# Shared drawing helpers
-# ---------------------------------------------------------------------------
+# ── Minimap occlusion (simplified from cogniland/env/core.py) ──────────────
 
-def draw_star(surface, cx, cy, r_outer, r_inner=None, color=(255, 215, 0),
-              outline=(0, 0, 0), n_points=5):
-    """Draw a matplotlib-style 5-pointed star (inner radius ≈ 0.38 × outer)."""
+def _bresenham_ray(y0: int, x0: int, y1: int, x1: int) -> list[tuple[int, int]]:
+    """Bresenham line from (y0,x0) to (y1,x1)."""
+    dy = abs(y1 - y0)
+    dx = abs(x1 - x0)
+    sx = 1 if x0 < x1 else -1
+    sy = 1 if y0 < y1 else -1
+    err = dx - dy
+    ray = []
+    while True:
+        ray.append((y0, x0))
+        if x0 == x1 and y0 == y1:
+            break
+        e2 = 2 * err
+        if e2 > -dy:
+            err -= dy
+            x0 += sx
+        if e2 < dx:
+            err += dx
+            y0 += sy
+    return ray
+
+
+def compute_occlusion_mask(heightmap: np.ndarray, center_r: int, center_c: int,
+                           vis_radius: int) -> np.ndarray:
+    """Compute a (2*MINIMAP_RADIUS+1)^2 visibility mask with raycasting.
+
+    Returns a bool array where True = visible.
+    """
+    R = MINIMAP_RADIUS
+    diameter = 2 * R + 1
+    visible = np.zeros((diameter, diameter), dtype=bool)
+    visible[R, R] = True  # center always visible
+
+    H, W = heightmap.shape
+    center_h = heightmap[center_r, center_c] if (0 <= center_r < H and 0 <= center_c < W) else 0.0
+
+    # Cast rays to perimeter of the patch
+    perimeter = []
+    for i in range(diameter):
+        perimeter.append((0, i))
+        perimeter.append((diameter - 1, i))
+    for i in range(1, diameter - 1):
+        perimeter.append((i, 0))
+        perimeter.append((i, diameter - 1))
+
+    for py, px in perimeter:
+        ray = _bresenham_ray(R, R, py, px)
+        blocked = False
+        for ry, rx in ray[1:]:  # skip center
+            dist = math.sqrt((ry - R) ** 2 + (rx - R) ** 2)
+            if dist > vis_radius:
+                break
+            wr = center_r + (ry - R)
+            wc = center_c + (rx - R)
+            if not (0 <= wr < H and 0 <= wc < W):
+                break
+            if blocked:
+                continue  # already occluded along this ray
+            visible[ry, rx] = True
+            cell_h = heightmap[wr, wc]
+            if cell_h >= center_h + CLEAR_TOLERANCE:
+                blocked = True
+
+    return visible
+
+
+def render_minimap(rgb: np.ndarray, heightmap: np.ndarray,
+                   pos: tuple[int, int], target: tuple[int, int],
+                   terrain_name: str) -> pygame.Surface:
+    """Render a minimap surface with occlusion. Unseen pixels are opaque black."""
+    R = MINIMAP_RADIUS
+    diameter = 2 * R + 1
+    vis_r = TERRAIN_VIS_RADIUS.get(terrain_name, DEFAULT_VIS_RADIUS)
+
+    vis_mask = compute_occlusion_mask(heightmap, pos[0], pos[1], vis_r)
+
+    # Build RGB patch — black by default (unseen = opaque)
+    patch = np.zeros((diameter, diameter, 3), dtype=np.uint8)
+    H, W = rgb.shape[:2]
+    for dy in range(-R, R + 1):
+        for dx in range(-R, R + 1):
+            wr, wc = pos[0] + dy, pos[1] + dx
+            py, px = dy + R, dx + R
+            dist = math.sqrt(dy * dy + dx * dx)
+            if dist > vis_r + 0.5:
+                continue  # outside vision radius → black
+            if 0 <= wr < H and 0 <= wc < W and vis_mask[py, px]:
+                patch[py, px] = rgb[wr, wc]
+            # else: stays black (out of bounds or occluded)
+
+    # Draw target marker if visible
+    ty, tx = target[0] - pos[0] + R, target[1] - pos[1] + R
+    if 0 <= ty < diameter and 0 <= tx < diameter and vis_mask[ty, tx]:
+        for d in range(-1, 2):
+            for oy, ox in [(d, 0), (0, d)]:
+                ny, nx = ty + oy, tx + ox
+                if 0 <= ny < diameter and 0 <= nx < diameter:
+                    patch[ny, nx] = COLORS["target"]
+
+    # Player dot at center
+    patch[R, R] = COLORS["player"]
+
+    surf = pygame.Surface((diameter, diameter))
+    pygame.surfarray.blit_array(surf, patch.transpose(1, 0, 2))
+    scaled = pygame.transform.scale(surf, (MINIMAP_DISPLAY, MINIMAP_DISPLAY))
+
+    # Compass arrow from center of minimap pointing toward target
+    center_px = MINIMAP_DISPLAY // 2
+    draw_compass_arrow(scaled, center_px, center_px, pos, target,
+                       length=min(28, MINIMAP_DISPLAY // 6))
+    return scaled
+
+
+# ── Game state ──────────────────────────────────────────────────────────────
+
+class StrategyGame:
+    def __init__(self, rgb: np.ndarray, heightmap: np.ndarray,
+                 tidx: np.ndarray, berry_mask: np.ndarray,
+                 biome: str, seed: int):
+        self.biome = biome
+        self.seed = seed
+        self.rgb = rgb.copy()
+        self.heightmap = heightmap.astype(np.float32)
+        self.tidx = tidx.astype(np.int32)
+        self.berry_mask = berry_mask.copy()
+        self.effects = TileEffects()
+
+        self.spawn, self.target = _sample_spawn_target(self.tidx, seed)
+        self.pos = self.spawn
+        self.hp: float = float(self.effects.init_hp)
+        self.wood: int = 0
+        self.tool: str | None = None  # at most one crafted tool
+        self.consec_grass = 0
+        self.steps = 0
+        self.path: list[tuple[int, int]] = [self.spawn]
+        self.hp_history: list[float] = [self.hp]
+        self.game_over = False
+        self.won = False
+        self.last_drain: int | None = None
+        self.last_terrain: str = self._terrain_name(*self.pos)
+        self.last_forage_msg: str = ""
+        self.forage_msg_timer: int = 0
+        self.crafting = False
+        self.craft_step: int | None = None  # step index where tool was crafted
+        self.craft_tool_name: str | None = None  # which tool was crafted
+
+    def _terrain_name(self, r: int, c: int) -> str:
+        idx = int(self.tidx[r, c])
+        if idx < 0:
+            return "deadly"
+        return gt.TERRAIN_NAMES[idx]
+
+    @property
+    def tools(self) -> frozenset[str]:
+        if self.tool is None:
+            return frozenset()
+        return frozenset({self.tool})
+
+    def forage(self):
+        """Explicit forage action on current tile. Uses one step."""
+        if self.game_over:
+            return
+        r, c = self.pos
+        terrain = self._terrain_name(r, c)
+
+        foraged = False
+        berry_forage = False
+        if self.berry_mask[r, c]:
+            # Berries are permanent tiles — heal every time, no drain
+            self.hp = min(float(self.effects.hp_max), self.hp + self.effects.berry_heal)
+            self.last_forage_msg = f"+{self.effects.berry_heal} HP (berry)"
+            self.last_drain = 0
+            self.forage_msg_timer = 90
+            foraged = True
+            berry_forage = True
+        elif terrain == "forest":
+            self.wood = min(self.wood + self.effects.forest_wood, self.effects.wood_max)
+            self.last_forage_msg = f"+{self.effects.forest_wood} wood"
+            self.forage_msg_timer = 90
+            foraged = True
+        else:
+            self.last_forage_msg = "nothing to forage"
+            self.forage_msg_timer = 60
+
+        if foraged:
+            self.consec_grass = self.consec_grass + 1 if terrain == "grassland" else 0
+            if not berry_forage:
+                # Forest foraging costs the tile's drain
+                drain = drain_for(terrain, self.tools, self.consec_grass, self.effects)
+                self.hp -= drain
+                self.last_drain = drain
+            self.steps += 1
+            self.path.append(self.pos)  # same position = forage in place
+            self.hp_history.append(self.hp)
+            if self.hp <= 0:
+                self.hp = 0.0
+                self.game_over = True
+                self.won = False
+
+    def craft(self, tool_name: str) -> bool:
+        """Try to craft a tool. Returns True on success."""
+        if self.tool is not None:
+            return False
+        if self.wood < self.effects.craft_cost:
+            return False
+        if tool_name not in CRAFTABLE_TOOLS:
+            return False
+        self.wood -= self.effects.craft_cost
+        self.tool = tool_name
+        self.craft_step = len(self.path) - 1  # index in path where craft happened
+        self.craft_tool_name = tool_name
+        return True
+
+    def step(self, dr: int, dc: int):
+        if self.game_over:
+            return
+        nr, nc = self.pos[0] + dr, self.pos[1] + dc
+        if not (0 <= nr < MAP_SIZE and 0 <= nc < MAP_SIZE):
+            return
+
+        idx = int(self.tidx[nr, nc])
+        if idx < 0:
+            self.pos = (nr, nc)
+            self.hp = 0.0
+            self.last_terrain = "deadly"
+            self.last_drain = int(self.effects.init_hp)
+            self.path.append(self.pos)
+            self.hp_history.append(self.hp)
+            self.steps += 1
+            self.game_over = True
+            self.won = False
+            return
+
+        terrain = gt.TERRAIN_NAMES[idx]
+        self.consec_grass = self.consec_grass + 1 if terrain == "grassland" else 0
+        drain = drain_for(terrain, self.tools, self.consec_grass, self.effects)
+
+        self.hp -= drain
+        self.pos = (nr, nc)
+        self.steps += 1
+        self.path.append(self.pos)
+        self.hp_history.append(self.hp)
+        self.last_drain = drain
+        self.last_terrain = terrain
+
+        if self.hp <= 0:
+            self.hp = 0.0
+            self.game_over = True
+            self.won = False
+        elif self.pos == self.target:
+            self.game_over = True
+            self.won = True
+
+
+# ── Rendering helpers ───────────────────────────────────────────────────────
+
+def rgb_to_surface(rgb: np.ndarray, display: int) -> pygame.Surface:
+    surf = pygame.Surface(rgb.shape[:2])
+    pygame.surfarray.blit_array(surf, rgb.transpose(1, 0, 2))
+    return pygame.transform.scale(surf, (display, display))
+
+
+def draw_star(screen, cx, cy, r_outer, r_inner=None, color=(255, 215, 0),
+              outline=(0, 0, 0)):
     if r_inner is None:
         r_inner = r_outer * 0.38
     pts = []
-    for i in range(2 * n_points):
+    for i in range(10):
         r = r_outer if i % 2 == 0 else r_inner
-        angle = math.pi * i / n_points - math.pi / 2
-        pts.append((cx + r * math.cos(angle), cy + r * math.sin(angle)))
-    pygame.draw.polygon(surface, color, pts)
-    pygame.draw.polygon(surface, outline, pts, 1)
+        a = math.pi * i / 5 - math.pi / 2
+        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    pygame.draw.polygon(screen, color, pts)
+    pygame.draw.polygon(screen, outline, pts, 1)
 
 
-def terrain_color(level, compiled):
-    idx = int(level)
-    if 0 <= idx < compiled.num_terrains:
-        c = compiled.color_lut[idx].cpu().tolist()
-        return (c[0], c[1], c[2])
-    return COLORS["white"]
+def hp_color(hp: float, hp_max: float):
+    r = hp / max(hp_max, 1)
+    if r > 0.6: return COLORS["hp_full"]
+    if r > 0.3: return COLORS["hp_mid"]
+    return COLORS["hp_low"]
 
 
-def heightmap_to_surface(world_map, display_size, compiled, vis_mask=None):
-    """Render a 2-D heightmap tensor → scaled pygame Surface (slow path for small surfaces)."""
-    H, W = world_map.shape[:2]
-    wm_np   = world_map.numpy() if world_map.dim() == 2 else world_map[..., 0].numpy()
-    rgb     = _fast_colorize(wm_np, compiled)
-    if vis_mask is not None:
-        mask_np = vis_mask.numpy() if hasattr(vis_mask, 'numpy') else vis_mask
-        rgb[mask_np < 0.5] = 0
-    surf    = pygame.Surface((W, H))
-    pygame.surfarray.blit_array(surf, rgb.transpose(1, 0, 2))
-    return pygame.transform.scale(surf, (display_size, display_size))
+def _visit_color(count: int) -> tuple[int, int, int]:
+    """Map visit count to inferno-style color: bright red (1) → dark (5+)."""
+    idx = min(count - 1, len(INFERNO_RAMP) - 1)
+    return INFERNO_RAMP[idx]
 
 
-def make_map_surface_with_fog(base_rgb, seen_mask, map_size, display_size):
-    fog = np.where(seen_mask[:, :, None], 1.0, 0.55).astype(np.float32)
-    rgb = (base_rgb * fog).astype(np.uint8)
-    surf = pygame.Surface((map_size, map_size))
-    pygame.surfarray.blit_array(surf, rgb.transpose(1, 0, 2))
-    return pygame.transform.scale(surf, (display_size, display_size))
+def draw_compass_arrow(surface: pygame.Surface, cx: int, cy: int,
+                       pos: tuple[int, int], target: tuple[int, int],
+                       length: int = 28):
+    """Draw a yellow compass arrow on a surface starting from (cx, cy)."""
+    dr = target[0] - pos[0]
+    dc = target[1] - pos[1]
+    dist = math.sqrt(dr * dr + dc * dc)
+    if dist < 1.0:
+        return
+    color = (255, 215, 0)  # gold/yellow
+    angle = math.atan2(dr, dc)
+    tip_x = cx + int(length * math.cos(angle))
+    tip_y = cy + int(length * math.sin(angle))
+
+    pygame.draw.line(surface, color, (cx, cy), (tip_x, tip_y), 2)
+
+    head_len = 7
+    wing_angle = 0.45
+    lx = tip_x - int(head_len * math.cos(angle - wing_angle))
+    ly = tip_y - int(head_len * math.sin(angle - wing_angle))
+    rx = tip_x - int(head_len * math.cos(angle + wing_angle))
+    ry = tip_y - int(head_len * math.sin(angle + wing_angle))
+    pygame.draw.polygon(surface, color, [(tip_x, tip_y), (lx, ly), (rx, ry)])
 
 
-# ---------------------------------------------------------------------------
-# Agent helpers
-# ---------------------------------------------------------------------------
+# ── Screens ─────────────────────────────────────────────────────────────────
 
-def discover_checkpoints(artifacts_dir="artifacts"):
-    results = []
-    if not os.path.isdir(artifacts_dir):
-        return results
-    for entry in sorted(os.listdir(artifacts_dir)):
-        run_dir = os.path.join(artifacts_dir, entry)
-        if not os.path.isdir(run_dir):
-            continue
-        pts = [f for f in os.listdir(run_dir) if f.endswith(".pt")]
-        if not pts:
-            continue
-        def _step(name):
-            m = re.search(r"ckpt_(\d+)\.pt", name)
-            return int(m.group(1)) if m else 0
-        pts.sort(key=_step)
-        results.append((entry, os.path.join(run_dir, pts[-1])))
-    return results
-
-
-def load_actor_critic(ckpt_path, device="cpu"):
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-    sd = ckpt["model_state_dict"]
-    # Infer architecture dims from checkpoint weights
-    cnn_channels    = sd["cnn.3.weight"].shape[0]          # e.g. 64 or 32
-    minimap_channels = sd["cnn.0.weight"].shape[1]         # e.g. 3
-    scalar_dim      = sd["scalar_net.0.weight"].shape[1]   # e.g. 5
-    scalar_hidden   = sd["scalar_net.0.weight"].shape[0]   # e.g. 128 or 64
-    hidden_dim      = sd["trunk.0.weight"].shape[0]        # e.g. 448 or 256
-    action_dim      = sd["actor.weight"].shape[0]          # e.g. 5
-    cnn_out_flat    = sd["trunk.0.weight"].shape[1] - scalar_hidden
-    cnn_out_spatial = int((cnn_out_flat // cnn_channels) ** 0.5)
-
-    is_recurrent = "rnn.weight_ih" in sd
-    if is_recurrent:
-        rnn_hidden_dim = sd["rnn.weight_hh"].shape[0]
-        model = RecurrentActorCritic(
-            scalar_dim=scalar_dim,
-            minimap_channels=minimap_channels,
-            hidden_dim=hidden_dim,
-            rnn_hidden_dim=rnn_hidden_dim,
-            action_dim=action_dim,
-            cnn_channels=cnn_channels,
-            cnn_out_spatial=cnn_out_spatial,
-            scalar_hidden=scalar_hidden,
-        ).to(device)
-    else:
-        model = ActorCritic(
-            scalar_dim=scalar_dim,
-            minimap_channels=minimap_channels,
-            hidden_dim=hidden_dim,
-            action_dim=action_dim,
-            cnn_channels=cnn_channels,
-            cnn_out_spatial=cnn_out_spatial,
-            scalar_hidden=scalar_hidden,
-        ).to(device)
-    model.load_state_dict(sd)
-    model.eval()
-    model.is_recurrent = is_recurrent
-    return model
-
-
-def build_obs(state: EnvState, env_config: EnvConfig, compiled):
-    s = state
-    num_terrains = compiled.num_terrains
-    scalars = torch.stack([
-        s.compass[:, 0],
-        s.compass[:, 1],
-        s.terrain_idx / max(num_terrains - 1, 1),
-        s.resources / env_config.max_resources,
-        s.hp / env_config.max_hp,
-    ], dim=1)
-    return {"scalars": scalars, "minimap": s.minimap}
-
-
-# ---------------------------------------------------------------------------
-# Screen: main menu
-# ---------------------------------------------------------------------------
-
-def screen_main_menu(screen, clock):
-    """Returns 'human', 'agent', or None (quit)."""
-    font_title = pygame.font.Font(None, 64)
-    font_med   = pygame.font.Font(None, 34)
-    font_small = pygame.font.Font(None, 24)
-
-    has_maps = VAL_MAPS_PATH.exists() or BEHAVIORAL_MAPS_PATH.exists()
-
+def screen_main_menu(screen, clock, val_ok: bool):
+    ft = pygame.font.Font(None, 72)
+    fm = pygame.font.Font(None, 34)
+    fs = pygame.font.Font(None, 22)
     while True:
         for ev in pygame.event.get():
-            if ev.type == pygame.QUIT:    return None
+            if ev.type == pygame.QUIT:                              return None
             if ev.type == pygame.KEYDOWN:
-                if ev.key == pygame.K_ESCAPE: return None
-                if ev.key == pygame.K_h:      return "human"
-                if ev.key == pygame.K_a:      return "agent"
+                if ev.key == pygame.K_ESCAPE:                       return None
+                if ev.key == pygame.K_h and val_ok:                 return "human"
+                if ev.key == pygame.K_a:                            return "agent"
+        screen.fill(COLORS["bg"])
+        title = ft.render("Cogniland — Strategy", True, COLORS["accent"])
+        screen.blit(title, title.get_rect(center=(WINDOW_W // 2, 160)))
+        screen.blit(fm.render("Choose a mode", True, COLORS["fg"]),
+                    (WINDOW_W // 2 - 110, 250))
 
-        screen.fill(COLORS["panel_bg"])
+        options = [
+            ("H", "Human", "Play on a val map" if val_ok
+                           else "Val dataset missing — run generate_strategy_dataset.py",
+             val_ok),
+            ("A", "AI Agent", "No models yet — placeholder", True),
+        ]
+        y = 340
+        for key, label, desc, enabled in options:
+            kcol = COLORS["accent"] if enabled else COLORS["dim"]
+            lcol = COLORS["white"] if enabled else COLORS["dim"]
+            screen.blit(fm.render(f"[{key}]", True, kcol), (WINDOW_W // 2 - 180, y))
+            screen.blit(fm.render(f"  {label}", True, lcol), (WINDOW_W // 2 - 130, y))
+            screen.blit(fs.render(desc, True, COLORS["dim"]), (WINDOW_W // 2 - 130, y + 32))
+            y += 90
 
-        title = font_title.render("Cogniland", True, COLORS["blue_ui"])
-        screen.blit(title, (WINDOW_W // 2 - title.get_width() // 2, 130))
-
-        sub = font_med.render("Choose a mode", True, COLORS["panel_fg"])
-        screen.blit(sub, (WINDOW_W // 2 - sub.get_width() // 2, 210))
-
-        for key, label, desc, y in [
-            ("H", "Human",    "Play the game yourself",           320),
-            ("A", "AI Agent", "Watch a trained agent navigate",   400),
-        ]:
-            ks  = font_med.render(f"[{key}]",    True, COLORS["blue_ui"])
-            ls  = font_med.render(f"  {label}",  True, COLORS["white"])
-            ds  = font_small.render(desc,         True, COLORS["gray"])
-            x   = WINDOW_W // 2 - 160
-            screen.blit(ks, (x, y))
-            screen.blit(ls, (x + ks.get_width(), y))
-            screen.blit(ds, (x + 10, y + 32))
-
-        if not has_maps:
-            warn = font_small.render(
-                "No demo maps found — a random map will be generated each session.",
-                True, (255, 180, 50),
-            )
-            screen.blit(warn, (WINDOW_W // 2 - warn.get_width() // 2, 510))
-            gen_hint = font_small.render(
-                "Generate maps: python scripts/generate_demo_maps.py",
-                True, COLORS["gray"],
-            )
-            screen.blit(gen_hint, (WINDOW_W // 2 - gen_hint.get_width() // 2, 534))
-
-        hint = font_small.render("ESC — Quit", True, COLORS["gray"])
-        screen.blit(hint, (WINDOW_W // 2 - hint.get_width() // 2, WINDOW_H - 50))
-
+        screen.blit(fs.render("ESC — Quit", True, COLORS["dim"]),
+                    (WINDOW_W // 2 - 40, WINDOW_H - 50))
         pygame.display.flip()
         clock.tick(30)
 
 
-# ---------------------------------------------------------------------------
-# Screen: map selection
-# ---------------------------------------------------------------------------
+def screen_pick_map(screen, clock, dataset):
+    rgbs = dataset["rgb"].numpy()
+    biomes = dataset["biomes"]
+    seeds = dataset["seeds"]
+    N = rgbs.shape[0]
 
-def _screen_pick_map_grid(screen, clock, maps, compiled, labels=None):
-    """Thumbnail grid for a set of maps. Returns selected index or None (ESC)."""
-    N = maps.shape[0]
-    print("Building map thumbnails …", flush=True)
-    thumbs = maps_to_thumbnails(maps, compiled, 150)
-    print("Done.")
-    if labels is None:
-        labels = [f"Map {i + 1}" for i in range(N)]
+    thumbs = [rgb_to_surface(rgbs[i], 140) for i in range(N)]
 
-    COLS, THUMB, PAD, GRID_TOP = 4, 150, 14, 90
-    GRID_W = COLS * THUMB + (COLS - 1) * PAD
-    GRID_X = (WINDOW_W - GRID_W) // 2
+    COLS, THUMB, PAD, TOP = 4, 140, 18, 90
+    grid_w = COLS * THUMB + (COLS - 1) * PAD
+    grid_x = (WINDOW_W - grid_w) // 2
 
-    def tile_rect(idx):
-        col = idx % COLS
-        row = idx // COLS
-        return pygame.Rect(GRID_X + col * (THUMB + PAD),
-                           GRID_TOP + row * (THUMB + PAD + 18), THUMB, THUMB)
+    def rect(i):
+        col, row = i % COLS, i // COLS
+        return pygame.Rect(grid_x + col * (THUMB + PAD),
+                           TOP + row * (THUMB + PAD + 26), THUMB, THUMB)
 
-    font_large = pygame.font.Font(None, 42)
-    font_small = pygame.font.Font(None, 20)
-    selected   = 0
-
+    fm = pygame.font.Font(None, 42)
+    fs = pygame.font.Font(None, 20)
+    sel = 0
     while True:
         for ev in pygame.event.get():
-            if ev.type == pygame.QUIT:    return None
+            if ev.type == pygame.QUIT:                  return None
             if ev.type == pygame.KEYDOWN:
-                if ev.key == pygame.K_ESCAPE: return None
-                if ev.key == pygame.K_RETURN: return selected
-                if ev.key == pygame.K_RIGHT:  selected = (selected + 1) % N
-                if ev.key == pygame.K_LEFT:   selected = (selected - 1) % N
-                if ev.key == pygame.K_DOWN:   selected = min(selected + COLS, N - 1)
-                if ev.key == pygame.K_UP:     selected = max(selected - COLS, 0)
+                if ev.key == pygame.K_ESCAPE:           return None
+                if ev.key == pygame.K_RETURN:           return sel
+                if ev.key == pygame.K_RIGHT: sel = (sel + 1) % N
+                if ev.key == pygame.K_LEFT:  sel = (sel - 1) % N
+                if ev.key == pygame.K_DOWN:  sel = min(sel + COLS, N - 1)
+                if ev.key == pygame.K_UP:    sel = max(sel - COLS, 0)
             if ev.type == pygame.MOUSEMOTION:
                 for i in range(N):
-                    if tile_rect(i).collidepoint(ev.pos):
-                        selected = i
+                    if rect(i).collidepoint(ev.pos):
+                        sel = i
             if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                 for i in range(N):
-                    if tile_rect(i).collidepoint(ev.pos):
+                    if rect(i).collidepoint(ev.pos):
                         return i
 
-        screen.fill(COLORS["panel_bg"])
-        title = font_large.render("Select Map", True, COLORS["blue_ui"])
-        screen.blit(title, (WINDOW_W // 2 - title.get_width() // 2, 28))
-
-        for i, surf in enumerate(thumbs):
-            r = tile_rect(i)
-            screen.blit(surf, r.topleft)
-            lbl = font_small.render(labels[i], True, COLORS["panel_fg"])
-            screen.blit(lbl, (r.x + THUMB // 2 - lbl.get_width() // 2, r.y + THUMB + 2))
-            border_color = COLORS["highlight"] if i == selected else COLORS["gray"]
-            pygame.draw.rect(screen, border_color, r, 3 if i == selected else 1)
-
-        hint = font_small.render(
-            "Arrows / mouse to browse   •   Enter / click to select   •   ESC = back",
-            True, COLORS["gray"],
-        )
+        screen.fill(COLORS["bg"])
+        screen.blit(fm.render("Select Map", True, COLORS["accent"]),
+                    (WINDOW_W // 2 - 100, 28))
+        for i in range(N):
+            r = rect(i)
+            screen.blit(thumbs[i], r.topleft)
+            label = f"{biomes[i][:4]} s{seeds[i]}"
+            lbl = fs.render(label, True, COLORS["fg"])
+            screen.blit(lbl, (r.x + THUMB // 2 - lbl.get_width() // 2, r.y + THUMB + 4))
+            color = COLORS["highlight"] if i == sel else COLORS["dim"]
+            pygame.draw.rect(screen, color, r, 3 if i == sel else 1)
+        hint = fs.render("Arrows / mouse  •  Enter / click to select  •  ESC to go back",
+                         True, COLORS["dim"])
         screen.blit(hint, (WINDOW_W // 2 - hint.get_width() // 2, WINDOW_H - 36))
         pygame.display.flip()
         clock.tick(30)
 
 
-def screen_select_map(screen, clock):
-    """3-option map source menu.
+def draw_craft_menu(screen, game: StrategyGame, fm, fs):
+    """Overlay craft menu in the center of the screen."""
+    overlay = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 180))
+    screen.blit(overlay, (0, 0))
 
-    Returns (world_map, spawn_rc, target_rc):
-      - Random / ESC  →  (None, None, None)
-      - Val map       →  (tensor [H,W], None, None)
-      - Behavioral    →  (tensor [H,W], (r,c), (r,c))   ← positions pre-set
-    """
-    compiled    = EnvConfig().compile_terrain("cpu")
-    val_exists  = VAL_MAPS_PATH.exists()
-    beh_exists  = BEHAVIORAL_MAPS_PATH.exists()
+    box_w, box_h = 360, 260
+    bx = (WINDOW_W - box_w) // 2
+    by = (WINDOW_H - box_h) // 2
+    pygame.draw.rect(screen, COLORS["craft_bg"], (bx, by, box_w, box_h))
+    pygame.draw.rect(screen, COLORS["accent"], (bx, by, box_w, box_h), 2)
 
-    font_large = pygame.font.Font(None, 52)
-    font_med   = pygame.font.Font(None, 34)
-    font_small = pygame.font.Font(None, 22)
+    title = fm.render("Craft a Tool", True, COLORS["accent"])
+    screen.blit(title, title.get_rect(center=(WINDOW_W // 2, by + 30)))
 
-    while True:
-        for ev in pygame.event.get():
-            if ev.type == pygame.QUIT:    return None, None, None
-            if ev.type == pygame.KEYDOWN:
-                if ev.key == pygame.K_ESCAPE: return None, None, None
-                if ev.key == pygame.K_r:      return None, None, None
+    cost_txt = fs.render(f"Cost: {game.effects.craft_cost} wood  (you have {game.wood})",
+                         True, COLORS["wood"])
+    screen.blit(cost_txt, cost_txt.get_rect(center=(WINDOW_W // 2, by + 60)))
 
-                if ev.key == pygame.K_v and val_exists:
-                    data = torch.load(str(VAL_MAPS_PATH), map_location="cpu", weights_only=True)
-                    maps = data["maps"]
-                    idx  = _screen_pick_map_grid(screen, clock, maps, compiled)
-                    if idx is None:
-                        continue   # back to source menu
-                    return maps[idx], None, None
+    can_craft = game.wood >= game.effects.craft_cost and game.tool is None
+    y = by + 95
+    for i, tool in enumerate(CRAFTABLE_TOOLS):
+        key = str(i + 1)
+        col = COLORS["fg"] if can_craft else COLORS["dim"]
+        desc = {"raft": "cheaper water/ocean crossing",
+                "rope": "cheaper rocky/mountain crossing",
+                "shoes": "fast grassland after 5 consecutive steps"}[tool]
+        screen.blit(fm.render(f"[{key}] {tool.capitalize()}", True, col), (bx + 30, y))
+        screen.blit(fs.render(desc, True, COLORS["dim"]), (bx + 30, y + 28))
+        y += 52
 
-                if ev.key == pygame.K_b and beh_exists:
-                    data = torch.load(str(BEHAVIORAL_MAPS_PATH), map_location="cpu",
-                                      weights_only=False)
-                    maps, spawns, targets, names = (
-                        data["maps"], data["spawns"], data["targets"], data["names"]
-                    )
-                    idx = _screen_pick_map_grid(screen, clock, maps, compiled, labels=names)
-                    if idx is None:
-                        continue
-                    return maps[idx], spawns[idx], targets[idx]
+    if game.tool is not None:
+        warn = fs.render("Already crafted a tool!", True, COLORS["hp_low"])
+        screen.blit(warn, warn.get_rect(center=(WINDOW_W // 2, by + box_h - 30)))
+    elif game.wood < game.effects.craft_cost:
+        warn = fs.render(f"Need {game.effects.craft_cost} wood to craft", True, COLORS["hp_mid"])
+        screen.blit(warn, warn.get_rect(center=(WINDOW_W // 2, by + box_h - 30)))
 
-        screen.fill(COLORS["panel_bg"])
-        title = font_large.render("Select Map", True, COLORS["blue_ui"])
-        screen.blit(title, (WINDOW_W // 2 - title.get_width() // 2, 130))
-
-        y = 250
-        for key, label, desc, avail in [
-            ("R", "Random Map",   "Procedurally generated",          True),
-            ("V", "Val Maps",     f"{VAL_MAPS_PATH.name}  (16 maps)", val_exists),
-            ("B", "Behavioral",   f"{BEHAVIORAL_MAPS_PATH.name}  (16 maps)", beh_exists),
-        ]:
-            key_col = COLORS["blue_ui"] if avail else COLORS["gray"]
-            lbl_col = COLORS["white"]   if avail else COLORS["gray"]
-            screen.blit(font_med.render(f"[{key}]",       True, key_col), (WINDOW_W//2 - 200, y))
-            screen.blit(font_med.render(f"  {label}",     True, lbl_col), (WINDOW_W//2 - 160, y))
-            screen.blit(font_small.render(desc,           True, COLORS["gray"]), (WINDOW_W//2 - 150, y + 30))
-            y += 90
-
-        hint = font_small.render("ESC = back to main menu", True, COLORS["gray"])
-        screen.blit(hint, (WINDOW_W // 2 - hint.get_width() // 2, WINDOW_H - 50))
-        pygame.display.flip()
-        clock.tick(30)
+    esc_txt = fs.render("ESC / C — close", True, COLORS["dim"])
+    screen.blit(esc_txt, esc_txt.get_rect(center=(WINDOW_W // 2, by + box_h - 10)))
 
 
-# ---------------------------------------------------------------------------
-# Screen: checkpoint selection (agent only)
-# ---------------------------------------------------------------------------
+def draw_game(screen, game: StrategyGame, fs, fm, fl, ft):
+    screen.fill(COLORS["bg"])
 
-def screen_select_checkpoint(screen, clock):
-    """Returns ckpt_path or None."""
-    checkpoints = discover_checkpoints()
-    if not checkpoints:
-        print("No checkpoints found in artifacts/. Train a model first.")
-        return None
-
-    font_large = pygame.font.Font(None, 40)
-    font_med   = pygame.font.Font(None, 28)
-    font_small = pygame.font.Font(None, 22)
-
-    while True:
-        for ev in pygame.event.get():
-            if ev.type == pygame.QUIT:    return None
-            if ev.type == pygame.KEYDOWN:
-                if ev.key == pygame.K_ESCAPE: return None
-                idx = ev.key - pygame.K_1
-                if 0 <= idx < len(checkpoints):
-                    return checkpoints[idx][1]
-
-        screen.fill(COLORS["panel_bg"])
-        title = font_large.render("Select Checkpoint", True, COLORS["blue_ui"])
-        screen.blit(title, (WINDOW_W // 2 - title.get_width() // 2, 40))
-
-        y = 120
-        for i, (run_id, ckpt) in enumerate(checkpoints):
-            if i >= 9: break
-            line = font_med.render(
-                f"  {i+1}  —  {run_id}  /  {os.path.basename(ckpt)}",
-                True, COLORS["panel_fg"],
-            )
-            screen.blit(line, (80, y)); y += 36
-
-        hint = font_small.render("Press 1-9 to select  •  ESC = back", True, COLORS["gray"])
-        screen.blit(hint, (WINDOW_W // 2 - hint.get_width() // 2, WINDOW_H - 60))
-        pygame.display.flip()
-        clock.tick(30)
-
-
-# ---------------------------------------------------------------------------
-# Screen: position picker (agent only)
-# ---------------------------------------------------------------------------
-
-def screen_pick_positions(screen, clock, env_config, world_map=None,
-                          default_spawn=None, default_target=None):
-    """Returns (spawn_rc, target_rc) or None."""
-    env        = Islands(env_config,
-                         world_maps=world_map.unsqueeze(0) if world_map is not None else None)
-    _compiled  = env.compiled
-    world_map  = env.world_map
-    map_surf   = heightmap_to_surface(world_map, MAP_DISPLAY_SIZE, _compiled)
-    map_size   = world_map.shape[0]
-
-    font_large = pygame.font.Font(None, 36)
-    font_med   = pygame.font.Font(None, 26)
-    font_small = pygame.font.Font(None, 22)
+    # ── Map ────────────────────────────────────────────────────────────────
+    map_surf = rgb_to_surface(game.rgb, MAP_DISPLAY)
     MAP_X, MAP_Y = 20, 60
+    screen.blit(map_surf, (MAP_X, MAP_Y))
+    pygame.draw.rect(screen, COLORS["white"], (MAP_X, MAP_Y, MAP_DISPLAY, MAP_DISPLAY), 1)
 
-    spawn  = default_spawn
-    target = default_target
+    scale = MAP_DISPLAY / MAP_SIZE
 
     def w2s(r, c):
-        s = MAP_DISPLAY_SIZE / map_size
-        return int(c * s) + MAP_X, int(r * s) + MAP_Y
+        return int(c * scale + scale / 2) + MAP_X, int(r * scale + scale / 2) + MAP_Y
 
-    def s2w(sx, sy):
-        s = MAP_DISPLAY_SIZE / map_size
-        return (max(0, min(int((sy - MAP_Y) / s), map_size - 1)),
-                max(0, min(int((sx - MAP_X) / s), map_size - 1)))
+    # Trajectory with inferno gradient based on visit count
+    if len(game.path) >= 2:
+        # Count visits per cell up to each step for segment coloring
+        visit_counts: Counter[tuple[int, int]] = Counter()
+        for i in range(len(game.path)):
+            cell = game.path[i]
+            visit_counts[cell] += 1
+            if i > 0:
+                # Color this segment by the visit count of the destination cell
+                p0 = w2s(*game.path[i - 1])
+                p1 = w2s(*cell)
+                col = _visit_color(visit_counts[cell])
+                pygame.draw.line(screen, col, p0, p1, 1)
 
-    def is_land(r, c):
-        return world_map[r, c].item() > _compiled.land_threshold
+    # Craft marker on trajectory
+    if game.craft_step is not None and game.craft_step < len(game.path):
+        cx, cy = w2s(*game.path[game.craft_step])
+        sym = TOOL_SYMBOLS.get(game.craft_tool_name, "?")
+        # Draw a small diamond + label
+        pygame.draw.polygon(screen, COLORS["accent"],
+                            [(cx, cy - 6), (cx + 5, cy), (cx, cy + 6), (cx - 5, cy)])
+        pygame.draw.polygon(screen, COLORS["white"],
+                            [(cx, cy - 6), (cx + 5, cy), (cx, cy + 6), (cx - 5, cy)], 1)
+        lbl = fs.render(sym, True, COLORS["white"])
+        screen.blit(lbl, (cx + 7, cy - 8))
 
-    while True:
-        for ev in pygame.event.get():
-            if ev.type == pygame.QUIT:    return None
-            if ev.type == pygame.KEYDOWN:
-                if ev.key == pygame.K_ESCAPE:  return None
-                if ev.key == pygame.K_r:       spawn = target = None
-                if ev.key == pygame.K_RETURN and spawn and target:
-                    return spawn, target
-            if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
-                mx, my = ev.pos
-                if MAP_X <= mx < MAP_X + MAP_DISPLAY_SIZE and MAP_Y <= my < MAP_Y + MAP_DISPLAY_SIZE:
-                    r, c = s2w(mx, my)
-                    if is_land(r, c):
-                        if   spawn  is None: spawn  = (r, c)
-                        elif target is None: target = (r, c)
-                        else:                spawn = (r, c); target = None
+    # Spawn, target, player
+    sx, sy = w2s(*game.spawn)
+    pygame.draw.circle(screen, (200, 200, 200), (sx, sy), 6, 1)
+    draw_star(screen, *w2s(*game.target), r_outer=7, r_inner=3,
+              color=(255, 215, 0), outline=(0, 0, 0))
+    px, py = w2s(*game.pos)
+    pygame.draw.circle(screen, COLORS["player"], (px, py), 7)
+    pygame.draw.circle(screen, COLORS["white"],  (px, py), 7, 1)
 
-        screen.fill(COLORS["panel_bg"])
+    # Title
+    title = fl.render(f"{game.biome.upper()}  seed={game.seed}", True, COLORS["accent"])
+    screen.blit(title, (MAP_X, 20))
 
-        msg = ("Click to place SPAWN (red)" if spawn is None
-               else "Click to place TARGET (green)" if target is None
-               else "Press ENTER to start  •  R to reset")
-        screen.blit(font_large.render(msg, True, COLORS["blue_ui"]), (MAP_X, 15))
-        screen.blit(map_surf, (MAP_X, MAP_Y))
-        pygame.draw.rect(screen, COLORS["white"], (MAP_X, MAP_Y, MAP_DISPLAY_SIZE, MAP_DISPLAY_SIZE), 1)
+    # ── Right panel ─────────────────────────────────────────────────────────
+    pygame.draw.rect(screen, COLORS["panel"],
+                     (PANEL_X - 10, 50, PANEL_W + 20, WINDOW_H - 70))
+    y = 70
 
-        if spawn:
-            sx, sy = w2s(*spawn)
-            pygame.draw.circle(screen, COLORS["player"], (sx, sy), 7)
-            pygame.draw.circle(screen, COLORS["white"],  (sx, sy), 7, 1)
-        if target:
-            draw_star(screen, *w2s(*target), r_outer=9, r_inner=4)
-
-        panel_x = MAP_X + MAP_DISPLAY_SIZE + 30
-        py = MAP_Y
-        screen.blit(font_med.render("TERRAIN LEGEND", True, COLORS["panel_fg"]), (panel_x, py)); py += 30
-        for lev in range(_compiled.num_terrains):
-            col  = terrain_color(lev, _compiled)
-            cost = _compiled.move_costs[lev].item()
-            pygame.draw.rect(screen, col,          (panel_x, py, 14, 14))
-            pygame.draw.rect(screen, COLORS["white"],(panel_x, py, 14, 14), 1)
-            screen.blit(font_small.render(
-                f"  {_compiled.terrain_names[lev].capitalize()} (cost {cost:.1f})",
-                True, COLORS["panel_fg"]), (panel_x + 18, py))
-            py += 20
-
-        py += 20
-        if spawn:
-            screen.blit(font_small.render(f"Spawn:  ({spawn[0]}, {spawn[1]})",
-                        True, COLORS["player"]),  (panel_x, py)); py += 22
-        if target:
-            screen.blit(font_small.render(f"Target: ({target[0]}, {target[1]})",
-                        True, COLORS["target"]),  (panel_x, py))
-
-        screen.blit(font_small.render("R = reset  •  ESC = back  •  Click only on land",
-                    True, COLORS["gray"]), (MAP_X, WINDOW_H - 30))
-        pygame.display.flip()
-        clock.tick(30)
-
-
-# ---------------------------------------------------------------------------
-# Screen: AI playback
-# ---------------------------------------------------------------------------
-
-def screen_ai_playback(screen, clock, ckpt_path, spawn_rc, target_rc, world_map=None):
-    """Returns 'quit', 'reset', or 'menu'."""
-    device = "cpu"
-    model  = load_actor_critic(ckpt_path, device)
-    print(f"Loaded model from {ckpt_path}")
-
-    env_config = _build_env_config(
-        map_generation=MapGenConfig(seed=42),
-        custom_map=CustomMapConfig(
-            spawn_r=spawn_rc[0], spawn_c=spawn_rc[1],
-            target_r=target_rc[0], target_c=target_rc[1],
-        ),
+    # ── Minimap (agent's view) ──────────────────────────────────────────────
+    minimap_surf = render_minimap(
+        game.rgb, game.heightmap,
+        game.pos, game.target, game.last_terrain,
     )
-    env = Islands(env_config, world_maps=world_map.unsqueeze(0) if world_map is not None else None)
-    _compiled = env.compiled
-    state, target_pos = env.reset(batch_size=1, seed=42)
+    mm_x = PANEL_X + (PANEL_W - MINIMAP_DISPLAY) // 2
+    mm_y = y
+    screen.blit(minimap_surf, (mm_x, mm_y))
+    pygame.draw.rect(screen, COLORS["dim"], (mm_x, mm_y, MINIMAP_DISPLAY, MINIMAP_DISPLAY), 1)
+    screen.blit(fs.render("Agent view (occlusion)", True, COLORS["fg"]),
+                (mm_x, mm_y - 16))
+    y = mm_y + MINIMAP_DISPLAY + 10
 
-    map_size = env.world_map.shape[0]
-    base_rgb = _fast_colorize(env.world_map.numpy(), _compiled)
+    # Wood & tool
+    screen.blit(fm.render(f"Wood: {game.wood}", True, COLORS["wood"]), (PANEL_X, y))
+    if game.tool:
+        tool_txt = fm.render(f"  [{game.tool.upper()}]", True, COLORS["accent"])
+        screen.blit(tool_txt, (PANEL_X + 120, y))
+    y += 28
 
-    seen_mask = np.zeros((map_size, map_size), dtype=bool)
-    vis_counts = np.zeros((map_size, map_size), dtype=np.int32)
-    _D = 2 * env_config.minimap_max_ray + 1
-    _dy, _dx = np.meshgrid(np.arange(_D) - env_config.minimap_max_ray,
-                           np.arange(_D) - env_config.minimap_max_ray, indexing="ij")
+    # Current step info
+    cur = game.last_terrain
+    drain_str = "-" if game.last_drain is None else f"-{game.last_drain}"
+    for lbl, val, col in [
+        ("Terrain", cur, COLORS["fg"]),
+        ("Drain", drain_str, COLORS["fg"]),
+        ("Steps", str(game.steps), COLORS["fg"]),
+        ("Pos", f"({game.pos[0]}, {game.pos[1]})", COLORS["fg"]),
+    ]:
+        screen.blit(fs.render(lbl, True, COLORS["dim"]), (PANEL_X, y))
+        screen.blit(fs.render(val, True, col), (PANEL_X + 70, y))
+        y += 20
+    y += 4
 
-    def update_seen(st):
-        vis = st.minimap[0, 2].numpy()
-        cy, cx = int(st.position[0, 0].item()), int(st.position[0, 1].item())
-        rows = np.clip(cy + _dy, 0, map_size - 1)
-        cols = np.clip(cx + _dx, 0, map_size - 1)
-        visible = vis > 0.5
-        seen_mask[rows[visible], cols[visible]] = True
-        vis_counts[rows[visible], cols[visible]] += 1
+    # Forage message
+    if game.forage_msg_timer > 0:
+        fcol = COLORS["forage"] if "+" in game.last_forage_msg else COLORS["dim"]
+        screen.blit(fs.render(game.last_forage_msg, True, fcol), (PANEL_X, y))
+        game.forage_msg_timer -= 1
+    y += 20
 
-    update_seen(state)
+    # ── HP plot ─────────────────────────────────────────────────────────────
+    screen.blit(fs.render(f"HP: {int(game.hp)}/{game.effects.hp_max}", True,
+                          hp_color(game.hp, game.effects.hp_max)), (PANEL_X, y))
+    y += 16
+    PW, PH = PANEL_W - 10, 80
+    plot = pygame.Surface((PW, PH))
+    plot.fill((15, 15, 22))
+    pygame.draw.rect(plot, COLORS["dim"], (0, 0, PW, PH), 1)
+    hist = game.hp_history
+    n = max(len(hist) - 1, 1)
+    def _x(i): return int(i / n * (PW - 2)) + 1
+    def _y(h): return PH - 1 - int(min(max(h, 0), game.effects.hp_max) / game.effects.hp_max * (PH - 2))
+    if len(hist) >= 2:
+        pts = [(_x(i), _y(h)) for i, h in enumerate(hist)]
+        pygame.draw.lines(plot, COLORS["hp_full"], False, pts, 2)
+    screen.blit(plot, (PANEL_X, y))
+    y += PH + 8
 
-    u0 = env_config.init_hp + env_config.init_resources
-    drawdown_sq_sum = 0.0
-    risk_count = 0
-    font_large = pygame.font.Font(None, 36)
-    font_med   = pygame.font.Font(None, 26)
-    font_small = pygame.font.Font(None, 22)
-    MAP_X, MAP_Y = 20, 60
+    # Controls
+    screen.blit(fs.render("Controls", True, COLORS["accent"]), (PANEL_X, y))
+    y += 16
+    for line in ["WASD / arrows - move",
+                 "F - forage (berry=HP, forest=wood)",
+                 f"C - craft tool ({game.effects.craft_cost} wood)",
+                 "R - reset  |  ESC - menu"]:
+        screen.blit(fs.render(line, True, COLORS["dim"]), (PANEL_X, y))
+        y += 16
 
-    trajectory     = [tuple(state.position[0].cpu().tolist())]
-    hp_history     = [state.hp[0].item()]
-    res_history    = [state.resources[0].item()]
-    step_count     = 0
-    game_over      = won = paused = False
-    frames_per_step = 12
-    frame_counter  = 0
-    last_action    = None
-    rnn_hidden     = model.init_hidden(1, torch.device(device)) if model.is_recurrent else None
+    # Game over overlay
+    if game.game_over:
+        overlay = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 170))
+        screen.blit(overlay, (0, 0))
+        msg = "TARGET REACHED!" if game.won else "YOU DIED"
+        mcol = COLORS["hp_full"] if game.won else COLORS["hp_low"]
+        surf = ft.render(msg, True, mcol)
+        screen.blit(surf, surf.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2 - 40)))
+        sub = fm.render(f"Steps: {game.steps}   HP: {int(game.hp)}   Wood: {game.wood}",
+                        True, COLORS["white"])
+        screen.blit(sub, sub.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2 + 10)))
+        tool_msg = f"Tool: {game.tool or 'none'}"
+        sub2 = fs.render(tool_msg, True, COLORS["dim"])
+        screen.blit(sub2, sub2.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2 + 40)))
+        hint = fs.render("R = new game   |   ESC = menu", True, COLORS["dim"])
+        screen.blit(hint, hint.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2 + 70)))
 
-    def w2s(r, c):
-        s = MAP_DISPLAY_SIZE / map_size
-        return int(c * s) + MAP_X, int(r * s) + MAP_Y
+
+def screen_play(screen, clock, dataset, idx: int):
+    rgb = dataset["rgb"][idx].numpy()
+    heightmap = dataset["heightmap"][idx].numpy()
+    tidx = dataset["terrain_idx"][idx].numpy()
+    mask = dataset["berry_mask"][idx].numpy()
+    biome = dataset["biomes"][idx]
+    seed = int(dataset["seeds"][idx])
+
+    def make_game():
+        return StrategyGame(rgb, heightmap, tidx, mask, biome, seed)
+
+    game = make_game()
+    fs = pygame.font.Font(None, 22)
+    fm = pygame.font.Font(None, 30)
+    fl = pygame.font.Font(None, 38)
+    ft = pygame.font.Font(None, 64)
 
     while True:
         for ev in pygame.event.get():
-            if ev.type == pygame.QUIT:   return "quit"
+            if ev.type == pygame.QUIT:
+                return "quit"
             if ev.type == pygame.KEYDOWN:
-                if ev.key == pygame.K_ESCAPE:                              return "menu"
-                if ev.key == pygame.K_r:                                   return "reset"
-                if ev.key in (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_KP_PLUS):
-                    frames_per_step = max(1, frames_per_step - 2)
-                if ev.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
-                    frames_per_step = min(120, frames_per_step + 2)
-                if ev.key == pygame.K_p:
-                    paused = not paused
+                # Craft menu handling
+                if game.crafting:
+                    if ev.key in (pygame.K_ESCAPE, pygame.K_c):
+                        game.crafting = False
+                        continue
+                    if ev.key == pygame.K_1:
+                        game.craft("raft")
+                        game.crafting = False
+                        continue
+                    if ev.key == pygame.K_2:
+                        game.craft("rope")
+                        game.crafting = False
+                        continue
+                    if ev.key == pygame.K_3:
+                        game.craft("shoes")
+                        game.crafting = False
+                        continue
+                    continue  # swallow other keys while crafting
 
-        if not game_over and not paused:
-            frame_counter += 1
-            if frame_counter >= frames_per_step:
-                frame_counter = 0
-                obs = build_obs(state, env_config, _compiled)
-                with torch.no_grad():
-                    if model.is_recurrent:
-                        action, rnn_hidden = model.get_deterministic_action(obs, rnn_hidden)
-                    else:
-                        action = model.get_deterministic_action(obs)
-                last_action = action.item()
+                if ev.key == pygame.K_ESCAPE:
+                    return "menu"
+                if ev.key == pygame.K_r:
+                    game = make_game()
+                    continue
+                if ev.key == pygame.K_c and not game.game_over:
+                    game.crafting = True
+                    continue
+                if ev.key == pygame.K_f and not game.game_over:
+                    game.forage()
+                    continue
+                if ev.key in ACTIONS and not game.game_over:
+                    dr, dc = ACTIONS[ev.key]
+                    game.step(dr, dc)
 
-                res   = state.resources[0].item()
-                hp    = state.hp[0].item()
-                u_t = res + hp
-                drawdown_sq_sum += (max(0.0, (u0 - u_t) / u0)) ** 2
-                risk_count += 1
-
-                result = env.step(state, action, target_pos)
-                state  = result.state
-                step_count += 1
-                update_seen(state)
-                trajectory.append(tuple(state.position[0].cpu().tolist()))
-                hp_history.append(state.hp[0].item())
-                res_history.append(state.resources[0].item())
-
-                alive   = result.info["alive"][0]
-                reached = result.info["reached"][0]
-                if not alive:     game_over, won = True, False
-                elif reached:     game_over, won = True, True
-                elif step_count >= env_config.max_steps:
-                    game_over, won = True, False
-
-        # ── Draw ────────────────────────────────────────────────────────────
-        screen.fill(COLORS["panel_bg"])
-
-        speed  = f"Speed: {60 // max(frames_per_step, 1)} steps/s"
-        status = "PAUSED" if paused else ("GAME OVER" if game_over else "PLAYING")
-        screen.blit(font_large.render(f"AI Agent  —  {status}  —  {speed}",
-                    True, COLORS["blue_ui"]), (MAP_X, 12))
-
-        screen.blit(make_map_surface_with_fog(base_rgb, seen_mask, map_size, MAP_DISPLAY_SIZE),
-                    (MAP_X, MAP_Y))
-
-        n = len(trajectory)
-        for i in range(1, n):
-            t  = i / max(n - 1, 1)
-            p1 = w2s(*trajectory[i - 1])
-            p2 = w2s(*trajectory[i])
-            pygame.draw.line(screen, (255, int(200*(1-t)), int(50*(1-t))), p1, p2, 2)
-
-        draw_star(screen, *w2s(*target_rc), r_outer=9, r_inner=4)
-
-        pr, pc = state.position[0].cpu().tolist()
-        px, py_ = w2s(int(pr), int(pc))
-        pygame.draw.circle(screen, COLORS["player"], (px, py_), 6)
-        pygame.draw.circle(screen, COLORS["white"],  (px, py_), 6, 1)
-        if last_action is not None:
-            screen.blit(font_med.render(ACTION_NAMES.get(last_action, "?"),
-                        True, COLORS["white"]), (px + 10, py_ - 10))
-
-        pygame.draw.rect(screen, COLORS["white"],
-                         (MAP_X, MAP_Y, MAP_DISPLAY_SIZE, MAP_DISPLAY_SIZE), 1)
-
-        # Minimap
-        mm_x, mm_y = MAP_X + MAP_DISPLAY_SIZE + 30, MAP_Y
-        screen.blit(font_small.render("Agent view  (▲ = target)", True, COLORS["panel_fg"]),
-                    (mm_x, mm_y - 16))
-        mm_surf = heightmap_to_surface(state.minimap[0, 0], MINIMAP_DISPLAY_SIZE, _compiled,
-                                       vis_mask=state.minimap[0, 2])
-
-        screen.blit(mm_surf, (mm_x, mm_y))
-        cx_mm, cy_mm = mm_x + MINIMAP_DISPLAY_SIZE // 2, mm_y + MINIMAP_DISPLAY_SIZE // 2
-        pygame.draw.circle(screen, COLORS["player"], (cx_mm, cy_mm), 3)
-
-        # Show target as a star on the minimap when within visibility
-        target_ch = state.minimap[0, 1]  # target indicator channel
-        if target_ch.any():
-            ty, tx = (target_ch > 0).nonzero(as_tuple=False)[0].tolist()
-            mm_diameter = target_ch.shape[0]
-            mm_scale = MINIMAP_DISPLAY_SIZE / mm_diameter
-            px = int(tx * mm_scale + mm_scale / 2) + mm_x
-            py = int(ty * mm_scale + mm_scale / 2) + mm_y
-            draw_star(screen, px, py, r_outer=5, r_inner=2)
-
-        compass = state.compass[0]
-        dyd, dxd = float(compass[0]), float(compass[1])
-        mag = (dyd**2 + dxd**2)**0.5
-        if mag > 1e-6:
-            dyd /= mag; dxd /= mag
-            ex, ey = int(cx_mm + dxd*35), int(cy_mm + dyd*35)
-            pygame.draw.line(screen, (255, 220, 50), (cx_mm, cy_mm), (ex, ey), 2)
-            a = math.atan2(dyd, dxd)
-            for s in (math.pi/5, -math.pi/5):
-                hx = int(ex + 9*math.cos(a+math.pi+s))
-                hy = int(ey + 9*math.sin(a+math.pi+s))
-                pygame.draw.line(screen, (255, 220, 50), (ex, ey), (hx, hy), 2)
-        pygame.draw.rect(screen, COLORS["white"],
-                         (mm_x, mm_y, MINIMAP_DISPLAY_SIZE, MINIMAP_DISPLAY_SIZE), 1)
-
-        # Stats
-        sx, sy_ = mm_x, mm_y + MINIMAP_DISPLAY_SIZE + 30
-        s        = state
-        hp_val   = s.hp[0].item(); hp_ratio = hp_val / env_config.max_hp
-        res_val  = s.resources[0].item()
-        risk_m   = (drawdown_sq_sum / max(risk_count, 1)) ** 0.5
-        # Normalised entropy of visibility distribution
-        _vc_flat = vis_counts.ravel().astype(np.float64)
-        _total = _vc_flat.sum()
-        if _total > 0:
-            _p = _vc_flat[_vc_flat > 0] / _total
-            expl_ent = -(_p * np.log(_p)).sum() / np.log(vis_counts.size)
-        else:
-            expl_ent = 0.0
-        dist_val = (s.position[0].float() - target_pos[0].float()).abs().sum().item()
-
-        for lbl, val, col in [
-            ("HP",        f"{hp_val:.1f} / {env_config.max_hp:.0f}",
-                          COLORS["green_ui"] if hp_ratio > 0.5 else (COLORS["red"] if hp_ratio < 0.3 else (255,165,0))),
-            ("Resources", f"{res_val:.1f}",
-                          COLORS["red"] if res_val/env_config.max_resources < 0.2 else COLORS["panel_fg"]),
-            ("Time Cost", f"{s.cost[0].item():.2f}",   COLORS["panel_fg"]),
-            ("Moves",     f"{step_count}",              COLORS["panel_fg"]),
-            ("Risk Exp.", f"{risk_m:.3f}",
-                          COLORS["red"] if risk_m > 0.5 else COLORS["panel_fg"]),
-            ("Exploration", f"{expl_ent:.3f}",            COLORS["panel_fg"]),
-            ("Distance",  f"{dist_val:.1f}",            COLORS["panel_fg"]),
-            ("Terrain",   _compiled.terrain_names[int(s.terrain_idx[0].item())].capitalize(),
-                          COLORS["panel_fg"]),
-            ("Position",  f"({int(pr)}, {int(pc)})",    COLORS["panel_fg"]),
-        ]:
-            screen.blit(font_small.render(f"{lbl}:", True, COLORS["gray"]),  (sx, sy_))
-            screen.blit(font_med.render(val, True, col), (sx + 90, sy_ - 2))
-            sy_ += 28
-
-        # ── Right panel: plot → terrain legend → controls ────────────────────
-        rx  = mm_x + MINIMAP_DISPLAY_SIZE + 20   # x ≈ 840
-        rw  = WINDOW_W - rx - 8                  # available width ≈ 352
-        ry  = MAP_Y
-        font_tiny = pygame.font.Font(None, 18)
-
-        # HP + Resources combined real-time plot
-        combined_history = [h + r for h, r in zip(hp_history, res_history)]
-        PLOT_W, PLOT_H = rw, 150
-        plot_surf = pygame.Surface((PLOT_W, PLOT_H))
-        plot_surf.fill((15, 15, 25))
-
-        pygame.draw.line(plot_surf, COLORS["gray"], (0, PLOT_H - 1), (PLOT_W, PLOT_H - 1), 1)
-        pygame.draw.line(plot_surf, COLORS["gray"], (0, 0), (0, PLOT_H - 1), 1)
-
-        # Dotted line at y = 100
-        y100 = PLOT_H - 1 - int(100 / 200 * (PLOT_H - 2))
-        for dx in range(0, PLOT_W, 8):
-            pygame.draw.line(plot_surf, (200, 190, 60),
-                             (dx, y100), (min(dx + 4, PLOT_W - 1), y100), 1)
-
-        n_steps = max(len(combined_history) - 1, 1)
-        def _px(step): return int(step / n_steps * (PLOT_W - 1))
-        def _py(val):  return PLOT_H - 1 - int(min(max(val, 0), 200) / 200 * (PLOT_H - 2))
-
-        pts = [(_px(i), _py(v)) for i, v in enumerate(combined_history)]
-        if len(pts) >= 2:
-            pygame.draw.lines(plot_surf, (70, 200, 120), False, pts, 2)
-
-        for yval, label in [(200, "200"), (100, "100"), (0, "0")]:
-            plot_surf.blit(font_tiny.render(label, True, COLORS["gray"]),
-                           (2, _py(yval) - 7))
-
-        screen.blit(font_small.render("HP + Resources", True, COLORS["panel_fg"]), (rx, ry))
-        ry += 18
-        screen.blit(plot_surf, (rx, ry))
-        ry += PLOT_H + 12
-
-        # Terrain legend — pixel-aligned columns
-        screen.blit(font_med.render("TERRAIN", True, COLORS["blue_ui"]), (rx, ry)); ry += 21
-        COL_NAME  = rx + 14          # name starts here
-        COL_COST  = rx + 114         # cost column (fixed x)
-        COL_DRAIN = rx + 158         # drain column (fixed x)
-        for lev in range(_compiled.num_terrains):
-            tc      = terrain_color(lev, _compiled)
-            name    = _compiled.terrain_names[lev].capitalize()
-            cost    = _compiled.move_costs[lev].item()
-            drain   = int(round(_compiled.res_rate[lev].item()))
-            drain_s = f"+{drain}" if drain >= 0 else str(drain)
-            pygame.draw.rect(screen, tc,              (rx, ry + 1, 11, 11))
-            pygame.draw.rect(screen, COLORS["white"], (rx, ry + 1, 11, 11), 1)
-            screen.blit(font_tiny.render(name,              True, COLORS["panel_fg"]), (COL_NAME,  ry))
-            screen.blit(font_tiny.render(f"{cost:.2f}",     True, COLORS["gray"]),     (COL_COST,  ry))
-            screen.blit(font_tiny.render(f"{drain_s}/step", True, COLORS["gray"]),     (COL_DRAIN, ry))
-            ry += 19
-        ry += 10
-
-        # Controls (bottom)
-        screen.blit(font_med.render("CONTROLS", True, COLORS["blue_ui"]), (rx, ry)); ry += 22
-        for ctrl in ["+/-  Speed", "P    Pause", "R    Reset", "ESC  Menu"]:
-            screen.blit(font_small.render(ctrl, True, COLORS["gray"]), (rx, ry)); ry += 19
-
-        if game_over:
-            overlay = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
-            overlay.fill((0, 0, 0, 160))
-            screen.blit(overlay, (0, 0))
-            msg   = ("TARGET REACHED!" if won
-                     else "AGENT DIED" if s.hp[0].item() <= 0 else "MAX STEPS REACHED")
-            color = COLORS["green_ui"] if won else COLORS["red"]
-            cy_ov = WINDOW_H // 2
-            ms = font_large.render(msg, True, color)
-            screen.blit(ms, ms.get_rect(center=(WINDOW_W//2, cy_ov-50)))
-            for k, line in enumerate([
-                f"Moves: {step_count}  •  Time cost: {s.cost[0].item():.2f}",
-                f"Risk exposure: {risk_m:.3f}  •  Exploration: {expl_ent:.3f}",
-            ]):
-                surf = font_med.render(line, True, COLORS["white"])
-                screen.blit(surf, surf.get_rect(center=(WINDOW_W//2, cy_ov+k*32)))
-            hs = font_small.render("R = try again  •  ESC = menu", True, COLORS["gray"])
-            screen.blit(hs, hs.get_rect(center=(WINDOW_W//2, cy_ov+80)))
-
+        draw_game(screen, game, fs, fm, fl, ft)
+        if game.crafting:
+            draw_craft_menu(screen, game, fm, fs)
         pygame.display.flip()
         clock.tick(60)
 
 
-# ---------------------------------------------------------------------------
-# Human play
-# ---------------------------------------------------------------------------
-
-class HumanDemo:
-    """Interactive human play session on a single map."""
-
-    MAP_DISPLAY  = 400
-    MINIMAP_SIZE = 240
-
-    def __init__(self, screen, world_map: torch.Tensor | None = None):
-        self.screen    = screen
-        self._world_map = world_map      # None → generate random each reset
-        self.font_small  = pygame.font.Font(None, 20)
-        self.font_medium = pygame.font.Font(None, 28)
-        self.font_large  = pygame.font.Font(None, 36)
-        self._reset()
-
-    def _reset(self):
-        seed = torch.randint(1, 10000, (1,)).item()
-        config = EnvConfig(
-            map_generation=MapGenConfig(seed=seed),
-            minimap=MinimapConfig(max_ray=15, occlude=True, clear_tolerance=0.1),
-        )
-        world_maps = (self._world_map.unsqueeze(0)
-                      if self._world_map is not None else None)
-        self.env = Islands(config, world_maps=world_maps)
-        self._compiled = self.env.compiled
-
-        # Ensure spawn and target are far enough apart
-        while True:
-            self.state, self.target_pos = self.env.reset(batch_size=1, seed=seed)
-            dist = (self.state.position[0].float() - self.target_pos[0].float()).abs().sum().item()
-            if dist >= config.size * 0.3:
-                break
-            seed += 1
-
-        H = W = config.size
-        self.seen_mask = np.zeros((H, W), dtype=bool)
-        self._vis_counts = np.zeros((H, W), dtype=np.int32)
-        self._update_seen()
-
-        wm = self.env.world_map.numpy()
-        self._base_rgb = _fast_colorize(wm, self._compiled)   # [H, W, 3]
-
-        self.game_over   = False
-        self.won         = False
-        self.moves_count = 0
-        self._u0 = self.env.config.init_hp + self.env.config.init_resources
-        self._drawdown_sq_sum = 0.0
-        self._risk_count = 0
-        self._hp_history  = [self.state.hp[0].item()]
-        self._res_history = [self.state.resources[0].item()]
-
-    def _update_seen(self):
-        vis = self.state.minimap[0, 2].numpy()
-        mr  = self.env.config.minimap_max_ray
-        D   = 2 * mr + 1
-        pos = self.state.position[0].numpy()
-        cy, cx = int(pos[0]), int(pos[1])
-        H, W   = self.seen_mask.shape
-        dy_g, dx_g = np.meshgrid(np.arange(D)-mr, np.arange(D)-mr, indexing="ij")
-        rows = np.clip(cy + dy_g, 0, H-1)
-        cols = np.clip(cx + dx_g, 0, W-1)
-        visible = vis > 0.5
-        self.seen_mask[rows[visible], cols[visible]] = True
-        self._vis_counts[rows[visible], cols[visible]] += 1
-
-    def _move(self, action):
-        if self.game_over:
-            return
-        res   = self.state.resources[0].item()
-        hp    = self.state.hp[0].item()
-        u_t = res + hp
-        self._drawdown_sq_sum += (max(0.0, (self._u0 - u_t) / self._u0)) ** 2
-        self._risk_count += 1
-
-        result = self.env.step(self.state, action.to(self.env._device), self.target_pos)
-        self.state = result.state
-        self.moves_count += 1
-        self._hp_history.append(self.state.hp[0].item())
-        self._res_history.append(self.state.resources[0].item())
-        self._update_seen()
-
-        if not result.info["alive"][0]:
-            self.game_over, self.won = True, False
-        elif result.info["reached"][0]:
-            self.game_over, self.won = True, True
-
-    # ── Drawing ─────────────────────────────────────────────────────────────
-
-    def _draw_map(self):
-        MAP_X, MAP_Y = 10, 10
-        surf = make_map_surface_with_fog(
-            self._base_rgb, self.seen_mask,
-            self.env.world_map.shape[0], self.MAP_DISPLAY,
-        )
-        self.screen.blit(surf, (MAP_X, MAP_Y))
-        scale = self.MAP_DISPLAY / self.env.world_map.shape[0]
-
-        pp = self.state.position[0]
-        pygame.draw.circle(self.screen, COLORS["player"],
-                           (int(pp[1]*scale)+MAP_X, int(pp[0]*scale)+MAP_Y), 5)
-
-        tp = self.target_pos[0]
-        draw_star(self.screen, int(tp[1]*scale)+MAP_X, int(tp[0]*scale)+MAP_Y,
-                  r_outer=8, r_inner=3)
-
-        pygame.draw.rect(self.screen, COLORS["black"],
-                         (MAP_X, MAP_Y, self.MAP_DISPLAY, self.MAP_DISPLAY), 2)
-
-    def _draw_minimap(self):
-        mm_x, mm_y = self.MAP_DISPLAY + 30, 30
-        surf = heightmap_to_surface(self.state.minimap[0, 0],
-                                     self.MINIMAP_SIZE, self._compiled,
-                                     vis_mask=self.state.minimap[0, 2])
-
-        mm_rect = pygame.Rect(mm_x, mm_y, self.MINIMAP_SIZE, self.MINIMAP_SIZE)
-        self.screen.blit(surf, mm_rect.topleft)
-
-        compass = self.state.compass[0]
-        cx_mm, cy_mm = mm_rect.center
-        dyd, dxd = float(compass[0]), float(compass[1])
-        mag = (dyd**2 + dxd**2)**0.5
-        if mag > 1e-6:
-            dyd /= mag; dxd /= mag
-            ex, ey = int(cx_mm + dxd*32), int(cy_mm + dyd*32)
-            pygame.draw.line(self.screen, (255, 220, 50), (cx_mm, cy_mm), (ex, ey), 2)
-            a = math.atan2(dyd, dxd)
-            for s in (math.pi/5, -math.pi/5):
-                hx = int(ex + 8*math.cos(a+math.pi+s))
-                hy = int(ey + 8*math.sin(a+math.pi+s))
-                pygame.draw.line(self.screen, (255, 220, 50), (ex, ey), (hx, hy), 2)
-        pygame.draw.circle(self.screen, COLORS["player"], mm_rect.center, 3)
-
-        # Show target as a star on the minimap when within visibility
-        target_ch = self.state.minimap[0, 1]
-        if target_ch.any():
-            ty, tx = (target_ch > 0).nonzero(as_tuple=False)[0].tolist()
-            mm_diameter = target_ch.shape[0]
-            mm_scale = self.MINIMAP_SIZE / mm_diameter
-            # blit_array transposes (row,col) → (x,y), so screen x=col, y=row
-            px = int(tx * mm_scale + mm_scale / 2) + mm_x
-            py = int(ty * mm_scale + mm_scale / 2) + mm_y
-            draw_star(self.screen, px, py, r_outer=5, r_inner=2)
-
-        pygame.draw.rect(self.screen, COLORS["black"], mm_rect, 2)
-        self.screen.blit(self.font_small.render("Agent view  (▲ = target)", True, COLORS["black"]),
-                         (mm_x, mm_y - 16))
-
-    def _draw_ui(self):
-        ui_x = self.MAP_DISPLAY + 30
-        ui_y = self.MINIMAP_SIZE + 60
-        s, ec = self.state, self.env.config
-        hp_r   = s.hp[0] / ec.max_hp
-        res_r  = s.resources[0] / ec.max_resources
-        risk_m = (self._drawdown_sq_sum / max(self._risk_count, 1)) ** 0.5
-        expl_ent = self._compute_exploration()
-
-        for text, font, color in [
-            ("Live Stats",                                       self.font_medium, COLORS["black"]),
-            (f"Moves:     {self.moves_count}",                   self.font_small,  COLORS["black"]),
-            (f"Time Cost: {s.cost[0]:.2f}",                      self.font_small,  COLORS["black"]),
-            (f"HP:        {s.hp[0]:.1f} / {ec.max_hp:.0f}",      self.font_small,
-                COLORS["red"] if hp_r < 0.3 else ((255,165,0) if hp_r < 0.6 else COLORS["green_ui"])),
-            (f"Resources: {s.resources[0]:.1f} / {ec.max_resources:.0f}", self.font_small,
-                COLORS["red"] if res_r < 0.2 else COLORS["black"]),
-            (f"Risk Exp:  {risk_m:.3f}",                         self.font_small,
-                COLORS["red"] if risk_m > 0.5 else COLORS["black"]),
-            (f"Exploration: {expl_ent:.3f}",                       self.font_small,  COLORS["black"]),
-            ("",                                                 self.font_small,  COLORS["black"]),
-            ("Position",                                         self.font_medium, COLORS["black"]),
-            (f"Pos:    ({s.position[0][0]}, {s.position[0][1]})", self.font_small, COLORS["black"]),
-            (f"Target: ({self.target_pos[0][0]}, {self.target_pos[0][1]})", self.font_small, COLORS["black"]),
-            (f"Dist:   {(s.position[0].float()-self.target_pos[0].float()).abs().sum():.1f}",
-                self.font_small, COLORS["black"]),
-            (f"Terrain: {self._compiled.terrain_names[int(s.terrain_idx[0])]}", self.font_small, COLORS["black"]),
-        ]:
-            if text:
-                self.screen.blit(font.render(text, True, color), (ui_x, ui_y))
-            ui_y += 26 if font == self.font_medium else 20
-
-    def _draw_hp_res_plot(self, x, y, w, h):
-        """Draw HP + Resources combined real-time plot (matches AI agent panel)."""
-        font_tiny = pygame.font.Font(None, 18)
-        combined = [hp + res for hp, res in zip(self._hp_history, self._res_history)]
-
-        plot_surf = pygame.Surface((w, h))
-        plot_surf.fill((15, 15, 25))
-        pygame.draw.line(plot_surf, COLORS["gray"], (0, h - 1), (w, h - 1), 1)
-        pygame.draw.line(plot_surf, COLORS["gray"], (0, 0), (0, h - 1), 1)
-
-        # Dotted line at y = 100
-        y100 = h - 1 - int(100 / 200 * (h - 2))
-        for dx in range(0, w, 8):
-            pygame.draw.line(plot_surf, (200, 190, 60),
-                             (dx, y100), (min(dx + 4, w - 1), y100), 1)
-
-        n_steps = max(len(combined) - 1, 1)
-        def _px(step): return int(step / n_steps * (w - 1))
-        def _py(val):  return h - 1 - int(min(max(val, 0), 200) / 200 * (h - 2))
-
-        pts = [(_px(i), _py(v)) for i, v in enumerate(combined)]
-        if len(pts) >= 2:
-            pygame.draw.lines(plot_surf, (70, 200, 120), False, pts, 2)
-
-        for yval, label in [(200, "200"), (100, "100"), (0, "0")]:
-            plot_surf.blit(font_tiny.render(label, True, COLORS["gray"]),
-                           (2, _py(yval) - 7))
-
-        self.screen.blit(self.font_small.render("HP + Resources", True, COLORS["black"]),
-                         (x, y))
-        self.screen.blit(plot_surf, (x, y + 18))
-
-    def _draw_right_panel(self):
-        right_x = self.MAP_DISPLAY + self.MINIMAP_SIZE + 55
-        y = 10
-
-        # HP + Resources plot
-        plot_w = WINDOW_W - right_x - 8
-        plot_h = 150
-        self._draw_hp_res_plot(right_x, y, plot_w, plot_h)
-        y += plot_h + 30
-
-        self.screen.blit(self.font_medium.render("Controls", True, COLORS["black"]),
-                         (right_x, y)); y += 26
-        for line in ["WASD / Arrows: Move", "Space: Stay", "R: New game", "ESC: Menu"]:
-            self.screen.blit(self.font_small.render(line, True, COLORS["gray"]),
-                             (right_x, y)); y += 20
-        y += 20
-        self.screen.blit(self.font_medium.render("Terrain Legend", True, COLORS["black"]),
-                         (right_x, y)); y += 26
-        for i, name in enumerate(self._compiled.terrain_names):
-            col  = terrain_color(i, self._compiled)
-            cost = self._compiled.move_costs[i].item()
-            pygame.draw.rect(self.screen, col,             (right_x, y, 14, 14))
-            pygame.draw.rect(self.screen, COLORS["black"], (right_x, y, 14, 14), 1)
-            self.screen.blit(
-                self.font_small.render(f"{name.capitalize()} (cost {cost:.1f})",
-                                       True, COLORS["black"]),
-                (right_x + 18, y)); y += 20
-
-    def _compute_exploration(self):
-        _vc = self._vis_counts.ravel().astype(np.float64)
-        _tot = _vc.sum()
-        if _tot > 0:
-            _p = _vc[_vc > 0] / _tot
-            return -(_p * np.log(_p)).sum() / np.log(self._vis_counts.size)
-        return 0.0
-
-    def _draw_game_over(self):
-        overlay = pygame.Surface((WINDOW_W, WINDOW_H))
-        overlay.set_alpha(180); overlay.fill(COLORS["black"])
-        self.screen.blit(overlay, (0, 0))
-        if self.won:
-            title, color = "VICTORY!", COLORS["green_ui"]
-            lines = [
-                f"Reached target in {self.moves_count} moves",
-                f"Final time cost: {self.state.cost[0]:.2f}",
-                f"Risk exposure (ρ): {(self._drawdown_sq_sum / max(self._risk_count, 1)) ** 0.5:.3f}",
-                f"Exploration (E): {self._compute_exploration():.3f}",
-            ]
-        else:
-            title, color = "GAME OVER", COLORS["red"]
-            lines = [
-                f"HP reached zero after {self.moves_count} moves",
-                f"Time cost: {self.state.cost[0]:.2f}",
-                f"Risk exposure (ρ): {(self._drawdown_sq_sum / max(self._risk_count, 1)) ** 0.5:.3f}",
-            ]
-        cy = WINDOW_H // 2
-        ts = self.font_large.render(title, True, color)
-        self.screen.blit(ts, ts.get_rect(center=(WINDOW_W//2, cy-60)))
-        for k, line in enumerate(lines):
-            surf = self.font_medium.render(line, True, COLORS["white"])
-            self.screen.blit(surf, surf.get_rect(center=(WINDOW_W//2, cy-10+k*32)))
-        rs = self.font_small.render("R = new game  •  ESC = menu", True, COLORS["white"])
-        self.screen.blit(rs, rs.get_rect(center=(WINDOW_W//2, cy+130)))
-
-    # ── Main loop ────────────────────────────────────────────────────────────
-
-    def run(self, clock):
-        """Run the human play loop. Returns 'quit' or 'menu'."""
-        while True:
-            for ev in pygame.event.get():
-                if ev.type == pygame.QUIT:
-                    return "quit"
-                if ev.type == pygame.KEYDOWN:
-                    if ev.key == pygame.K_ESCAPE:  return "menu"
-                    if ev.key == pygame.K_r:       self._reset()
-                    elif not self.game_over:
-                        action = None
-                        if   ev.key in (pygame.K_UP,    pygame.K_w): action = torch.tensor([ACTIONS["up"]])
-                        elif ev.key in (pygame.K_DOWN,  pygame.K_s): action = torch.tensor([ACTIONS["down"]])
-                        elif ev.key in (pygame.K_LEFT,  pygame.K_a): action = torch.tensor([ACTIONS["left"]])
-                        elif ev.key in (pygame.K_RIGHT, pygame.K_d): action = torch.tensor([ACTIONS["right"]])
-                        elif ev.key == pygame.K_SPACE:               action = torch.tensor([ACTIONS["forage"]])
-                        if action is not None:
-                            self._move(action)
-
-            self.screen.fill(COLORS["white"])
-            self._draw_map()
-            self._draw_minimap()
-            self._draw_ui()
-            self._draw_right_panel()
-            if self.game_over:
-                self._draw_game_over()
-            pygame.display.flip()
-            clock.tick(60)
+def screen_agent_stub(screen, clock):
+    fm = pygame.font.Font(None, 36)
+    fs = pygame.font.Font(None, 22)
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:              return "quit"
+            if ev.type == pygame.KEYDOWN:           return "menu"
+        screen.fill(COLORS["bg"])
+        m1 = fm.render("AI mode unavailable", True, COLORS["accent"])
+        m2 = fs.render("No trained models exist yet for the RGB strategy env.",
+                       True, COLORS["fg"])
+        m3 = fs.render("Press any key to go back.", True, COLORS["dim"])
+        screen.blit(m1, m1.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2 - 40)))
+        screen.blit(m2, m2.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2 + 10)))
+        screen.blit(m3, m3.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2 + 60)))
+        pygame.display.flip()
+        clock.tick(30)
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
+# ── Main ────────────────────────────────────────────────────────────────────
 
 def main():
     pygame.init()
     screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
-    pygame.display.set_caption("Cogniland")
+    pygame.display.set_caption("Cogniland — Strategy")
     clock = pygame.time.Clock()
 
+    dataset = load_val_dataset()
+    val_ok = dataset is not None
+
     while True:
-        mode = screen_main_menu(screen, clock)
+        mode = screen_main_menu(screen, clock, val_ok)
         if mode is None:
             break
 
-        # Map selection (shared between both modes).
-        # Returns (world_map, fixed_spawn, fixed_target):
-        #   random / ESC → (None, None, None)
-        #   val map      → (tensor, None, None)
-        #   behavioral   → (tensor, (r,c), (r,c))
-        world_map, fixed_spawn, fixed_target = screen_select_map(screen, clock)
+        if mode == "agent":
+            if screen_agent_stub(screen, clock) == "quit":
+                break
+            continue
 
         if mode == "human":
-            demo   = HumanDemo(screen, world_map=world_map)
-            result = demo.run(clock)
-            if result == "quit":
-                break
-
-        elif mode == "agent":
-            ckpt_path = screen_select_checkpoint(screen, clock)
-            if ckpt_path is None:
-                continue   # back to main menu
-
-            env_config = EnvConfig(map_generation=MapGenConfig(seed=42))
-
             while True:
-                if fixed_spawn is not None and fixed_target is not None:
-                    # Behavioral map: positions are pre-set, skip the picker
-                    spawn_rc, target_rc = fixed_spawn, fixed_target
-                else:
-                    result = screen_pick_positions(screen, clock, env_config,
-                                                   world_map=world_map)
-                    if result is None:
-                        break   # back to main menu
-                    spawn_rc, target_rc = result
-
-                outcome = screen_ai_playback(
-                    screen, clock, ckpt_path, spawn_rc, target_rc,
-                    world_map=world_map,
-                )
-                if outcome == "quit":
-                    pygame.quit()
-                    sys.exit()
-                elif outcome == "menu":
+                idx = screen_pick_map(screen, clock, dataset)
+                if idx is None:
                     break
-                # "reset" → back to position picking on same map
+                result = screen_play(screen, clock, dataset, idx)
+                if result == "quit":
+                    pygame.quit(); sys.exit()
+                # "menu" → back to map picker
 
     pygame.quit()
-    sys.exit()
 
 
 if __name__ == "__main__":
