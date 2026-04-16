@@ -108,21 +108,14 @@ def generate_island(config: EnvConfig) -> torch.Tensor:
 
 
 def colorize(world_map: torch.Tensor, compiled: CompiledTerrainData) -> torch.Tensor:
-    """Convert heightmap to [H, W, 3] uint8 color tensor for visualisation."""
+    """Convert heightmap to [H, W, 3] color tensor for visualisation."""
     thresholds = compiled.thresholds.cpu()
     color_lut = compiled.color_lut.float().cpu()
     num_terrains = compiled.num_terrains
 
-    color_world = torch.zeros(*world_map.shape, 3)
-    for i in range(world_map.shape[0]):
-        for j in range(world_map.shape[1]):
-            val = world_map[i, j].item()
-            for k in range(num_terrains):
-                if val < thresholds[k].item():
-                    color_world[i, j] = color_lut[k]
-                    break
-
-    return color_world
+    idx = torch.searchsorted(thresholds, world_map.cpu().contiguous(), right=True)
+    idx = idx.clamp(0, num_terrains - 1).long()
+    return color_lut[idx]
 
 
 class Islands:
