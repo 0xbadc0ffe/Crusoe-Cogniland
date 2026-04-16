@@ -216,4 +216,4 @@ CLAUDE.md
 artifacts/
 artifacts_sweep/
 logs/
-sweep_artifacts/
+sweep_artifacts/.claude/worktrees/
