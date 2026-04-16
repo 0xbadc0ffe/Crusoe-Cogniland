@@ -213,7 +213,3 @@ __marimo__/
 CLAUDE.md
 
 .agents/
-artifacts/
-artifacts_sweep/
-logs/
-sweep_artifacts/
