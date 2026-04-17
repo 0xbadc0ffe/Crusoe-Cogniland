@@ -1,0 +1,31 @@
+name: ppo_rnn_reward_grid
+entity: crusoe
+project: crusoe_in_cogniland
+method: grid
+metric:
+  name: eval/aggregate/avg_reward
+  goal: maximize
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - --env-config
+  - configs/env/cogniland.yaml
+  - --agent-config
+  - configs/agent/ppo_rnn.yaml
+  - --sweep
+
+program: scripts/train.py
+
+# Grid over the two reward knobs that govern exploration/shaping, with
+# reach_bonus fixed as the scale anchor.
+#
+# 4 * 4 = 16 runs.
+parameters:
+  reward.reach_bonus:  {value: 10.0}
+  reward.step_penalty: {values: [0.0, 0.005, 0.01, 0.02]}
+  reward.shaping_coef: {values: [0.0, 0.025, 0.05, 0.1]}
+  seed:                {values: [42]}
+
+  trainer.num_train_frames: {value: 50_000_000}

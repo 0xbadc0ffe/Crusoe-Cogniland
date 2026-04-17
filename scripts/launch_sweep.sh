@@ -12,7 +12,9 @@ Usage:
   ./scripts/launch_sweep.sh --sweep-id <existing_id> [options]
 
 Options:
-  -n, --num-agents NUM    Number of SLURM array tasks (default: 10)
+  -n, --num-agents NUM    Number of SLURM array tasks
+                          (default: auto = number of grid combos for grid
+                          sweeps; required for random/bayes)
   -r, --runs-per NUM      Runs per agent (default: 1)
   -N, --nodes LIST        SLURM --nodelist
   -x, --exclude LIST      SLURM --exclude
@@ -21,18 +23,21 @@ Options:
   --dry-run               Print command without submitting
 
 Examples:
-  # K=10 seeds: create sweep from YAML, launch 10 agents each doing 1 run
-  ./scripts/launch_sweep.sh configs/sweeps/ppo_rnn_seeds.yaml -n 10 -r 1
+  # Grid sweep: -n auto-detected from parameters × values (one combo per task)
+  ./scripts/launch_sweep.sh configs/sweeps/ppo_rnn_reward.yaml
 
-  # HP search: 20 agents, each doing 5 runs (100 total random trials)
-  ./scripts/launch_sweep.sh configs/sweeps/ppo_rnn_hpsearch.yaml -n 20 -r 5
+  # Override: force 8 array tasks (e.g. to serialize 2 combos per task)
+  ./scripts/launch_sweep.sh configs/sweeps/ppo_rnn_reward.yaml -n 8 -r 2
+
+  # Random/bayes sweep: -n is required
+  ./scripts/launch_sweep.sh configs/sweeps/ppo_rnn_hpsearch.yaml -n 20
 
   # Reuse existing sweep
-  ./scripts/launch_sweep.sh --sweep-id entity/project/abc123 -n 10 -r 1
+  ./scripts/launch_sweep.sh --sweep-id entity/project/abc123 -n 10
 EOF
 }
 
-NUM_AGENTS=10
+NUM_AGENTS=""
 RUNS_PER_AGENT=1
 NODES=""
 EXCLUDE=""
@@ -67,6 +72,35 @@ if [ -z "$SWEEP_ID" ]; then
     echo "Creating W&B sweep from $SWEEP_CONFIG ..."
     SWEEP_ID=$(wandb sweep "$SWEEP_CONFIG" 2>&1 | grep -oP '(?<=wandb agent )\S+')
     echo "Created sweep: $SWEEP_ID"
+fi
+
+# Auto-detect number of agents for grid sweeps if -n not provided
+if [ -z "$NUM_AGENTS" ]; then
+    if [ -n "$SWEEP_CONFIG" ]; then
+        GRID_SIZE=$(python - "$SWEEP_CONFIG" <<'PY'
+import sys, yaml
+try:
+    cfg = yaml.safe_load(open(sys.argv[1]))
+except Exception as e:
+    sys.exit(f"yaml parse error: {e}")
+if cfg.get("method") != "grid":
+    sys.exit(0)  # print nothing, caller falls through
+total = 1
+for v in (cfg.get("parameters") or {}).values():
+    if isinstance(v, dict) and "values" in v:
+        total *= len(v["values"])
+print(total)
+PY
+)
+        if [ -n "$GRID_SIZE" ]; then
+            NUM_AGENTS="$GRID_SIZE"
+            echo "Auto-detected grid size: $NUM_AGENTS combos -> -n $NUM_AGENTS"
+        fi
+    fi
+    if [ -z "$NUM_AGENTS" ]; then
+        echo "Error: -n required (non-grid sweep or reused --sweep-id)"
+        exit 1
+    fi
 fi
 
 echo ""

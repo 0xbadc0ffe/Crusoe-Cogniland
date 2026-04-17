@@ -50,6 +50,11 @@ class MultiTaskEnvWrapper:
         # Current task assignment
         self.task_ids = np.zeros(env.num_envs, dtype=np.int32)
 
+        # Running per-env episode-return sum over the task-computed rewards.
+        # The base env's `_episode_returns` is never accumulated (base rewards
+        # are zero), so we track it here and overwrite `info` on episode end.
+        self._episode_returns = np.zeros(env.num_envs, dtype=np.float32)
+
     @property
     def num_envs(self) -> int:
         return self.env.num_envs
@@ -75,9 +80,14 @@ class MultiTaskEnvWrapper:
         """
         return self._task_embeddings[task_ids]
 
-    def reset(self, seed: int | None = None) -> dict[str, np.ndarray]:
+    def reset(
+        self,
+        seed: int | None = None,
+        map_indices: np.ndarray | None = None,
+    ) -> dict[str, np.ndarray]:
         """Reset all envs and return observations."""
-        obs = self.env.reset(seed=seed)
+        obs = self.env.reset(seed=seed, map_indices=map_indices)
+        self._episode_returns.fill(0.0)
         # Add task embedding to observations
         obs["task_embedding"] = self.get_task_embeddings(self.task_ids)
         return obs
@@ -96,6 +106,18 @@ class MultiTaskEnvWrapper:
         rewards = compute_task_reward(
             self.task_ids, base_rewards, dones, info, self._config,
         )
+
+        # Accumulate the task-computed reward into our running return tracker,
+        # then overwrite info["returned_episode_returns"] for envs that just
+        # finished (the base env reports zeros there).
+        self._episode_returns += rewards
+        returned = info.get("returned_episode")
+        if returned is not None and returned.any():
+            info["returned_episode_returns"] = np.where(
+                returned, self._episode_returns, 0.0
+            ).astype(np.float32)
+        if dones.any():
+            self._episode_returns[dones] = 0.0
 
         # Add task embedding to observations
         obs["task_embedding"] = self.get_task_embeddings(self.task_ids)

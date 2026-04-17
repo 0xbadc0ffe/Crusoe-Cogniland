@@ -440,6 +440,10 @@ class CognilandEnv:
         # Map assignment counter
         self._map_counter = 0
 
+        # When False, step() does not auto-reset finished envs — used by the
+        # trajectory logger so pos_r/pos_c retain the final episode position.
+        self._auto_reset_enabled = True
+
         # State arrays — allocated in reset()
         self.pos_r: np.ndarray | None = None
         self.pos_c: np.ndarray | None = None
@@ -521,14 +525,32 @@ class CognilandEnv:
         dist = scipy_dijkstra(graph.T, directed=True, indices=target_flat)
         return dist.reshape(self._map_size, self._map_size).astype(np.float32)
 
-    def reset(self, seed: int | None = None) -> dict[str, np.ndarray]:
-        """Reset all environments. Returns observation dict."""
+    def reset(
+        self,
+        seed: int | None = None,
+        map_indices: np.ndarray | None = None,
+    ) -> dict[str, np.ndarray]:
+        """Reset all environments. Returns observation dict.
+
+        Args:
+            seed: optional seed for spawn/target sampling RNG.
+            map_indices: optional [B] array of explicit map indices. If None,
+                maps are assigned cycling through the pool.
+        """
         if seed is not None:
             self._rng = np.random.default_rng(seed)
 
         B = self._num_envs
 
-        self.map_idx = self._assign_maps(B)
+        if map_indices is not None:
+            mi = np.asarray(map_indices, dtype=np.int32).reshape(-1)
+            if mi.shape[0] != B:
+                raise ValueError(
+                    f"map_indices length {mi.shape[0]} != num_envs {B}"
+                )
+            self.map_idx = mi
+        else:
+            self.map_idx = self._assign_maps(B)
         self.spawn_r, self.spawn_c, self.target_r, self.target_c = (
             _sample_spawn_target_batch(
                 self._terrain_idx, self.map_idx, self._rng,
@@ -795,8 +817,9 @@ class CognilandEnv:
 
         dones = self.done.copy()
 
-        # Auto-reset done envs
-        self._reset_envs(just_done)
+        # Auto-reset done envs (skip when the logger has disabled it)
+        if self._auto_reset_enabled:
+            self._reset_envs(just_done)
 
         obs = self._get_obs()
 

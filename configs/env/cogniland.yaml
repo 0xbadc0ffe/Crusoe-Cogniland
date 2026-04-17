@@ -2,8 +2,8 @@ experiment_name: default
 results_path: results
 offline: false
 
-entity: cogniland
-project: cogniland-multitask
+entity: crusoe
+project: crusoe_in_cogniland
 
 seed: 42
 

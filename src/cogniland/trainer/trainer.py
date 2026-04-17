@@ -11,6 +11,7 @@ from cogniland.envs.registry import make_env
 from cogniland.envs.task_sampler import TaskSampler
 from cogniland.metrics.tracker import MetricsTracker
 from cogniland.trainer.run_logger import RunLogger
+from cogniland.trainer.trajectory_viz import TrajectoryLogger
 from cogniland.trainer.utils import RNGManager
 from cogniland.shared import setup_logger
 
@@ -69,6 +70,15 @@ class Trainer:
             self.run_logger.register_metrics(t, prefix_override=f"eval/task_{task_id}")
 
         self.eval_set = 0
+
+        # Trajectory visualization (4 fixed eval maps, one per biome)
+        try:
+            self.trajectory_logger = TrajectoryLogger(
+                config, self.agent, self.run_logger.wandb_run,
+            )
+        except Exception as e:
+            logger.warning("Trajectory logger init failed: %s", e)
+            self.trajectory_logger = None
 
         # Checkpoint
         if config.agent.get("checkpoint", {}).get("enabled", False) and CheckpointCallback is not None:
@@ -259,6 +269,15 @@ class Trainer:
         logger.info("\nEval set %d\n%s", self.eval_set,
                     tabulate(rows, headers=["task", "reward", "success", "episodes"],
                              tablefmt="grid"))
+
+        # Trajectory viz on fixed maps (one per biome)
+        if self.trajectory_logger is not None:
+            traj_rng = self.rng_manager.get_key()
+            self.trajectory_logger.log(
+                agent_state=self.agent_state,
+                rng=traj_rng,
+                global_train_frames=global_train_frames,
+            )
 
         # Checkpoint (use aggregate reward as the tracking metric)
         if self.checkpoint_callback is not None:
