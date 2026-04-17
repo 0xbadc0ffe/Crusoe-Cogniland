@@ -13,10 +13,12 @@ task_embedding_dim: 7
 task_sampling: round_robin
 
 env:
-  map_size: 128
-  num_parallel_envs: 32
-  num_parallel_envs_eval: 4
-  max_steps: 1000
+  # map_size is inferred from the loaded map dataset in `CognilandEnv`
+  # (see `src/cogniland/envs/env.py`); this config key is currently unused.
+  # map_size: 128
+  num_parallel_envs: 256            # scaled up — vectorised env runs ~14k steps/s
+  num_parallel_envs_eval: 8
+  max_steps: 500
 
   # Map dataset paths
   train_maps: data/maps/train.pt
@@ -24,9 +26,13 @@ env:
   test_maps: data/maps/test.pt
 
   # Minimap
-  minimap_max_ray: 22
+  # minimap_max_ray is currently unused (minimap radius is hard-coded in
+  # `src/cogniland/envs/env.py` as MINIMAP_RADIUS=22).
+  # minimap_max_ray: 22
   occlude: true
-  clear_tolerance: 0.15
+  # clear_tolerance is currently unused (occlusion uses the constant
+  # CLEAR_TOLERANCE=0.15 in `src/cogniland/envs/env.py`).
+  # clear_tolerance: 0.15
 
   # Tile effects (can override TileEffects defaults)
   init_hp: 100
@@ -47,19 +53,22 @@ env:
     mountains: 22
 
   # Spawn/target
-  min_spawn_target_manhattan: 60
+  min_spawn_target_manhattan: 0
 
 # Task 0 reward
 reward:
-  reach_bonus: 100.0
-  step_penalty: 0.01
-  distance_shaping_coef: 0.1
+  reach_bonus: 10.0           # sparse bonus on reaching target
+  step_penalty: 0.01          # per-step cost (≤ 10 over max_steps=1000)
+  shaping_coef: 0.05          # PBRS: shaping_coef * (ctg_prev - ctg_curr)
+                              # telescopes to +shaping_coef * ctg_spawn on success
+                              # (typical ctg_spawn ~ 50–200 HP → cumulative ~2.5–10)
 
 trainer:
-  num_train_frames: 5_000_000
-  num_eval_frames: 20_000
+  num_train_frames: 50_000_000
+  num_eval_frames: 10_000
   eval_interval_frames: 500_000
-  log_interval_episodes: 50
+  # log_interval_episodes is currently unused by the trainer/logger.
+  # log_interval_episodes: 50
 
 metrics_tracker:
-  moving_avg_window_size: 100
+  moving_avg_window_size: 50

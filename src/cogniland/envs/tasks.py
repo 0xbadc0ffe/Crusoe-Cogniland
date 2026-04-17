@@ -55,36 +55,35 @@ def _task_0_reward(
     Reward components:
       - Step penalty: -step_penalty per step
       - Success bonus: +reach_bonus on reaching target
-      - Distance shaping: at episode end, +distance_shaping_coef * (1 - final_dist / initial_dist)
+      - Potential-based shaping: +shaping_coef * (ctg_prev - ctg_curr) every step,
+        where ``ctg`` is the Dijkstra cost-to-go computed once per episode from
+        the target on the HP-drain graph. This is PBRS (Ng et al. 1999) with
+        potential Phi(s) = -ctg(s) and gamma=1: summing it along a successful
+        trajectory telescopes to ``+shaping_coef * ctg_spawn``.
     """
-    # Read config
     reward_cfg = config.reward if hasattr(config, "reward") else config.get("reward", {})
     if hasattr(reward_cfg, "reach_bonus"):
         reach_bonus = float(reward_cfg.reach_bonus)
         step_penalty = float(reward_cfg.step_penalty)
-        dist_coef = float(reward_cfg.distance_shaping_coef)
+        shaping_coef = float(reward_cfg.shaping_coef)
     else:
-        reach_bonus = reward_cfg.get("reach_bonus", 100.0)
+        reach_bonus = reward_cfg.get("reach_bonus", 10.0)
         step_penalty = reward_cfg.get("step_penalty", 0.01)
-        dist_coef = reward_cfg.get("distance_shaping_coef", 0.1)
+        shaping_coef = reward_cfg.get("shaping_coef", 0.05)
 
     count = int(mask.sum())
     rewards = np.full(count, -step_penalty, dtype=np.float32)
 
-    # Extract relevant info for masked envs
-    reached = info["reached"][mask]
-    done = dones[mask]
-    dist = info["dist_to_target"][mask]
-    init_dist = info["initial_dist"][mask]
-
     # Success bonus
-    rewards[reached] += reach_bonus
+    rewards[info["reached"][mask]] += reach_bonus
 
-    # Distance shaping at episode end (for all done envs, not just successful)
-    done_mask = done & ~reached
-    if done_mask.any():
-        safe_init = np.maximum(init_dist[done_mask], 1e-6)
-        progress = 1.0 - dist[done_mask] / safe_init
-        rewards[done_mask] += dist_coef * progress
+    # PBRS shaping: filter out non-finite values (e.g., stepping onto a deadly
+    # tile leaves ctg_curr = +inf). On those transitions we contribute no shaping.
+    ctg_prev = info["ctg_prev"][mask]
+    ctg_curr = info["ctg_curr"][mask]
+    finite = np.isfinite(ctg_prev) & np.isfinite(ctg_curr)
+    progress = np.zeros(count, dtype=np.float32)
+    progress[finite] = ctg_prev[finite] - ctg_curr[finite]
+    rewards += shaping_coef * progress
 
     return rewards

@@ -4,7 +4,7 @@ agent:
 
   lr: 2.5e-4
   anneal_lr: true
-  num_steps: 128
+  num_steps: 64                 # rollout = 256 envs * 64 steps = 16k transitions
   gamma: 0.99
   gae_lambda: 0.95
   clip_eps: 0.1
@@ -13,7 +13,7 @@ agent:
   clip_grad: 0.5
   normalize_advantages: true
   ppo_epochs: 4
-  num_minibatches: 4
+  num_minibatches: 4            # minibatch = 4k samples (GPU-friendly)
 
   hidden_size: 256
   head_num_layers: 1
@@ -25,6 +25,6 @@ agent:
   checkpoint:
     enabled: true
     interval: 1000
-    keep_last: 3
+    keep_last: 1
     save_best: true
     checkpoint_dir: checkpoints

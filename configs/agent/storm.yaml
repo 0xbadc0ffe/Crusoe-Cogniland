@@ -207,4 +207,5 @@ agent:
     checkpoint_dir: checkpoints      # Directory for checkpoints
 
 metrics_tracker:
-  baselines_path: configs/baselines/storm_minigrid.yaml
+  # baselines_path is currently unused by `src/cogniland/metrics/tracker.py`.
+  # baselines_path: configs/baselines/storm_minigrid.yaml

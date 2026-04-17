@@ -44,9 +44,9 @@ def _make_config(**overrides):
     for k, v in overrides.items():
         setattr(env, k, v)
     reward = SimpleNamespace(
-        reach_bonus=100.0,
+        reach_bonus=10.0,
         step_penalty=0.01,
-        distance_shaping_coef=0.1,
+        shaping_coef=0.05,
     )
     return SimpleNamespace(env=env, seed=42, num_tasks=1, task_embedding_dim=7, reward=reward)
 
@@ -120,7 +120,7 @@ class TestCognilandEnv:
         obs = env.reset(seed=42)
         assert "minimap" in obs
         assert "scalars" in obs
-        assert obs["minimap"].shape == (4, 3, MINIMAP_DIAMETER, MINIMAP_DIAMETER)
+        assert obs["minimap"].shape == (4, 5, MINIMAP_DIAMETER, MINIMAP_DIAMETER)
         assert obs["scalars"].shape == (4, 6)
         assert obs["minimap"].dtype == np.float32
         assert obs["scalars"].dtype == np.float32
@@ -167,7 +167,7 @@ class TestCognilandEnv:
         actions = np.full(4, 1, dtype=np.int32)
         obs, rewards, dones, info = env.step(actions)
 
-        assert obs["minimap"].shape == (4, 3, MINIMAP_DIAMETER, MINIMAP_DIAMETER)
+        assert obs["minimap"].shape == (4, 5, MINIMAP_DIAMETER, MINIMAP_DIAMETER)
         assert obs["scalars"].shape == (4, 6)
         assert rewards.shape == (4,)
         assert dones.shape == (4,)
@@ -272,18 +272,21 @@ class TestCognilandEnv:
 # ---------------------------------------------------------------------------
 
 class TestTask0Reward:
-    def _make_info(self, B, reached=None, dist=None, init_dist=None):
+    def _make_info(self, B, reached=None, ctg_prev=None, ctg_curr=None):
         if reached is None:
             reached = np.zeros(B, dtype=bool)
-        if dist is None:
-            dist = np.full(B, 50.0, dtype=np.float32)
-        if init_dist is None:
-            init_dist = np.full(B, 100.0, dtype=np.float32)
+        if ctg_prev is None:
+            ctg_prev = np.full(B, 100.0, dtype=np.float32)
+        if ctg_curr is None:
+            ctg_curr = ctg_prev.copy()  # no progress by default
         return {
             "reached": reached,
             "alive": np.ones(B, dtype=bool),
-            "dist_to_target": dist,
-            "initial_dist": init_dist,
+            "dist_to_target": np.full(B, 50.0, dtype=np.float32),
+            "initial_dist": np.full(B, 100.0, dtype=np.float32),
+            "ctg_prev": ctg_prev,
+            "ctg_curr": ctg_curr,
+            "ctg_spawn": ctg_prev.copy(),
         }
 
     def test_step_penalty(self):
@@ -294,7 +297,7 @@ class TestTask0Reward:
         info = self._make_info(2)
 
         rewards = compute_task_reward(task_ids, base_rewards, dones, info, config)
-        # Should just be -step_penalty for non-done steps
+        # No progress (ctg_curr == ctg_prev) so shaping = 0; only step penalty
         np.testing.assert_allclose(rewards, -0.01)
 
     def test_reach_bonus(self):
@@ -302,31 +305,51 @@ class TestTask0Reward:
         task_ids = np.zeros(2, dtype=np.int32)
         base_rewards = np.zeros(2, dtype=np.float32)
         dones = np.array([True, False], dtype=bool)
-        info = self._make_info(2, reached=np.array([True, False]))
+        # Env 0: reached → ctg_curr=0, ctg_prev=100 → progress=100
+        info = self._make_info(
+            2,
+            reached=np.array([True, False]),
+            ctg_prev=np.array([100.0, 100.0], dtype=np.float32),
+            ctg_curr=np.array([0.0, 100.0], dtype=np.float32),
+        )
 
         rewards = compute_task_reward(task_ids, base_rewards, dones, info, config)
-        # Env 0: -step_penalty + reach_bonus = 99.99
-        assert rewards[0] == pytest.approx(100.0 - 0.01, abs=1e-4)
-        # Env 1: just -step_penalty
+        # Env 0: -0.01 + 10 + 0.05 * 100 = 14.99
+        assert rewards[0] == pytest.approx(-0.01 + 10.0 + 0.05 * 100.0, abs=1e-4)
+        # Env 1: just -0.01 (no progress)
         assert rewards[1] == pytest.approx(-0.01, abs=1e-4)
 
-    def test_distance_shaping_on_death(self):
+    def test_pbrs_progress_step(self):
+        config = _make_config()
+        task_ids = np.zeros(1, dtype=np.int32)
+        base_rewards = np.zeros(1, dtype=np.float32)
+        dones = np.zeros(1, dtype=bool)
+        # Made progress: cost-to-go dropped from 50 to 47
+        info = self._make_info(
+            1,
+            ctg_prev=np.array([50.0], dtype=np.float32),
+            ctg_curr=np.array([47.0], dtype=np.float32),
+        )
+
+        rewards = compute_task_reward(task_ids, base_rewards, dones, info, config)
+        # -step_penalty + shaping_coef * 3 = -0.01 + 0.05 * 3 = 0.14
+        assert rewards[0] == pytest.approx(-0.01 + 0.05 * 3.0, abs=1e-4)
+
+    def test_pbrs_ignores_infinite_ctg(self):
+        """Stepping onto a deadly tile -> ctg_curr = inf; shaping must be 0."""
         config = _make_config()
         task_ids = np.zeros(1, dtype=np.int32)
         base_rewards = np.zeros(1, dtype=np.float32)
         dones = np.array([True], dtype=bool)
-        # Died but got closer: started at 100, ended at 30
         info = self._make_info(
             1,
-            reached=np.array([False]),
-            dist=np.array([30.0], dtype=np.float32),
-            init_dist=np.array([100.0], dtype=np.float32),
+            ctg_prev=np.array([50.0], dtype=np.float32),
+            ctg_curr=np.array([np.inf], dtype=np.float32),
         )
 
         rewards = compute_task_reward(task_ids, base_rewards, dones, info, config)
-        # -step_penalty + distance_shaping_coef * (1 - 30/100) = -0.01 + 0.1 * 0.7 = 0.06
-        expected = -0.01 + 0.1 * 0.7
-        assert rewards[0] == pytest.approx(expected, abs=1e-4)
+        # Only step penalty applies
+        assert rewards[0] == pytest.approx(-0.01, abs=1e-4)
 
     def test_non_task0_returns_zero(self):
         config = _make_config()

@@ -32,7 +32,7 @@ class ActorCriticRNN(nn.Module):
     """CNN + MLP + LSTM actor-critic for Cogniland maps.
 
     Input:
-        minimap:  [B, 3, 45, 45]  (channels-first, converted to channels-last internally)
+        minimap:  [B, 5, 45, 45]  (channels-first, converted to channels-last internally)
         scalars:  [B, 6]
         task_emb: [B, task_embedding_dim]
         carry:    (h, c) each [B, lstm_size]
@@ -50,7 +50,7 @@ class ActorCriticRNN(nn.Module):
     @nn.compact
     def __call__(self, minimap, scalars, task_emb, carry):
         # -- CNN (channels-last for Flax Conv) --
-        # Input: [B, 3, 45, 45] -> transpose to [B, 45, 45, 3]
+        # Input: [B, 5, 45, 45] -> transpose to [B, 45, 45, 5]
         x = jnp.transpose(minimap, (0, 2, 3, 1))
 
         x = nn.Conv(features=16, kernel_size=(3, 3), padding="VALID",
@@ -113,7 +113,7 @@ class ActorCriticRNN(nn.Module):
 # ---------------------------------------------------------------------------
 
 class Transition(NamedTuple):
-    obs_minimap: jnp.ndarray    # [B, 3, 45, 45]
+    obs_minimap: jnp.ndarray    # [B, 5, 45, 45]
     obs_scalars: jnp.ndarray    # [B, 6]
     action: jnp.ndarray         # [B]
     log_prob: jnp.ndarray       # [B]
@@ -300,17 +300,20 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
     # ------------------------------------------------------------------
     def init(rng):
         rng, init_rng = jax.random.split(rng)
-        dummy_minimap = jnp.zeros((1, 3, 45, 45))
+        dummy_minimap = jnp.zeros((1, 5, 45, 45))
         dummy_scalars = jnp.zeros((1, 6))
         dummy_task_emb = jnp.zeros((1, task_embedding_dim))
         dummy_carry = (jnp.zeros((1, lstm_size)), jnp.zeros((1, lstm_size)))
 
         params = network.init(init_rng, dummy_minimap, dummy_scalars, dummy_task_emb, dummy_carry)
 
-        # Optimizer: Adam with gradient clipping
+        # Optimizer: Adam with gradient clipping. Use ``inject_hyperparams``
+        # so the learning rate is a mutable field on opt_state — lets the
+        # training loop anneal LR without rebuilding the optimizer (which
+        # would wipe Adam's mu / nu moving averages).
         tx = optax.chain(
             optax.clip_by_global_norm(clip_grad),
-            optax.adam(lr, eps=1e-5),
+            optax.inject_hyperparams(optax.adam)(learning_rate=lr, eps=1e-5),
         )
 
         ts = TrainState.create(apply_fn=network.apply, params=params, tx=tx)
@@ -513,19 +516,24 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             }
 
             # -- LR annealing --
+            # Update the injected ``learning_rate`` hyperparam in-place.
+            # This preserves Adam's mu / nu moving averages (unlike
+            # TrainState.create, which would re-initialize opt_state).
+            # ``InjectStatefulHyperparamsState`` is a NamedTuple, so we use
+            # ``_replace`` (the NamedTuple API) rather than Flax's ``replace``.
             if anneal_lr and total_updates > 0:
                 frac = 1.0 - (n_updates / total_updates)
                 cur_lr = lr * max(frac, 0.0)
-                # Rebuild optimizer with new LR
-                tx = optax.chain(
-                    optax.clip_by_global_norm(clip_grad),
-                    optax.adam(cur_lr, eps=1e-5),
-                )
-                train_state = TrainState.create(
-                    apply_fn=network.apply,
-                    params=train_state.params,
-                    tx=tx,
-                )
+                cur_lr_jax = jnp.asarray(cur_lr, dtype=jnp.float32)
+
+                def _maybe_set_lr(s):
+                    if hasattr(s, "hyperparams") and "learning_rate" in s.hyperparams:
+                        new_hp = {**s.hyperparams, "learning_rate": cur_lr_jax}
+                        return s._replace(hyperparams=new_hp)
+                    return s
+
+                new_opt_state = tuple(_maybe_set_lr(s) for s in train_state.opt_state)
+                train_state = train_state.replace(opt_state=new_opt_state)
 
             # -- PPO epochs --
             minibatch_size = flat_size // num_minibatches

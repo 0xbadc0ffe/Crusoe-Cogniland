@@ -88,7 +88,7 @@ Agent              What to learn (network, optimizer, rollout collection, loss)
 Environment        What the world does (maps, terrain, HP drain, actions, obs)
 ```
 
-**Environment** (`src/cogniland/envs/`) loads pre-generated 128x128 RGB maps and runs a batched game loop in numpy. Each step, the agent picks one of 8 actions (move, forage, craft). The env computes HP drain, foraging effects, and returns an RGB minimap observation with raycasted occlusion.
+**Environment** (`src/cogniland/envs/`) loads pre-generated 128x128 RGB maps and runs a batched game loop in numpy. Each step, the agent picks one of 8 actions (move, forage, craft). The env computes HP drain, foraging effects, and returns a 5-channel minimap observation (RGB + visibility mask + target indicator) with raycasted occlusion.
 
 **Agent** (`src/cogniland/agents/`) is a pure-function dataclass with `init`, `train`, and `evaluate` methods. The network runs in JAX; the env boundary converts numpy<->jax. An agent never imports wandb or knows about the training schedule.
 

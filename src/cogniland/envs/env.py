@@ -7,7 +7,7 @@ Runs B parallel games simultaneously. Each game has:
   - 8 actions: 4 cardinal moves, forage, craft_raft, craft_rope, craft_shoes
 
 Observations:
-  - minimap: float32 [B, 3, 45, 45] — RGB patch with occlusion
+  - minimap: float32 [B, 5, 45, 45] — 3 RGB channels + visibility mask + target indicator
   - scalars: float32 [B, 6] — compass, terrain, hp, wood, tool
 """
 
@@ -19,6 +19,8 @@ from typing import Any
 
 import numpy as np
 import torch
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import dijkstra as scipy_dijkstra
 
 from cogniland.envs.tile_effects import TileEffects, drain_for
 
@@ -54,8 +56,13 @@ CLEAR_TOLERANCE = 0.15
 def _load_maps(maps_path: str) -> dict[str, np.ndarray]:
     """Load map dataset and convert everything to numpy."""
     data = torch.load(maps_path, map_location="cpu", weights_only=False)
+    if "visibility_lut" not in data:
+        raise RuntimeError(
+            f"Dataset at {maps_path} lacks 'visibility_lut'. Regenerate with:\n"
+            f"    python scripts/generate_dataset.py"
+        )
     result = {}
-    for key in ("rgb", "heightmap", "terrain_idx", "berry_mask"):
+    for key in ("rgb", "heightmap", "terrain_idx", "berry_mask", "visibility_lut"):
         t = data[key]
         if isinstance(t, torch.Tensor):
             result[key] = t.numpy()
@@ -66,6 +73,7 @@ def _load_maps(maps_path: str) -> dict[str, np.ndarray]:
     result["heightmap"] = result["heightmap"].astype(np.float32)
     result["terrain_idx"] = result["terrain_idx"].astype(np.int8)
     result["berry_mask"] = result["berry_mask"].astype(bool)
+    result["visibility_lut"] = result["visibility_lut"].astype(np.uint8)
     return result
 
 
@@ -118,75 +126,90 @@ def _compute_minimap_batch(
     pos_c: np.ndarray,
     target_r: np.ndarray,
     target_c: np.ndarray,
-    terrain_vis_radius: dict[str, int],
+    vis_per_terrain: np.ndarray,
+    vis_lut_packed: np.ndarray | None,
+    disk_stack: np.ndarray | None,
     occlude: bool = True,
 ) -> np.ndarray:
     """Compute minimap observations for a batch.
 
-    Returns: float32 [B, 3, 45, 45] — normalized RGB minimap.
+    Returns: float32 [B, 5, 45, 45] where channels are:
+        0-2: RGB patch (true map colors; unseen cells are 0)
+        3:   visibility mask (1.0 visible, 0.0 occluded / out-of-bounds)
+        4:   target indicator (1.0 at target cell if visible, 0.0 elsewhere)
+
+    Fully vectorised over the batch. When ``occlude=True`` and
+    ``vis_lut_packed`` + ``disk_stack`` are provided, occlusion is a single
+    fancy-index into the LUT + AND with ``disk_stack[vis_r]``.
     """
     B = len(pos_r)
     R = MINIMAP_RADIUS
     D = MINIMAP_DIAMETER
     H, W = rgb.shape[1], rgb.shape[2]
 
-    result = np.zeros((B, 3, D, D), dtype=np.float32)
+    # --- Per-env vis radius from current terrain ----------------------------
+    pos_r_c = np.clip(pos_r, 0, H - 1)
+    pos_c_c = np.clip(pos_c, 0, W - 1)
+    t_idx = terrain_idx[map_idx, pos_r_c, pos_c_c]
+    t_idx = np.clip(t_idx, 0, len(vis_per_terrain) - 1).astype(np.int32)
+    vis_r_b = vis_per_terrain[t_idx]  # [B]
 
-    # Vis radius per terrain index
-    vis_per_terrain = np.array(
-        [terrain_vis_radius.get(name, 7) for name in TERRAIN_NAMES],
-        dtype=np.int32,
-    )
-
-    for b in range(B):
-        mi = map_idx[b]
-        pr, pc = int(pos_r[b]), int(pos_c[b])
-
-        # Get visibility radius from current terrain
-        t_idx = int(terrain_idx[mi, pr, pc]) if 0 <= pr < H and 0 <= pc < W else 0
-        if t_idx < 0:
-            t_idx = 0
-        vis_r = int(vis_per_terrain[min(t_idx, len(vis_per_terrain) - 1)])
-
-        # Build RGB patch
-        patch = np.zeros((D, D, 3), dtype=np.uint8)
-
-        if occlude:
-            # Compute occlusion mask via raycasting
-            vis_mask = _compute_occlusion_mask(
-                heightmap[mi], pr, pc, vis_r, H, W
+    # --- Visibility masks [B, D, D] -----------------------------------------
+    if occlude and vis_lut_packed is not None and disk_stack is not None:
+        # LUT fast path. ``vis_lut_packed[mi, pr, pc]`` with [B] indices
+        # returns [B, 254]. Batched unpack + AND with per-env disk.
+        packed = vis_lut_packed[map_idx, pos_r, pos_c]                 # [B, 254]
+        full = np.unpackbits(packed, axis=1, bitorder="little")
+        full = full[:, : D * D].reshape(B, D, D).astype(bool)
+        vis_masks = full & disk_stack[vis_r_b]                         # [B, D, D]
+    elif occlude:
+        # Fallback: live Bresenham raycast per env (should not be hit in
+        # practice — ``_load_maps`` now requires the LUT).
+        vis_masks = np.zeros((B, D, D), dtype=bool)
+        for b in range(B):
+            vis_masks[b] = _compute_occlusion_mask(
+                heightmap[map_idx[b]], int(pos_r[b]), int(pos_c[b]),
+                int(vis_r_b[b]), H, W,
             )
-        else:
-            # Simple circular mask
-            vis_mask = np.zeros((D, D), dtype=bool)
-            yy, xx = np.ogrid[-R:R + 1, -R:R + 1]
-            vis_mask[yy * yy + xx * xx <= vis_r * vis_r] = True
+    else:
+        # No occlusion: simple disk per env (test fast path).
+        yy, xx = np.ogrid[-R:R + 1, -R:R + 1]
+        dist_sq = yy * yy + xx * xx                                    # [D, D]
+        vis_masks = dist_sq[None] <= (vis_r_b[:, None, None] ** 2)     # [B, D, D]
 
-        for dy in range(-R, R + 1):
-            for dx in range(-R, R + 1):
-                wr, wc = pr + dy, pc + dx
-                py, px = dy + R, dx + R
-                if not vis_mask[py, px]:
-                    continue
-                if 0 <= wr < H and 0 <= wc < W:
-                    patch[py, px] = rgb[mi, wr, wc]
+    # --- RGB patch extraction: single fancy-index call ----------------------
+    di = np.arange(-R, R + 1, dtype=pos_r.dtype)
+    rows = pos_r[:, None, None] + di[None, :, None]                    # [B, D, 1]
+    cols = pos_c[:, None, None] + di[None, None, :]                    # [B, 1, D]
+    rows_b = np.broadcast_to(rows, (B, D, D))
+    cols_b = np.broadcast_to(cols, (B, D, D))
 
-        # Target marker if visible
-        ty = target_r[b] - pr + R
-        tx = target_c[b] - pc + R
-        if 0 <= ty < D and 0 <= tx < D and vis_mask[ty, tx]:
-            # Green cross
-            for d in range(-1, 2):
-                for oy, ox in [(d, 0), (0, d)]:
-                    ny, nx = ty + oy, tx + ox
-                    if 0 <= ny < D and 0 <= nx < D:
-                        patch[ny, nx] = (60, 255, 80)
+    in_bounds = (rows_b >= 0) & (rows_b < H) & (cols_b >= 0) & (cols_b < W)
+    rows_c = np.clip(rows_b, 0, H - 1)
+    cols_c = np.clip(cols_b, 0, W - 1)
+    mi_b = np.broadcast_to(map_idx[:, None, None], (B, D, D))
 
-        # Player dot at center
-        patch[R, R] = (255, 60, 60)
+    patches = rgb[mi_b, rows_c, cols_c]                                # [B, D, D, 3]
+    valid = vis_masks & in_bounds                                      # [B, D, D]
+    patches = np.where(valid[..., None], patches, 0)                   # zero masked cells
 
-        # Transpose to [3, D, D] and normalize
-        result[b] = patch.transpose(2, 0, 1).astype(np.float32) / 255.0
+    # --- Assemble output ----------------------------------------------------
+    result = np.empty((B, 5, D, D), dtype=np.float32)
+    # Channels 0-2: RGB
+    result[:, :3] = patches.transpose(0, 3, 1, 2).astype(np.float32) / 255.0
+    # Channel 3: visibility mask
+    result[:, 3] = vis_masks.astype(np.float32)
+    # Channel 4: target indicator
+    result[:, 4] = 0.0
+    ty = target_r - pos_r + R
+    tx = target_c - pos_c + R
+    ty_c = np.clip(ty, 0, D - 1)
+    tx_c = np.clip(tx, 0, D - 1)
+    in_patch = (ty >= 0) & (ty < D) & (tx >= 0) & (tx < D)
+    visible_target = in_patch & vis_masks[np.arange(B), ty_c, tx_c]
+    if visible_target.any():
+        env_idx = np.where(visible_target)[0]
+        result[env_idx, 4, ty[env_idx], tx[env_idx]] = 1.0
 
     return result
 
@@ -284,6 +307,57 @@ def _cast_ray(
             cy += sy
 
 
+def _build_circular_masks(max_radius: int) -> dict[int, np.ndarray]:
+    """Return ``{r: [D, D] bool disk of radius r}`` for r in 1..max_radius."""
+    R = MINIMAP_RADIUS
+    D = MINIMAP_DIAMETER
+    yy, xx = np.ogrid[-R:R + 1, -R:R + 1]
+    dist_sq = yy * yy + xx * xx
+    out: dict[int, np.ndarray] = {}
+    for r in range(1, max_radius + 1):
+        out[r] = dist_sq <= r * r
+    return out
+
+
+def _build_cost_graph(
+    terrain_idx: np.ndarray,
+    berry_mask: np.ndarray,
+    hp_drain_arr: np.ndarray,
+) -> csr_matrix:
+    """4-connected HP-drain graph for a single 128x128 map.
+
+    Edge cost entering a cell = hp_drain[terrain], or 0 for berry tiles.
+    Deadly cells (terrain_idx == -1) are disconnected.
+    The returned CSR is asymmetric — edge (u -> v) has cost = cost of entering v.
+    """
+    H, W = terrain_idx.shape
+    cell_cost = np.full((H, W), np.inf, dtype=np.float64)
+    valid = terrain_idx >= 0
+    cell_cost[valid] = hp_drain_arr[terrain_idx[valid]]
+    cell_cost[berry_mask & valid] = 0.0
+
+    r_h, c_h = np.mgrid[0:H, 0:W - 1]
+    src_h = (r_h * W + c_h).ravel()
+    dst_h = (r_h * W + c_h + 1).ravel()
+    r_v, c_v = np.mgrid[0:H - 1, 0:W]
+    src_v = (r_v * W + c_v).ravel()
+    dst_v = ((r_v + 1) * W + c_v).ravel()
+
+    all_src = np.concatenate([src_h, dst_h, src_v, dst_v])
+    all_dst = np.concatenate([dst_h, src_h, dst_v, src_v])
+    all_cost = np.concatenate([
+        cell_cost[r_h, c_h + 1].ravel(),
+        cell_cost[r_h, c_h].ravel(),
+        cell_cost[r_v + 1, c_v].ravel(),
+        cell_cost[r_v, c_v].ravel(),
+    ])
+    finite = np.isfinite(all_cost)
+    return csr_matrix(
+        (all_cost[finite], (all_src[finite], all_dst[finite])),
+        shape=(H * W, H * W),
+    )
+
+
 class CognilandEnv:
     """Batched Cogniland environment using pure numpy arrays."""
 
@@ -297,8 +371,14 @@ class CognilandEnv:
         self._heightmap = maps["heightmap"]  # [N, 128, 128]
         self._terrain_idx = maps["terrain_idx"]  # [N, 128, 128]
         self._berry_mask = maps["berry_mask"]  # [N, 128, 128]
+        self._vis_lut_packed = maps["visibility_lut"]  # [N, 128, 128, 254] uint8
         self._num_maps = self._rgb.shape[0]
         self._map_size = self._rgb.shape[1]
+
+        # Precomputed circular disks, keyed by vis_radius. Used to AND with
+        # the unpacked occlusion mask to restrict to the agent's current
+        # terrain's vis radius (the LUT itself is at max radius).
+        self._circular_masks = _build_circular_masks(MINIMAP_RADIUS)
 
         # Tile effects
         self._effects = TileEffects()
@@ -340,6 +420,19 @@ class CognilandEnv:
         else:
             self._occlude = True
 
+        # Vectorised minimap helpers — precomputed once so _compute_minimap_batch
+        # is a single-shot fancy-indexing call per step.
+        self._vis_per_terrain = np.array(
+            [self._terrain_vis_radius.get(name, 7) for name in TERRAIN_NAMES],
+            dtype=np.int32,
+        )
+        max_r = max(self._circular_masks.keys())
+        stack = np.zeros((max_r + 1, MINIMAP_DIAMETER, MINIMAP_DIAMETER), dtype=bool)
+        for r, m in self._circular_masks.items():
+            stack[r] = m
+        # r=0 should never be selected, but keep it an all-false disk for safety.
+        self._disk_stack = stack
+
         # RNG
         seed = config.seed if hasattr(config, "seed") else config.get("seed", 42)
         self._rng = np.random.default_rng(seed)
@@ -362,6 +455,10 @@ class CognilandEnv:
         self.target_c: np.ndarray | None = None
         self.done: np.ndarray | None = None
 
+        # Per-episode cost-to-go map (Dijkstra from target), one per env
+        self.ctg: np.ndarray | None = None  # [B, H, W] float32
+        self.ctg_spawn: np.ndarray | None = None  # [B] float32 — ctg at spawn
+
         # Episode tracking
         self._episode_returns: np.ndarray | None = None
         self._episode_lengths: np.ndarray | None = None
@@ -372,6 +469,9 @@ class CognilandEnv:
             dtype=np.float32,
         )
 
+        # Cache of per-map HP-drain graphs (built lazily on first use)
+        self._graph_cache: dict[int, csr_matrix] = {}
+
     @property
     def num_envs(self) -> int:
         return self._num_envs
@@ -381,7 +481,7 @@ class CognilandEnv:
 
     def observation_space(self) -> dict:
         return {
-            "minimap": (3, MINIMAP_DIAMETER, MINIMAP_DIAMETER),
+            "minimap": (5, MINIMAP_DIAMETER, MINIMAP_DIAMETER),
             "scalars": (6,),
         }
 
@@ -399,6 +499,27 @@ class CognilandEnv:
         if name is None:
             return frozenset()
         return frozenset({name})
+
+    def _map_graph(self, mi: int) -> csr_matrix:
+        """Return the cached HP-drain graph for map ``mi`` (build on first access)."""
+        g = self._graph_cache.get(int(mi))
+        if g is None:
+            g = _build_cost_graph(
+                self._terrain_idx[mi], self._berry_mask[mi], self._hp_drain_arr,
+            )
+            self._graph_cache[int(mi)] = g
+        return g
+
+    def _compute_ctg(self, mi: int, tr: int, tc: int) -> np.ndarray:
+        """Dijkstra cost-to-go from every cell to (tr, tc) on map ``mi``.
+
+        Uses the no-tool HP drain table (ignores raft/rope/shoes). Returns a
+        float32 [H, W] array; unreachable cells are +inf.
+        """
+        graph = self._map_graph(mi)
+        target_flat = int(tr) * self._map_size + int(tc)
+        dist = scipy_dijkstra(graph.T, directed=True, indices=target_flat)
+        return dist.reshape(self._map_size, self._map_size).astype(np.float32)
 
     def reset(self, seed: int | None = None) -> dict[str, np.ndarray]:
         """Reset all environments. Returns observation dict."""
@@ -422,6 +543,14 @@ class CognilandEnv:
         self.consec_grass = np.zeros(B, dtype=np.int32)
         self.steps = np.zeros(B, dtype=np.int32)
         self.done = np.zeros(B, dtype=bool)
+
+        # Precompute Dijkstra cost-to-go maps per env (one per episode).
+        self.ctg = np.empty((B, self._map_size, self._map_size), dtype=np.float32)
+        for b in range(B):
+            self.ctg[b] = self._compute_ctg(
+                int(self.map_idx[b]), int(self.target_r[b]), int(self.target_c[b]),
+            )
+        self.ctg_spawn = self.ctg[np.arange(B), self.spawn_r, self.spawn_c].copy()
 
         self._episode_returns = np.zeros(B, dtype=np.float32)
         self._episode_lengths = np.zeros(B, dtype=np.int32)
@@ -456,6 +585,13 @@ class CognilandEnv:
         self.steps[indices] = 0
         self.done[indices] = False
 
+        # Recompute cost-to-go for envs that just reset
+        for j, b in enumerate(indices):
+            self.ctg[b] = self._compute_ctg(
+                int(new_map_idx[j]), int(tr[j]), int(tc[j]),
+            )
+            self.ctg_spawn[b] = self.ctg[b, sr[j], sc[j]]
+
         self._episode_returns[indices] = 0.0
         self._episode_lengths[indices] = 0
 
@@ -474,6 +610,10 @@ class CognilandEnv:
         actions = np.asarray(actions, dtype=np.int32)
 
         rewards = np.zeros(B, dtype=np.float32)
+
+        # Snapshot cost-to-go at current position BEFORE the step is applied,
+        # so the reward function can compute PBRS progress = ctg_prev - ctg_curr.
+        ctg_prev = self.ctg[np.arange(B), self.pos_r, self.pos_c].copy()
 
         # Track which envs just finished (for episode return reporting)
         returned_episode = np.zeros(B, dtype=bool)
@@ -529,7 +669,11 @@ class CognilandEnv:
                     else 0
                 )
                 tools = self._tool_set(int(self.tool[env_i]))
-                drain = drain_for(terrain_name, tools, new_consec, self._effects)
+                # Berry tiles are a free step (0 drain) — overrides terrain drain.
+                if self._berry_mask[mi, nr, nc]:
+                    drain = 0.0
+                else:
+                    drain = drain_for(terrain_name, tools, new_consec, self._effects)
 
                 self.hp[env_i] -= drain
                 self.pos_r[env_i] = nr
@@ -618,6 +762,11 @@ class CognilandEnv:
             returned_episode_returns[just_done] = self._episode_returns[just_done]
             returned_episode_lengths[just_done] = self.steps[just_done]
 
+        # Cost-to-go at the new position (after the step, before any auto-reset).
+        # Agents that ended on a deadly cell or otherwise unreachable index will
+        # see +inf here; tasks.py filters these out.
+        ctg_curr = self.ctg[np.arange(B), self.pos_r, self.pos_c].copy()
+
         info = {
             "returned_episode_returns": returned_episode_returns,
             "returned_episode_lengths": returned_episode_lengths,
@@ -637,6 +786,11 @@ class CognilandEnv:
                 (self.spawn_r.astype(np.float32) - self.target_r.astype(np.float32)) ** 2 +
                 (self.spawn_c.astype(np.float32) - self.target_c.astype(np.float32)) ** 2
             ),
+            # Cost-to-go potentials for PBRS shaping (one-shot Dijkstra from target,
+            # computed per episode). ``ctg_spawn`` is the initial potential.
+            "ctg_prev": ctg_prev,
+            "ctg_curr": ctg_curr,
+            "ctg_spawn": self.ctg_spawn.copy(),
         }
 
         dones = self.done.copy()
@@ -657,7 +811,9 @@ class CognilandEnv:
             self._rgb, self._heightmap, self._terrain_idx,
             self.map_idx, self.pos_r, self.pos_c,
             self.target_r, self.target_c,
-            self._terrain_vis_radius,
+            self._vis_per_terrain,
+            vis_lut_packed=self._vis_lut_packed,
+            disk_stack=self._disk_stack,
             occlude=self._occlude,
         )
 
@@ -672,12 +828,17 @@ class CognilandEnv:
         scalars[:, 0] = dc / dist  # compass_x (column direction)
         scalars[:, 1] = dr / dist  # compass_y (row direction)
 
-        # Current terrain index (normalized)
+        # Current tile class, normalized to [0, 1]. 10 classes:
+        #   0..8 = ocean, deep_water, water, beach, sandy, grassland, forest, rocky, mountains
+        #   9    = berry (overlay on forest/beach — overrides the base terrain)
         for i in range(B):
             mi = self.map_idx[i]
             r, c = int(self.pos_r[i]), int(self.pos_c[i])
-            t_idx = int(self._terrain_idx[mi, r, c])
-            scalars[i, 2] = max(0, t_idx) / 8.0
+            if self._berry_mask[mi, r, c]:
+                tile_cls = 9
+            else:
+                tile_cls = max(0, int(self._terrain_idx[mi, r, c]))
+            scalars[i, 2] = tile_cls / 9.0
 
         scalars[:, 3] = self.hp / float(self._effects.hp_max)
         scalars[:, 4] = self.wood.astype(np.float32) / float(self._effects.wood_max)

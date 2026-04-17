@@ -218,4 +218,5 @@ env:
   navix_observation_type: rgb_first_person
 
 metrics_tracker:
-  baselines_path: configs/baselines/dreamerv3_minigrid.yaml
+  # baselines_path is currently unused by `src/cogniland/metrics/tracker.py`.
+  # baselines_path: configs/baselines/dreamerv3_minigrid.yaml

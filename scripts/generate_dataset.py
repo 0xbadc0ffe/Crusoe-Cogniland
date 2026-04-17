@@ -17,13 +17,18 @@ Layout:
 
 Each .pt file is a dict:
     {
-        "rgb":         uint8   [N, 128, 128, 3],
-        "heightmap":   float32 [N, 128, 128],    # post-border, in [-1, 1]
-        "terrain_idx": int8    [N, 128, 128],    # -1 = deadly border
-        "berry_mask":  bool    [N, 128, 128],
-        "biomes":      list[str]   (length N),
-        "seeds":       list[int]   (length N),
+        "rgb":            uint8   [N, 128, 128, 3],
+        "heightmap":      float32 [N, 128, 128],    # post-border, in [-1, 1]
+        "terrain_idx":    int8    [N, 128, 128],    # -1 = deadly border
+        "berry_mask":     bool    [N, 128, 128],
+        "visibility_lut": uint8   [N, 128, 128, 254],  # packed 45x45 bool per cell
+        "biomes":         list[str]   (length N),
+        "seeds":          list[int]   (length N),
     }
+
+``visibility_lut`` is the per-cell Bresenham occlusion mask precomputed at
+the max vis radius (22). The env unpacks it and ANDs with a per-terrain
+circular disk at runtime. See ``scripts/precompute_visibility.py``.
 
 The heightmap is kept so the runtime env can reuse height-based line-of-sight
 occlusion (mountains/forest shadow rays) rather than only class-based blocking.
@@ -47,6 +52,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 import generate_maps as gt
+from precompute_visibility import compute_visibility_luts
 
 
 SPLITS_PER_BIOME = {"train": 64, "val": 4, "test": 4}
@@ -69,7 +75,7 @@ def _build_map(seed: int, biome: str):
     return rgb, bordered, terrain_idx, berry_mask
 
 
-def _build_split(name: str, n_per_biome: int, base_seed: int):
+def _build_split(name: str, n_per_biome: int, base_seed: int, num_workers: int | None):
     rgbs, hms, tidxs, masks, biomes, seeds = [], [], [], [], [], []
     seed = base_seed
     for biome in gt.ALL_BIOMES:
@@ -84,11 +90,18 @@ def _build_split(name: str, n_per_biome: int, base_seed: int):
             biomes.append(biome)
             seeds.append(seed)
             seed += 1
+
+    heightmaps = np.stack(hms)
+    print(f"  {name:<5} precomputing visibility LUTs "
+          f"({heightmaps.shape[0]} maps × 128*128 cells)", flush=True)
+    vis_lut = compute_visibility_luts(heightmaps, num_workers=num_workers)
+
     return {
         "rgb": torch.from_numpy(np.stack(rgbs)),
-        "heightmap": torch.from_numpy(np.stack(hms)),
+        "heightmap": torch.from_numpy(heightmaps),
         "terrain_idx": torch.from_numpy(np.stack(tidxs)),
         "berry_mask": torch.from_numpy(np.stack(masks)),
+        "visibility_lut": torch.from_numpy(vis_lut),
         "biomes": biomes,
         "seeds": seeds,
     }, seed
@@ -137,6 +150,8 @@ def main():
     parser.add_argument("--output-dir", type=str, default="data/maps")
     parser.add_argument("--preview", action="store_true",
                         help="Save a val-set preview PNG")
+    parser.add_argument("--num-workers", type=int, default=None,
+                        help="Processes for visibility LUT precompute (default: all cores)")
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir)
@@ -149,7 +164,7 @@ def main():
     seed = args.base_seed
     saved = {}
     for name, n in SPLITS_PER_BIOME.items():
-        split, seed = _build_split(name, n, seed)
+        split, seed = _build_split(name, n, seed, args.num_workers)
         path = out_dir / f"{name}.pt"
         torch.save(split, path)
         mb = path.stat().st_size / 1e6

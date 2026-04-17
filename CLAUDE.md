@@ -195,7 +195,7 @@ Trainer(config, agent).run()
 
 ### Map & terrain
 
-128x128 maps with 9 terrain types, pre-generated across 4 biomes (balanced, archipelago, grassland, highland). Maps include **berry tiles** (heal HP on forage) and a **deadly 1-pixel border** (instant death).
+128x128 maps with 9 base terrain types (+ berry overlay = 10 tile classes), pre-generated across 4 biomes (balanced, archipelago, grassland, highland). Maps also include a **deadly 1-pixel border** (instant death).
 
 | Index | Name | HP drain | Visibility | With raft | With rope |
 |-------|------|----------|------------|-----------|-----------|
@@ -208,8 +208,9 @@ Trainer(config, agent).run()
 | 6 | forest | 3 | 5 | — | — |
 | 7 | rocky | 6 | 10 | — | 1 |
 | 8 | mountains | 12 | 22 | — | 3 |
+| 9 | **berry** (overlay) | **0** | — | — | — |
 
-**Shoes**: After 10 consecutive grassland steps, drain drops to 0.5.
+**Shoes**: After 10 consecutive grassland steps, grassland drain drops to 0.5. **Berry**: an overlay on forest/beach — stepping onto it is free (0 drain) and `forage` on a berry tile heals +10 HP.
 
 ### Actions (8 total)
 
@@ -224,14 +225,14 @@ Trainer(config, agent).run()
 ### Observation dict
 
 ```
-obs["minimap"]:  float32 [B, 3, 45, 45]   (2*22+1 = 45)
-    3 RGB channels of the map, centered on agent
-    Occlusion applied via heightmap raycasting — unseen cells are black
-    Target marker drawn if within visibility radius and not occluded
+obs["minimap"]:  float32 [B, 5, 45, 45]   (2*22+1 = 45)
+    channels 0-2 — RGB patch of the map, centered on agent (unseen cells = 0)
+    channel 3    — visibility mask (1 visible, 0 occluded via heightmap raycasting)
+    channel 4    — target indicator (1 at target cell if visible, 0 elsewhere)
 
 obs["scalars"]:  float32 [B, 6]
     compass_x, compass_y    — unit vector toward target
-    terrain_idx / 8         — normalized terrain index
+    tile_class / 9          — 0..8 = base terrain, 9 = berry overlay
     hp / 100                — normalized HP
     wood / 100              — normalized wood
     tool_id / 3             — normalized tool (0=none, 1=raft, 2=rope, 3=shoes)
@@ -243,10 +244,19 @@ obs["task_embedding"]:  float32 [B, 7]
 ### Task 0 reward (reach target)
 
 ```
-r_step = -step_penalty                                    # per-step cost (0.01)
-r_reach = +reach_bonus                                    # on reaching target (100.0)
-r_shape = distance_shaping_coef * (1 - d_final/d_init)   # at episode end (0.1)
+r_step  = -step_penalty                                   # per-step cost (0.01)
+r_reach = +reach_bonus                                    # on reaching target (10.0)
+r_shape = shaping_coef * (ctg_prev - ctg_curr)            # PBRS, every step (0.05)
 ```
+
+`ctg` is the Dijkstra cost-to-go from the current cell to the target on the HP-drain
+graph (edge cost = `hp_drain[dest]`, berries cost 0, deadly cells disconnected).
+It is computed once per episode at reset and reused every step, so the extra
+per-step cost is a single array lookup. Summed along a successful trajectory the
+shaping telescopes to `+shaping_coef * ctg_spawn` — a bounded bonus proportional
+to the episode's difficulty. Per-episode return therefore lies in roughly
+`[-10, +25]` (step penalty budget ≤10, reach bonus +10, cumulative PBRS ~2.5–10
+depending on the map).
 
 Tasks 1-6 are stubs (return 0) — to be defined for multi-task experiments.
 
@@ -255,8 +265,8 @@ Tasks 1-6 are stubs (return 0) — to be defined for multi-task experiments.
 ## Neural Network Architecture (PPO-RNN)
 
 ```
-Minimap [B, 3, 45, 45]
-  → Conv2d(3→16, 3×3) → ReLU → MaxPool2d(2)
+Minimap [B, 5, 45, 45]
+  → Conv2d(5→16, 3×3) → ReLU → MaxPool2d(2)
   → Conv2d(16→32, 3×3) → ReLU → AdaptiveMaxPool2d(4×4)
   → Flatten → [B, 512]
 

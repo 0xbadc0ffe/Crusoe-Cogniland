@@ -35,8 +35,8 @@ The environment is a batched numpy game running B parallel episodes. No JAX, no 
 | 1 | down | Move (+1, 0), pay terrain HP drain |
 | 2 | left | Move (0, -1), pay terrain HP drain |
 | 3 | right | Move (0, +1), pay terrain HP drain |
-| 4 | forage | Stay in place. Berry tile: +10 HP (free). Forest: +10 wood (costs drain). Other: no-op. |
-| 5 | craft_raft | Costs 100 wood. Reduces water/ocean drain. Fails if no wood or already have tool. |
+| 4 | forage | Stay in place. Berry tile: +10 HP (free). Forest: +10 wood (costs drain) |
+| 5 | craft_raft | Costs 100 wood. Reduces water/ocean drain. |
 | 6 | craft_rope | Costs 100 wood. Reduces rocky/mountain drain. |
 | 7 | craft_shoes | Costs 100 wood. Reduces grassland drain after 10 consecutive steps. |
 
@@ -44,10 +44,10 @@ Crafting is one-time: you can hold at most one tool, and it can't be replaced.
 
 ### Terrain drain table
 
-The HP cost of stepping onto each terrain, and how tools modify it:
+The HP cost of stepping onto each tile, and how tools modify it:
 
-| Terrain | Base drain | With raft | With rope | With shoes (10+ steps) |
-|---------|-----------|-----------|-----------|----------------------|
+| Tile | Base drain | With raft | With rope | With shoes (10+ steps) |
+|------|-----------|-----------|-----------|----------------------|
 | ocean | 16 | 8 | - | - |
 | deep_water | 10 | 3 | - | - |
 | water | 6 | 1 | - | - |
@@ -57,15 +57,21 @@ The HP cost of stepping onto each terrain, and how tools modify it:
 | forest | 3 | - | - | - |
 | rocky | 6 | - | 1 | - |
 | mountains | 12 | - | 3 | - |
+| **berry** | **0** | - | - | - |
 
-Source of truth: `src/cogniland/envs/tile_effects.py`
+`berry` is an overlay on forest/beach tiles. Stepping onto it is free (0 drain) and `forage` on a berry tile heals +10 HP without paying drain for the step.
+
+Source of truth: `src/cogniland/envs/tile_effects.py` + the berry branch in `src/cogniland/envs/env.py`.
 
 ### Observations
 
 The agent sees:
 
-- **minimap** `[B, 3, 45, 45]` — RGB patch of the map centered on the agent, with Bresenham raycasting for line-of-sight occlusion. Unseen cells are black. Vision radius depends on current terrain (mountains: 22, forest: 5).
-- **scalars** `[B, 6]` — compass direction to target (unit vector x,y), terrain index / 8, hp / 100, wood / 100, tool_id / 3.
+- **minimap** `[B, 5, 45, 45]` — patch of the map centered on the agent, with Bresenham raycasting for line-of-sight occlusion. Vision radius depends on current terrain (mountains: 22, forest: 5). Channels:
+  - `0..2` — RGB of the map (unseen cells are 0).
+  - `3` — visibility mask (1 visible, 0 occluded).
+  - `4` — target indicator (1 at the target cell if within the visibility region, 0 elsewhere).
+- **scalars** `[B, 6]` — compass direction to target (unit vector x, y), tile class / 9, hp / 100, wood / 100, tool_id / 3. There are 10 tile classes (9 base terrains + berry), so the tile index is normalized by 9.
 - **task_embedding** `[B, 7]` — fixed orthogonal vector identifying the current task.
 
 ### Maps
