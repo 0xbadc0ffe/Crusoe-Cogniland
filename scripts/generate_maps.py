@@ -18,7 +18,6 @@ from __future__ import annotations
 import argparse
 import math
 import random
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -26,11 +25,7 @@ import numpy as np
 import torch
 from scipy.ndimage import gaussian_filter
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
-from cogniland.env.islands import generate_island
-from cogniland.env.types import EnvConfig, MapGenConfig, _DEFAULT_TERRAINS
+from cogniland.envs.simplexnoise.noise import SimplexNoise, normalize
 
 # ── Constants ───────────────────────────────────────────────────────────────
 
@@ -39,8 +34,72 @@ CROP_SIZE = 128
 BERRY_FRAC = 0.02
 DEADLY_VALUE = -1.0
 
-TERRAIN_NAMES = [t.name for t in _DEFAULT_TERRAINS]
-DEFAULT_THRESHOLDS = np.array([t.threshold for t in _DEFAULT_TERRAINS])
+TERRAIN_NAMES = [
+    "ocean", "deep_water", "water", "beach", "sandy",
+    "grassland", "forest", "rocky", "mountains",
+]
+DEFAULT_THRESHOLDS = np.array(
+    [0.007, 0.025, 0.05, 0.06, 0.1, 0.25, 0.6, 0.7, 1.0]
+)
+
+
+def generate_island(
+    size: int,
+    seed: int,
+    sink_mode: int = 1,
+    scale: float = 0.33,
+    octaves: int = 6,
+    persistence: float = 0.5,
+    lacunarity: float = 2.0,
+    filtering: str = "square",
+) -> np.ndarray:
+    """Generate a single island heightmap using simplex noise."""
+    random.seed(seed)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
+    sn = SimplexNoise(num_octaves=octaves, persistence=persistence, dimensions=2)
+    hgrid = size * scale
+
+    world = np.zeros((size, size), dtype=np.float64)
+    for i in range(size):
+        for j in range(size):
+            world[i, j] = normalize(sn.fractal(i, j, hgrid=hgrid, lacunarity=lacunarity))
+
+    if sink_mode == 1:
+        world = world ** 3
+    elif sink_mode == 2:
+        world = (2 * world) ** 2
+
+    world = world / world.max()
+
+    if filtering:
+        center = size // 2
+        grad = np.zeros((size, size), dtype=np.float64)
+        for y in range(size):
+            for x in range(size):
+                dx = abs(x - center)
+                dy = abs(y - center)
+                if filtering == "circle":
+                    dist = math.sqrt(dx * dx + dy * dy)
+                elif filtering == "diamond":
+                    dist = dx + dy
+                elif filtering == "square":
+                    dist = max(dx ** 2, dy ** 2)
+                else:
+                    raise ValueError(f"Unknown filtering: {filtering}")
+                grad[y, x] = dist
+        grad = grad / grad.max()
+        grad = -(grad - 0.5) * 2.0
+        grad[grad > 0] *= 20
+        grad = grad / grad.max()
+
+        world_noise = world * grad
+        world_noise[world_noise > 0] *= 20
+        world_noise = world_noise / world_noise.max()
+        world = world_noise
+
+    return world.astype(np.float32)
 
 #                                   ocean   dw    water  beach  sandy  grass  forest rocky  mtn
 THRESHOLDS_ARCHIPELAGO = np.array([0.015, 0.05,  0.15,  0.18,  0.22,  0.45,  0.75,  0.85,  1.0])
@@ -138,13 +197,7 @@ def _add_ridge(hm: np.ndarray, size: int, seed: int,
 
 def generate_raw_heightmap(seed: int, biome: str) -> np.ndarray:
     """Stage 1 — raw generate_island output at GEN_SIZE, pre-biome-mods."""
-    config = EnvConfig(map_generation=MapGenConfig(
-        size=GEN_SIZE, seed=seed, sink_mode=BIOME_SINK_MODE[biome],
-    ))
-    random.seed(seed)
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    return generate_island(config).numpy().astype(np.float32)
+    return generate_island(size=GEN_SIZE, seed=seed, sink_mode=BIOME_SINK_MODE[biome])
 
 
 def apply_biome_mods(hm: np.ndarray, biome: str, seed: int) -> np.ndarray:
