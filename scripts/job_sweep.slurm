@@ -24,6 +24,13 @@ RUNS_PER_AGENT=${RUNS_PER_AGENT:-1}
 source /software/anaconda3/etc/profile.d/conda.sh
 conda activate crusoe
 
+# W&B auth — falls back to a file in $HOME if ~/.netrc isn't accessible
+# from the compute nodes. Create once with:
+#   echo "<YOUR_WANDB_API_KEY>" > ~/.wandb_key && chmod 600 ~/.wandb_key
+if [ -z "${WANDB_API_KEY:-}" ] && [ -f "$HOME/.wandb_key" ]; then
+    export WANDB_API_KEY="$(cat "$HOME/.wandb_key")"
+fi
+
 echo "============================================================"
 echo "Sweep Agent — SLURM Array Task"
 echo "============================================================"

@@ -48,16 +48,6 @@ python scripts/train.py \
 
 ## Running experiments
 
-### Single run
-
-```bash
-python scripts/train.py \
-  --env-config configs/env/cogniland.yaml \
-  --agent-config configs/agent/ppo_rnn.yaml
-```
-
-Logs to W&B by default. Use `--offline` for local-only runs.
-
 ### K-seed benchmark (SLURM cluster)
 
 ```bash
