@@ -201,9 +201,10 @@ agent:
   # Checkpoint settings
   checkpoint:
     enabled: true                    # Enable checkpoint saving
-    save_only_best: true             # Only save best checkpoint (saves disk space)
-    save_best: true                  # Save best checkpoint based on eval performance
-    upload_to_wandb: false           # Upload best checkpoint to WandB (false to save cloud storage)
+    save_best: true                  # save to best/ when avg eval success improves
+    save_last: true                  # refresh last/ on every validation
+    save_only_best: true             # skip intermediate step_* snapshots
+    upload_to_wandb: false           # Upload best checkpoint to WandB
     checkpoint_dir: checkpoints      # Directory for checkpoints
 
 metrics_tracker:

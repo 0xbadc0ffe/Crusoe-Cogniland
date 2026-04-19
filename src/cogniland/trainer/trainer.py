@@ -87,6 +87,7 @@ class Trainer:
                 results_dir=self.run_logger.results_dir,
                 wandb_run=self.run_logger.wandb_run,
             )
+            self.checkpoint_callback.initialize(env_name=config.env_id)
         else:
             self.checkpoint_callback = None
 

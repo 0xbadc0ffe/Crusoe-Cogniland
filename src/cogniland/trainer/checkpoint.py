@@ -99,6 +99,7 @@ class CheckpointManager:
         metrics: Optional[Dict[str, float]] = None,
         is_best: bool = False,
         best_only: bool = False,
+        save_last: bool = False,
     ) -> Optional[Path]:
         """Save agent checkpoint.
 
@@ -189,16 +190,28 @@ class CheckpointManager:
                 json.dump(custom_metadata, f, indent=2)
 
             if metrics:
-                self.best_metric = metrics.get('eval_return', None)
+                self.best_metric = metrics.get('eval_success', metrics.get('eval_return'))
                 self.best_step = step
                 logger.info(
                     f"New best checkpoint at step {step} "
-                    f"(eval_return={self.best_metric:.4f})"
+                    f"(eval_success={self.best_metric:.4f})"
                 )
 
-            # Return best_path if we only saved best
-            if best_only:
-                return best_path
+        # Save / overwrite "last" checkpoint
+        if save_last:
+            last_path = self.checkpoint_dir / "last"
+            if last_path.exists():
+                shutil.rmtree(last_path)
+            self.checkpointer.save(last_path, state_pytree)
+            self.checkpointer.wait_until_finished()
+            import json
+            last_metadata_path = last_path / "custom_metadata.json"
+            with open(last_metadata_path, 'w') as f:
+                json.dump(custom_metadata, f, indent=2)
+            logger.debug(f"Saved last checkpoint at step {step} to {last_path}")
+
+        if best_only and is_new_best:
+            return self.checkpoint_dir / "best"
 
         # Cleanup old checkpoints (only relevant if not best_only mode)
         if not best_only and self.keep_last > 0:
@@ -282,15 +295,19 @@ class CheckpointManager:
         )
 
     def _is_best(self, metrics: Optional[Dict[str, float]]) -> bool:
-        """Check if current metrics are the best so far."""
-        if not metrics or 'eval_return' not in metrics:
-            return False
+        """Check if current metrics are the best so far.
 
-        current_return = metrics['eval_return']
+        Tracks the highest average eval success rate. Falls back to
+        ``eval_return`` for back-compat with older callers.
+        """
+        if not metrics:
+            return False
+        current = metrics.get('eval_success', metrics.get('eval_return'))
+        if current is None:
+            return False
         if self.best_metric is None:
             return True
-
-        return current_return > self.best_metric
+        return current > self.best_metric
 
     def _get_latest_checkpoint(self) -> Optional[Path]:
         """Get path to latest checkpoint."""
@@ -399,6 +416,7 @@ class CheckpointCallback:
         self.interval = self.checkpoint_config.get('interval', 1000)
         self.keep_last = self.checkpoint_config.get('keep_last', 3)
         self.save_best = self.checkpoint_config.get('save_best', True)
+        self.save_last = self.checkpoint_config.get('save_last', True)
         self.save_only_best = self.checkpoint_config.get('save_only_best', False)
         self.upload_to_wandb = self.checkpoint_config.get('upload_to_wandb', False)
 
@@ -467,17 +485,21 @@ class CheckpointCallback:
             step: Training step number
             metrics: Validation metrics
         """
-        if not self.enabled or self.manager is None or not self.save_best:
+        if not self.enabled or self.manager is None:
+            return
+        if not (self.save_best or self.save_last):
             return
 
-        # Save checkpoint with metrics (manager will determine if it's best)
-        # If save_only_best is enabled, only save to 'best/' when this is actually the best
+        # Save checkpoint with metrics (manager will determine if it's best).
+        # If save_only_best is enabled, only save to 'best/' when this is actually the best.
+        # If save_last is enabled, always refresh 'last/'.
         checkpoint_path = self.manager.save(
             agent_state=agent_state,
             step=step,
             config=self.full_config,
             metrics=metrics,
             best_only=self.save_only_best,
+            save_last=self.save_last,
         )
 
         # Upload best checkpoint to WandB if this was a new best (and upload is enabled)

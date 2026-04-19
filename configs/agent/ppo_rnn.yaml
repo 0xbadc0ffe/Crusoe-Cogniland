@@ -24,7 +24,8 @@ agent:
 
   checkpoint:
     enabled: true
-    interval: 1000
-    keep_last: 1
-    save_best: true
+    save_best: true                  # save to best/ when avg eval success improves
+    save_last: true                  # refresh last/ on every validation
+    save_only_best: true             # skip intermediate step_* snapshots
+    upload_to_wandb: false
     checkpoint_dir: checkpoints
