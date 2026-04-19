@@ -23,18 +23,14 @@ fi
 
 RUNS_PER_AGENT=${RUNS_PER_AGENT:-1}
 
-# Load Anaconda
-export PATH="/cluster/software/anaconda3/bin:$PATH"
-
 # Activate environment
-source activate /cluster/raid/home/fwang/.conda/envs/crusoe
+CONDA_ENV="/cluster/raid/home/fwang/.conda/envs/crusoe"
+export PATH="$CONDA_ENV/bin:$PATH"
+export CONDA_PREFIX="$CONDA_ENV"
 
-# W&B auth — falls back to a file in $HOME if ~/.netrc isn't accessible
-# from the compute nodes. Create once with:
-#   echo "<YOUR_WANDB_API_KEY>" > ~/.wandb_key && chmod 600 ~/.wandb_key
-if [ -z "${WANDB_API_KEY:-}" ] && [ -f "$HOME/.wandb_key" ]; then
-    export WANDB_API_KEY="$(cat "$HOME/.wandb_key")"
-fi
+# W&B auth
+PROJECT_DIR="/cluster/raid/home/fwang/Crusoe-Cogniland"
+set -a; source "$PROJECT_DIR/.env"; set +a
 
 echo "============================================================"
 echo "Sweep Agent — SLURM Array Task"
