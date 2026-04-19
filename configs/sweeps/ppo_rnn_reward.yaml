@@ -28,4 +28,4 @@ parameters:
   reward.shaping_coef: {values: [0.0, 0.025, 0.05, 0.1]}
   seed:                {values: [42]}
 
-  trainer.num_train_frames: {value: 50_000_000}
+  trainer.num_train_frames: {value: 10_000_000}

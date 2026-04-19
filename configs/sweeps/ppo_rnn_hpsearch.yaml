@@ -1,6 +1,6 @@
-name: ppo_rnn_lr_sweep
-entity: cogniland
-project: cogniland-multitask
+name: ppo_rnn_hpsearch
+entity: crusoe
+project: crusoe_in_cogniland
 method: random
 metric:
   name: eval/aggregate/avg_reward
@@ -18,8 +18,22 @@ command:
 
 program: scripts/train.py
 
+# Random search over the core PPO optimisation knobs. Ranges are centred on
+# the current defaults in configs/agent/ppo_rnn.yaml so the sweep probes the
+# neighbourhood rather than searching blind. Launch with e.g.
+#     ./scripts/launch_sweep.sh configs/sweeps/ppo_rnn_hpsearch.yaml -n 24
 parameters:
   seed: {value: 42}
-  agent.lr: {distribution: log_uniform_values, min: 1e-5, max: 1e-3}
-  agent.entropy_coef: {distribution: log_uniform_values, min: 0.001, max: 0.1}
-  agent.clip_eps: {values: [0.1, 0.2, 0.3]}
+
+  # Optimiser — current: lr=5e-4, clip_grad=0.5
+  agent.lr:           {distribution: log_uniform_values, min: 1.0e-4, max: 2.0e-3}
+  agent.clip_grad:    {values: [0.3, 0.5, 1.0]}
+
+  # PPO loss — current: clip_eps=0.2, entropy_coef=0.005, value_coef=0.5
+  agent.clip_eps:     {values: [0.1, 0.2, 0.3]}
+  agent.entropy_coef: {distribution: log_uniform_values, min: 1.0e-3, max: 2.0e-2}
+  agent.value_coef:   {values: [0.25, 0.5, 1.0]}
+
+  # Rollout + update cadence — current: gae_lambda=0.95, ppo_epochs=4
+  agent.gae_lambda:   {values: [0.9, 0.95, 0.98]}
+  agent.ppo_epochs:   {values: [2, 4, 8]}

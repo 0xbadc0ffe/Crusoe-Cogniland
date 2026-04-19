@@ -74,7 +74,15 @@ def _load_maps(maps_path: str) -> dict[str, np.ndarray]:
     result["terrain_idx"] = result["terrain_idx"].astype(np.int8)
     result["berry_mask"] = result["berry_mask"].astype(bool)
     result["visibility_lut"] = result["visibility_lut"].astype(np.uint8)
+    # Biome labels (string per map); default to "unknown" if dataset predates them.
+    biomes = data.get("biomes", None)
+    if biomes is None:
+        biomes = ["unknown"] * result["rgb"].shape[0]
+    result["biomes"] = np.array([str(b) for b in biomes], dtype=object)
     return result
+
+
+TARGET_GAP = 3  # column offset: YES _ _ _ NO on the same row
 
 
 def _sample_spawn_target_batch(
@@ -83,38 +91,72 @@ def _sample_spawn_target_batch(
     rng: np.random.Generator,
     min_manhattan: int = 60,
     water_idx: int = 2,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Sample spawn/target pairs for a batch of environments.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Sample spawn and paired (YES, NO) targets for a batch of envs.
 
-    Returns: spawn_r, spawn_c, target_r, target_c — all shape [B].
+    YES is placed on a sampled land cell. NO is ``TARGET_GAP`` columns to the
+    right of YES, on the same row. Both targets plus all intervening cells
+    must be land. Spawn is sampled on land with Manhattan distance
+    ``>= min_manhattan`` from the targets' midpoint.
+
+    Returns: spawn_r, spawn_c, yes_r, yes_c, no_r, no_c — all shape [B].
     """
     B = len(map_indices)
+    H, W = terrain_idx.shape[1], terrain_idx.shape[2]
     spawn_r = np.zeros(B, dtype=np.int32)
     spawn_c = np.zeros(B, dtype=np.int32)
-    target_r = np.zeros(B, dtype=np.int32)
-    target_c = np.zeros(B, dtype=np.int32)
+    yes_r = np.zeros(B, dtype=np.int32)
+    yes_c = np.zeros(B, dtype=np.int32)
+    no_r = np.zeros(B, dtype=np.int32)
+    no_c = np.zeros(B, dtype=np.int32)
 
     for i in range(B):
         tidx = terrain_idx[map_indices[i]]
-        land = np.argwhere(tidx > water_idx)
-        if len(land) < 2:
-            mid = tidx.shape[0] // 2
-            spawn_r[i] = spawn_c[i] = target_r[i] = target_c[i] = mid
-            continue
-        for _ in range(500):
-            si = rng.integers(len(land))
-            ti = rng.integers(len(land))
-            s = land[si]
-            t = land[ti]
-            if abs(int(s[0]) - int(t[0])) + abs(int(s[1]) - int(t[1])) >= min_manhattan:
-                spawn_r[i], spawn_c[i] = int(s[0]), int(s[1])
-                target_r[i], target_c[i] = int(t[0]), int(t[1])
-                break
-        else:
-            spawn_r[i], spawn_c[i] = int(land[0, 0]), int(land[0, 1])
-            target_r[i], target_c[i] = int(land[-1, 0]), int(land[-1, 1])
+        # Valid YES candidates: land, and column + TARGET_GAP in-bounds and all
+        # cells from c to c+TARGET_GAP on the same row are land.
+        land_mask = tidx > water_idx
+        valid_yes = np.zeros_like(land_mask)
+        if W > TARGET_GAP:
+            # Rolling AND over (c, c+1, ..., c+TARGET_GAP)
+            acc = land_mask[:, :W - TARGET_GAP].copy()
+            for k in range(1, TARGET_GAP + 1):
+                acc &= land_mask[:, k:W - TARGET_GAP + k]
+            valid_yes[:, :W - TARGET_GAP] = acc
+        yes_candidates = np.argwhere(valid_yes)
+        all_land = np.argwhere(land_mask)
 
-    return spawn_r, spawn_c, target_r, target_c
+        if len(yes_candidates) == 0 or len(all_land) == 0:
+            # Pathological map — place everything mid.
+            mid = H // 2
+            spawn_r[i] = spawn_c[i] = mid
+            yes_r[i] = no_r[i] = mid
+            yes_c[i] = max(0, mid - TARGET_GAP // 2)
+            no_c[i] = min(W - 1, yes_c[i] + TARGET_GAP)
+            continue
+
+        placed = False
+        for _ in range(500):
+            yi = rng.integers(len(yes_candidates))
+            yr, yc = int(yes_candidates[yi, 0]), int(yes_candidates[yi, 1])
+            nr, nc = yr, yc + TARGET_GAP
+            mid_r, mid_c = yr, yc + TARGET_GAP // 2
+            si = rng.integers(len(all_land))
+            sr, sc = int(all_land[si, 0]), int(all_land[si, 1])
+            if abs(sr - mid_r) + abs(sc - mid_c) >= min_manhattan:
+                spawn_r[i], spawn_c[i] = sr, sc
+                yes_r[i], yes_c[i] = yr, yc
+                no_r[i], no_c[i] = nr, nc
+                placed = True
+                break
+
+        if not placed:
+            # Fallback: first valid YES + far-away spawn.
+            yr, yc = int(yes_candidates[0, 0]), int(yes_candidates[0, 1])
+            yes_r[i], yes_c[i] = yr, yc
+            no_r[i], no_c[i] = yr, yc + TARGET_GAP
+            spawn_r[i], spawn_c[i] = int(all_land[-1, 0]), int(all_land[-1, 1])
+
+    return spawn_r, spawn_c, yes_r, yes_c, no_r, no_c
 
 
 def _compute_minimap_batch(
@@ -124,8 +166,10 @@ def _compute_minimap_batch(
     map_idx: np.ndarray,
     pos_r: np.ndarray,
     pos_c: np.ndarray,
-    target_r: np.ndarray,
-    target_c: np.ndarray,
+    yes_r: np.ndarray,
+    yes_c: np.ndarray,
+    no_r: np.ndarray,
+    no_c: np.ndarray,
     vis_per_terrain: np.ndarray,
     vis_lut_packed: np.ndarray | None,
     disk_stack: np.ndarray | None,
@@ -199,17 +243,18 @@ def _compute_minimap_batch(
     result[:, :3] = patches.transpose(0, 3, 1, 2).astype(np.float32) / 255.0
     # Channel 3: visibility mask
     result[:, 3] = vis_masks.astype(np.float32)
-    # Channel 4: target indicator
+    # Channel 4: target indicator — NO=0.5, YES=1.0 on a single channel.
     result[:, 4] = 0.0
-    ty = target_r - pos_r + R
-    tx = target_c - pos_c + R
-    ty_c = np.clip(ty, 0, D - 1)
-    tx_c = np.clip(tx, 0, D - 1)
-    in_patch = (ty >= 0) & (ty < D) & (tx >= 0) & (tx < D)
-    visible_target = in_patch & vis_masks[np.arange(B), ty_c, tx_c]
-    if visible_target.any():
-        env_idx = np.where(visible_target)[0]
-        result[env_idx, 4, ty[env_idx], tx[env_idx]] = 1.0
+    for tr, tc, val in ((no_r, no_c, 0.5), (yes_r, yes_c, 1.0)):
+        ty = tr - pos_r + R
+        tx = tc - pos_c + R
+        ty_c = np.clip(ty, 0, D - 1)
+        tx_c = np.clip(tx, 0, D - 1)
+        in_patch = (ty >= 0) & (ty < D) & (tx >= 0) & (tx < D)
+        visible = in_patch & vis_masks[np.arange(B), ty_c, tx_c]
+        if visible.any():
+            env_idx = np.where(visible)[0]
+            result[env_idx, 4, ty[env_idx], tx[env_idx]] = val
 
     return result
 
@@ -372,6 +417,7 @@ class CognilandEnv:
         self._terrain_idx = maps["terrain_idx"]  # [N, 128, 128]
         self._berry_mask = maps["berry_mask"]  # [N, 128, 128]
         self._vis_lut_packed = maps["visibility_lut"]  # [N, 128, 128, 254] uint8
+        self._biomes = maps["biomes"]      # object array [N] of biome name strings
         self._num_maps = self._rgb.shape[0]
         self._map_size = self._rgb.shape[1]
 
@@ -455,8 +501,18 @@ class CognilandEnv:
         self.map_idx: np.ndarray | None = None
         self.spawn_r: np.ndarray | None = None
         self.spawn_c: np.ndarray | None = None
-        self.target_r: np.ndarray | None = None
-        self.target_c: np.ndarray | None = None
+        # Paired targets: YES is the left of two cells on the same row; NO is
+        # TARGET_GAP columns to the right of YES.
+        self.yes_r: np.ndarray | None = None
+        self.yes_c: np.ndarray | None = None
+        self.no_r: np.ndarray | None = None
+        self.no_c: np.ndarray | None = None
+        # Midpoint cell (used for compass + PBRS shaping).
+        self.mid_r: np.ndarray | None = None
+        self.mid_c: np.ndarray | None = None
+        # Which tool (1=raft, 2=rope, 3=shoes) was newly crafted on the current
+        # step, 0 otherwise. Consumed by tasks.py for craft-bonus dispatch.
+        self.crafted_this_step: np.ndarray | None = None
         self.done: np.ndarray | None = None
 
         # Per-episode cost-to-go map (Dijkstra from target), one per env
@@ -551,12 +607,16 @@ class CognilandEnv:
             self.map_idx = mi
         else:
             self.map_idx = self._assign_maps(B)
-        self.spawn_r, self.spawn_c, self.target_r, self.target_c = (
-            _sample_spawn_target_batch(
-                self._terrain_idx, self.map_idx, self._rng,
-                min_manhattan=self._min_manhattan,
-            )
+        (
+            self.spawn_r, self.spawn_c,
+            self.yes_r, self.yes_c,
+            self.no_r, self.no_c,
+        ) = _sample_spawn_target_batch(
+            self._terrain_idx, self.map_idx, self._rng,
+            min_manhattan=self._min_manhattan,
         )
+        self.mid_r = self.yes_r.copy()
+        self.mid_c = self.yes_c + (TARGET_GAP // 2)
         self.pos_r = self.spawn_r.copy()
         self.pos_c = self.spawn_c.copy()
         self.hp = np.full(B, float(self._effects.init_hp), dtype=np.float32)
@@ -565,12 +625,14 @@ class CognilandEnv:
         self.consec_grass = np.zeros(B, dtype=np.int32)
         self.steps = np.zeros(B, dtype=np.int32)
         self.done = np.zeros(B, dtype=bool)
+        self.crafted_this_step = np.zeros(B, dtype=np.int32)
 
-        # Precompute Dijkstra cost-to-go maps per env (one per episode).
+        # Precompute Dijkstra cost-to-go maps per env (one per episode),
+        # measured from the midpoint between YES and NO targets.
         self.ctg = np.empty((B, self._map_size, self._map_size), dtype=np.float32)
         for b in range(B):
             self.ctg[b] = self._compute_ctg(
-                int(self.map_idx[b]), int(self.target_r[b]), int(self.target_c[b]),
+                int(self.map_idx[b]), int(self.mid_r[b]), int(self.mid_c[b]),
             )
         self.ctg_spawn = self.ctg[np.arange(B), self.spawn_r, self.spawn_c].copy()
 
@@ -589,14 +651,18 @@ class CognilandEnv:
         new_map_idx = self._assign_maps(count)
         self.map_idx[indices] = new_map_idx
 
-        sr, sc, tr, tc = _sample_spawn_target_batch(
+        sr, sc, yr, yc, nr, nc = _sample_spawn_target_batch(
             self._terrain_idx, new_map_idx, self._rng,
             min_manhattan=self._min_manhattan,
         )
         self.spawn_r[indices] = sr
         self.spawn_c[indices] = sc
-        self.target_r[indices] = tr
-        self.target_c[indices] = tc
+        self.yes_r[indices] = yr
+        self.yes_c[indices] = yc
+        self.no_r[indices] = nr
+        self.no_c[indices] = nc
+        self.mid_r[indices] = yr
+        self.mid_c[indices] = yc + (TARGET_GAP // 2)
         self.pos_r[indices] = sr
         self.pos_c[indices] = sc
 
@@ -606,11 +672,12 @@ class CognilandEnv:
         self.consec_grass[indices] = 0
         self.steps[indices] = 0
         self.done[indices] = False
+        self.crafted_this_step[indices] = 0
 
-        # Recompute cost-to-go for envs that just reset
+        # Recompute cost-to-go (from midpoint) for envs that just reset.
         for j, b in enumerate(indices):
             self.ctg[b] = self._compute_ctg(
-                int(new_map_idx[j]), int(tr[j]), int(tc[j]),
+                int(new_map_idx[j]), int(yr[j]), int(yc[j] + TARGET_GAP // 2),
             )
             self.ctg_spawn[b] = self.ctg[b, sr[j], sc[j]]
 
@@ -636,6 +703,9 @@ class CognilandEnv:
         # Snapshot cost-to-go at current position BEFORE the step is applied,
         # so the reward function can compute PBRS progress = ctg_prev - ctg_curr.
         ctg_prev = self.ctg[np.arange(B), self.pos_r, self.pos_c].copy()
+
+        # Reset per-step craft flag (set below when a craft action succeeds).
+        self.crafted_this_step.fill(0)
 
         # Track which envs just finished (for episode return reporting)
         returned_episode = np.zeros(B, dtype=bool)
@@ -706,8 +776,13 @@ class CognilandEnv:
                 if self.hp[env_i] <= 0:
                     self.hp[env_i] = 0.0
                     self.done[env_i] = True
-                elif (self.pos_r[env_i] == self.target_r[env_i] and
-                      self.pos_c[env_i] == self.target_c[env_i]):
+                elif (
+                    (self.pos_r[env_i] == self.yes_r[env_i] and
+                     self.pos_c[env_i] == self.yes_c[env_i])
+                    or
+                    (self.pos_r[env_i] == self.no_r[env_i] and
+                     self.pos_c[env_i] == self.no_c[env_i])
+                ):
                     self.done[env_i] = True
 
         # --- Forage action (4) ---
@@ -766,6 +841,7 @@ class CognilandEnv:
                         self.wood[env_i] >= self._effects.craft_cost):
                     self.wood[env_i] -= self._effects.craft_cost
                     self.tool[env_i] = tool_id
+                    self.crafted_this_step[env_i] = tool_id
                 # Regardless of success, costs a step
                 self.steps[env_i] += 1
 
@@ -789,30 +865,41 @@ class CognilandEnv:
         # see +inf here; tasks.py filters these out.
         ctg_curr = self.ctg[np.arange(B), self.pos_r, self.pos_c].copy()
 
+        reached_yes = (
+            (self.pos_r == self.yes_r) & (self.pos_c == self.yes_c) & self.done
+        )
+        reached_no = (
+            (self.pos_r == self.no_r) & (self.pos_c == self.no_c) & self.done
+        )
         info = {
             "returned_episode_returns": returned_episode_returns,
             "returned_episode_lengths": returned_episode_lengths,
             "returned_episode": returned_episode,
             # Extra info for reward computation
-            "reached": (
-                (self.pos_r == self.target_r) &
-                (self.pos_c == self.target_c) &
-                self.done
-            ),
+            "reached": reached_yes | reached_no,
+            "reached_yes": reached_yes,
+            "reached_no": reached_no,
             "alive": self.hp > 0,
             "dist_to_target": np.sqrt(
-                (self.pos_r.astype(np.float32) - self.target_r.astype(np.float32)) ** 2 +
-                (self.pos_c.astype(np.float32) - self.target_c.astype(np.float32)) ** 2
+                (self.pos_r.astype(np.float32) - self.mid_r.astype(np.float32)) ** 2 +
+                (self.pos_c.astype(np.float32) - self.mid_c.astype(np.float32)) ** 2
             ),
             "initial_dist": np.sqrt(
-                (self.spawn_r.astype(np.float32) - self.target_r.astype(np.float32)) ** 2 +
-                (self.spawn_c.astype(np.float32) - self.target_c.astype(np.float32)) ** 2
+                (self.spawn_r.astype(np.float32) - self.mid_r.astype(np.float32)) ** 2 +
+                (self.spawn_c.astype(np.float32) - self.mid_c.astype(np.float32)) ** 2
             ),
-            # Cost-to-go potentials for PBRS shaping (one-shot Dijkstra from target,
-            # computed per episode). ``ctg_spawn`` is the initial potential.
+            # Cost-to-go potentials for PBRS shaping (one-shot Dijkstra from the
+            # YES/NO midpoint, computed per episode). ``ctg_spawn`` is the
+            # initial potential.
             "ctg_prev": ctg_prev,
             "ctg_curr": ctg_curr,
             "ctg_spawn": self.ctg_spawn.copy(),
+            # Biome label per env (string) — used by tasks 1-3 to score
+            # classification questions. Not exposed in the obs.
+            "biome": self._biomes[self.map_idx].copy(),
+            # Tool id crafted on this step (0=none, 1=raft, 2=rope, 3=shoes) —
+            # used by tasks 4-6 to fire the craft bonus once per episode.
+            "crafted": self.crafted_this_step.copy(),
         }
 
         dones = self.done.copy()
@@ -833,7 +920,8 @@ class CognilandEnv:
         minimap = _compute_minimap_batch(
             self._rgb, self._heightmap, self._terrain_idx,
             self.map_idx, self.pos_r, self.pos_c,
-            self.target_r, self.target_c,
+            self.yes_r, self.yes_c,
+            self.no_r, self.no_c,
             self._vis_per_terrain,
             vis_lut_packed=self._vis_lut_packed,
             disk_stack=self._disk_stack,
@@ -843,9 +931,9 @@ class CognilandEnv:
         # Compute scalars
         scalars = np.zeros((B, 6), dtype=np.float32)
 
-        # Compass: unit vector from agent to target
-        dr = self.target_r.astype(np.float32) - self.pos_r.astype(np.float32)
-        dc = self.target_c.astype(np.float32) - self.pos_c.astype(np.float32)
+        # Compass: unit vector from agent to the YES/NO midpoint.
+        dr = self.mid_r.astype(np.float32) - self.pos_r.astype(np.float32)
+        dc = self.mid_c.astype(np.float32) - self.pos_c.astype(np.float32)
         dist = np.sqrt(dr * dr + dc * dc)
         dist = np.maximum(dist, 1e-6)
         scalars[:, 0] = dc / dist  # compass_x (column direction)

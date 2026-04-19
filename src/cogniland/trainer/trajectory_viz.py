@@ -62,6 +62,7 @@ class TrajectoryLogger:
         # allocates exactly n slots.
         self.env = CognilandEnv(config, val_path, num_envs=self.n)
         self.env._auto_reset_enabled = False
+        self.env._min_manhattan = 120
 
         num_tasks = getattr(config, "num_tasks", 1)
         emb_dim = getattr(config, "task_embedding_dim", 7)
@@ -106,8 +107,10 @@ class TrajectoryLogger:
 
         spawns = [(int(self.env.spawn_r[i]), int(self.env.spawn_c[i]))
                   for i in range(self.n)]
-        targets = [(int(self.env.target_r[i]), int(self.env.target_c[i]))
-                   for i in range(self.n)]
+        yes_targets = [(int(self.env.yes_r[i]), int(self.env.yes_c[i]))
+                       for i in range(self.n)]
+        no_targets = [(int(self.env.no_r[i]), int(self.env.no_c[i]))
+                      for i in range(self.n)]
 
         trajectories: list[list[tuple[int, int]]] = [
             [spawns[i]] for i in range(self.n)
@@ -138,14 +141,20 @@ class TrajectoryLogger:
             is_first = np.zeros(self.n, dtype=bool)
 
         reached = [
-            (self.env.pos_r[i] == self.env.target_r[i]
-             and self.env.pos_c[i] == self.env.target_c[i])
+            (
+                (self.env.pos_r[i] == self.env.yes_r[i]
+                 and self.env.pos_c[i] == self.env.yes_c[i])
+                or
+                (self.env.pos_r[i] == self.env.no_r[i]
+                 and self.env.pos_c[i] == self.env.no_c[i])
+            )
             for i in range(self.n)
         ]
         alive_end = [bool(self.env.hp[i] > 0) for i in range(self.n)]
 
         fig = self._render(
-            trajectories, spawns, targets, reached, alive_end, done_mask,
+            trajectories, spawns, yes_targets, no_targets,
+            reached, alive_end, done_mask,
         )
         self.wandb_run.log({
             "eval/trajectories": wandb.Image(fig),
@@ -154,8 +163,8 @@ class TrajectoryLogger:
         plt.close(fig)
 
     # ------------------------------------------------------------------ #
-    def _render(self, trajectories, spawns, targets, reached, alive_end,
-                done_mask) -> plt.Figure:
+    def _render(self, trajectories, spawns, yes_targets, no_targets,
+                reached, alive_end, done_mask) -> plt.Figure:
         rows = int(np.ceil(np.sqrt(self.n)))
         cols = int(np.ceil(self.n / rows))
         fig, axes = plt.subplots(rows, cols, figsize=(5 * cols, 5 * rows),
@@ -171,17 +180,38 @@ class TrajectoryLogger:
 
             traj = np.asarray(trajectories[i], dtype=np.int32)
             if traj.shape[0] >= 2:
-                ax.plot(
-                    traj[:, 1], traj[:, 0],
-                    color="#1f77b4", linewidth=1.8, alpha=0.9,
-                )
-            # Spawn (green circle) and target (red star)
-            ax.plot(spawns[i][1], spawns[i][0], "o",
-                     color="#2ecc71", markersize=10,
-                     markeredgecolor="white", markeredgewidth=1.5)
-            ax.plot(targets[i][1], targets[i][0], "*",
-                     color="#e74c3c", markersize=16,
-                     markeredgecolor="white", markeredgewidth=1.2)
+                # Per-cell visit count: colour each segment red→black by
+                # revisit count so repeatedly-trodden cells darken.
+                H, W = self.rgbs[i].shape[:2]
+                visit_counts = np.zeros((H, W), dtype=np.float32)
+                seg_counts = np.empty(traj.shape[0], dtype=np.float32)
+                for k, (r, c) in enumerate(traj):
+                    visit_counts[r, c] += 1
+                    seg_counts[k] = visit_counts[r, c]
+                max_count = 10.0  # 1 visit = red, >=10 = black
+                for k in range(traj.shape[0] - 1):
+                    t = min(seg_counts[k + 1], max_count) / max_count
+                    ax.plot(
+                        traj[k:k + 2, 1], traj[k:k + 2, 0],
+                        color=(1.0 - t, 0.0, 0.0),
+                        linewidth=0.8, alpha=0.9,
+                        solid_capstyle="round", zorder=3,
+                    )
+
+            # Spawn (green circle), end (red X, faded), YES (gold ★), NO (silver ★).
+            ax.scatter(spawns[i][1], spawns[i][0],
+                       c="#2ecc71", s=60, marker="o",
+                       edgecolors="k", linewidth=1.0, zorder=5)
+            end_r, end_c = trajectories[i][-1]
+            ax.scatter(end_c, end_r,
+                       c="red", s=60, marker="X",
+                       edgecolors="k", linewidth=1.0, alpha=0.5, zorder=5)
+            ax.scatter(yes_targets[i][1], yes_targets[i][0],
+                       c="gold", s=80, marker="*",
+                       edgecolors="k", linewidth=1.0, zorder=5)
+            ax.scatter(no_targets[i][1], no_targets[i][0],
+                       c="silver", s=80, marker="*",
+                       edgecolors="k", linewidth=1.0, zorder=5)
 
             if reached[i]:
                 status = "reached"

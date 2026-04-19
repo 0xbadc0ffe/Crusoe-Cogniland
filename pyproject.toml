@@ -7,11 +7,16 @@ name = "cogniland"
 version = "0.2.0"
 requires-python = ">=3.11"
 dependencies = [
-    "jax[cuda12]",
-    "flax",
-    "optax",
-    "orbax-checkpoint",
-    "chex",
+    # Pinned together so pip resolves quickly. jax[cuda12] is Linux-only: the
+    # CUDA plugin wheels are not published for macOS/Windows, which makes an
+    # unconditional jax[cuda12] dependency trigger extreme pip backtracking.
+    "jax[cuda12]==0.8.2; sys_platform == 'linux'",
+    "jax==0.8.2; sys_platform != 'linux'",
+    "jaxlib==0.8.2",
+    "flax==0.12.6",
+    "optax==0.2.8",
+    "orbax-checkpoint==0.11.36",
+    "chex==0.1.91",
     "omegaconf",
     "wandb",
     "tqdm",
@@ -19,7 +24,8 @@ dependencies = [
     "numpy",
     "torch",
     "einops",
-    "distrax",
+    # 0.1.8+ depends on tfp-nightly and blows up the resolver with recent JAX.
+    "distrax==0.1.5",
 ]
 
 [tool.setuptools.packages.find]
