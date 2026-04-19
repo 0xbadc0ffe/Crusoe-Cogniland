@@ -110,6 +110,7 @@ class Trainer:
             rng = self.rng_manager.get_key()
             task_rng, train_rng = jax.random.split(rng)
             task_ids = self.task_sampler.sample(rng=task_rng)
+            self.train_env.set_tasks(task_ids)
 
             t0 = time.time()
             self.agent_state, metrics = self.agent.train(
@@ -154,7 +155,12 @@ class Trainer:
 
         returns_np = np.array(returns[done])
         lengths_np = np.array(lengths[done])
-        successes_np = (returns_np > 0).astype(np.int32)
+
+        if "task_success" in episode_info:
+            task_success = jnp.array(episode_info["task_success"]).reshape(-1)
+            successes_np = np.array(task_success[done]).astype(np.int32)
+        else:
+            successes_np = (returns_np > 0).astype(np.int32)
 
         for i in range(len(returns_np)):
             r, l, s = float(returns_np[i]), int(lengths_np[i]), int(successes_np[i])
@@ -204,8 +210,11 @@ class Trainer:
             tracker = self.eval_trackers[task_id]
             tracker.initialize()
 
-            # All eval envs run the same task
-            task_ids = self.task_sampler.fixed(task_id)
+            # All eval envs run the same task. Size the task_ids array to
+            # the eval env (num_parallel_envs_eval), not the train sampler's
+            # num_envs, so the agent's task embedding lookup matches.
+            task_ids = np.full(self.eval_env.num_envs, task_id, dtype=np.int32)
+            self.eval_env.set_tasks(task_ids)
 
             pbar = tqdm(total=self.num_eval_frames,
                         desc=f"eval task {task_id}", leave=False)
@@ -227,9 +236,12 @@ class Trainer:
                 r = returns[done]; l = lengths[done]
                 tracker.episode_reward_history.extend(r.tolist())
                 tracker.episode_length_history.extend(l.tolist())
-                tracker.episode_success_history.extend(
-                    (r > 0).astype(jnp.int32).tolist()
-                )
+                if "task_success" in episode_info:
+                    task_success = jnp.array(episode_info["task_success"]).reshape(-1)
+                    s = task_success[done].astype(jnp.int32)
+                else:
+                    s = (r > 0).astype(jnp.int32)
+                tracker.episode_success_history.extend(s.tolist())
                 tracker.env_total_episodes += int(done.sum())
 
             agg = {

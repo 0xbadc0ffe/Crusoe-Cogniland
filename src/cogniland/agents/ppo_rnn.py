@@ -415,6 +415,7 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
         all_episode_returns = []
         all_episode_lengths = []
         all_episode_flags = []
+        all_episode_success = []
 
         # Aggregate loss metrics
         agg_metrics = {
@@ -469,6 +470,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
                         all_episode_returns.append(info["returned_episode_returns"].copy())
                     if "returned_episode_lengths" in info:
                         all_episode_lengths.append(info["returned_episode_lengths"].copy())
+                    if "task_success" in info:
+                        all_episode_success.append(info["task_success"].copy())
                 elif np.any(dones):
                     # Fallback: use dones directly
                     all_episode_flags.append(dones.copy())
@@ -476,6 +479,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
                         all_episode_returns.append(
                             np.where(dones, info["episode_return"], 0.0)
                         )
+                    if "task_success" in info:
+                        all_episode_success.append(info["task_success"].copy())
 
                 obs = next_obs
                 global_step += num_envs
@@ -591,6 +596,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             episode_info["returned_episode_returns"] = np.concatenate(all_episode_returns, axis=0)
         if all_episode_lengths:
             episode_info["returned_episode_lengths"] = np.concatenate(all_episode_lengths, axis=0)
+        if all_episode_success:
+            episode_info["task_success"] = np.concatenate(all_episode_success, axis=0)
         metrics["episode_info"] = episode_info
 
         new_state = AgentState(
@@ -634,6 +641,7 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
         all_episode_returns = []
         all_episode_lengths = []
         all_episode_flags = []
+        all_episode_success = []
         frames = 0
 
         while frames < num_eval_frames:
@@ -658,6 +666,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
                     all_episode_returns.append(info["returned_episode_returns"].copy())
                 if "returned_episode_lengths" in info:
                     all_episode_lengths.append(info["returned_episode_lengths"].copy())
+                if "task_success" in info:
+                    all_episode_success.append(info["task_success"].copy())
 
             obs = next_obs
             frames += n_eval_envs
@@ -672,6 +682,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             episode_info["returned_episode_returns"] = np.concatenate(all_episode_returns, axis=0)
         if all_episode_lengths:
             episode_info["returned_episode_lengths"] = np.concatenate(all_episode_lengths, axis=0)
+        if all_episode_success:
+            episode_info["task_success"] = np.concatenate(all_episode_success, axis=0)
 
         return {"episode_info": episode_info}
 
