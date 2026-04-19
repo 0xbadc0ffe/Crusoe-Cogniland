@@ -69,6 +69,7 @@ class GymAdapterState:
     returned_episode_returns: np.ndarray  # [B]
     returned_episode_lengths: np.ndarray  # [B]
     returned_episode: np.ndarray          # [B] bool
+    task_success: np.ndarray              # [B] float32, task-aware success flag
     timestep: np.ndarray                  # [B] global timestep counter
 
 
@@ -120,6 +121,7 @@ class GymAdapter:
             returned_episode_returns=np.zeros(B, dtype=np.float32),
             returned_episode_lengths=np.zeros(B, dtype=np.int32),
             returned_episode=np.zeros(B, dtype=bool),
+            task_success=np.zeros(B, dtype=np.float32),
             timestep=self._timestep.copy(),
         )
 
@@ -148,6 +150,14 @@ class GymAdapter:
         returned_lengths = np.where(
             returned_episode, self._episode_lengths, 0
         )
+        # Task-aware per-episode success flag from the wrapper. Only meaningful
+        # on steps where ``returned_episode`` is True.
+        task_success_raw = info.get(
+            "task_success", np.zeros_like(rewards, dtype=np.float32)
+        )
+        task_success = np.where(returned_episode, task_success_raw, 0.0).astype(
+            np.float32
+        )
 
         # Reset tracking for done envs (env auto-resets internally)
         if returned_episode.any():
@@ -166,5 +176,6 @@ class GymAdapter:
             returned_episode_returns=returned_returns,
             returned_episode_lengths=returned_lengths,
             returned_episode=returned_episode,
+            task_success=task_success,
             timestep=self._timestep.copy(),
         )

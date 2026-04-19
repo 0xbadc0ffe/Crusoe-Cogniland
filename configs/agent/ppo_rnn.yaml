@@ -2,17 +2,17 @@ agent:
   name: ppo_rnn
   type: ppo_rnn
 
-  lr: 5e-4
+  lr: 3.5e-4
   anneal_lr: true
   num_steps: 64                 # rollout = 256 envs * 64 steps = 16k transitions
   gamma: 0.99
-  gae_lambda: 0.95
+  gae_lambda: 0.98
   clip_eps: 0.2
-  entropy_coef: 0.005
+  entropy_coef: 1.5e-3
   value_coef: 0.5
-  clip_grad: 0.5
+  clip_grad: 0.3
   normalize_advantages: true
-  ppo_epochs: 4
+  ppo_epochs: 8
   num_minibatches: 4            # minibatch = 4k samples (GPU-friendly)
 
   hidden_size: 256

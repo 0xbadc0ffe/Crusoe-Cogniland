@@ -155,12 +155,8 @@ class Trainer:
 
         returns_np = np.array(returns[done])
         lengths_np = np.array(lengths[done])
-
-        if "task_success" in episode_info:
-            task_success = jnp.array(episode_info["task_success"]).reshape(-1)
-            successes_np = np.array(task_success[done]).astype(np.int32)
-        else:
-            successes_np = (returns_np > 0).astype(np.int32)
+        task_success = jnp.array(episode_info["task_success"]).reshape(-1)
+        successes_np = np.array(task_success[done]).astype(np.int32)
 
         for i in range(len(returns_np)):
             r, l, s = float(returns_np[i]), int(lengths_np[i]), int(successes_np[i])
@@ -236,11 +232,8 @@ class Trainer:
                 r = returns[done]; l = lengths[done]
                 tracker.episode_reward_history.extend(r.tolist())
                 tracker.episode_length_history.extend(l.tolist())
-                if "task_success" in episode_info:
-                    task_success = jnp.array(episode_info["task_success"]).reshape(-1)
-                    s = task_success[done].astype(jnp.int32)
-                else:
-                    s = (r > 0).astype(jnp.int32)
+                task_success = jnp.array(episode_info["task_success"]).reshape(-1)
+                s = task_success[done].astype(jnp.int32)
                 tracker.episode_success_history.extend(s.tolist())
                 tracker.env_total_episodes += int(done.sum())
 

@@ -763,6 +763,7 @@ def make_storm(config: OmegaConf, obs_space: Dict, act_space: int) -> Agent:
             'returned_episode_returns': [],
             'returned_episode_lengths': [],
             'returned_episode': [],
+            'task_success': [],
             'timestep': [],
         }
 
@@ -848,6 +849,9 @@ def make_storm(config: OmegaConf, obs_space: Dict, act_space: int) -> Agent:
                         int(env_state.returned_episode_lengths[idx])
                     )
                     metrics['episode_info']['returned_episode'].append(True)
+                    metrics['episode_info']['task_success'].append(
+                        float(env_state.task_success[idx])
+                    )
                     metrics['episode_info']['timestep'].append(
                         int(env_state.timestep[idx]))
 
@@ -936,6 +940,7 @@ def make_storm(config: OmegaConf, obs_space: Dict, act_space: int) -> Agent:
                 'returned_episode_returns': [],
                 'returned_episode_lengths': [],
                 'returned_episode': [],
+                'task_success': [],
                 'timestep': [],
             },
             'frames': 0,
@@ -985,6 +990,9 @@ def make_storm(config: OmegaConf, obs_space: Dict, act_space: int) -> Agent:
                         int(env_state.returned_episode_lengths[idx])
                     )
                     metrics['episode_info']['returned_episode'].append(True)
+                    metrics['episode_info']['task_success'].append(
+                        float(env_state.task_success[idx])
+                    )
                     metrics['episode_info']['timestep'].append(
                         int(env_state.timestep[idx]))
 
@@ -1012,6 +1020,9 @@ def make_storm(config: OmegaConf, obs_space: Dict, act_space: int) -> Agent:
                 ).reshape((1, num_episodes, 1)),
                 'returned_episode': np.array(
                     episode_info['returned_episode']
+                ).reshape((1, num_episodes, 1)),
+                'task_success': np.array(
+                    episode_info['task_success']
                 ).reshape((1, num_episodes, 1)),
                 'timestep': np.array(episode_info['timestep']).reshape((1, num_episodes, 1)),
             }

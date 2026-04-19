@@ -56,16 +56,17 @@ def compute_task_reward(
         rewards_base: float array [B] — base reward from env (currently 0)
         dones: bool array [B] — which envs just finished
         info: dict from env.step() with 'reached', 'ctg_prev', 'ctg_curr',
-            'reached_yes', 'reached_no', 'biome', 'crafted'
+            'reached_yes', 'reached_no', 'biome', 'crafted', 'alive'
         config: config object with reward params
 
     Returns:
         float array [B] — modified rewards
     """
     B = len(task_ids)
-    reach_bonus, step_penalty, shaping_coef, correct_bonus, craft_bonus = (
-        _read_reward_cfg(config)
-    )
+    (
+        reach_bonus, step_penalty, shaping_coef,
+        death_penalty, correct_bonus, craft_bonus,
+    ) = _read_reward_cfg(config)
 
     # Base r0 for every env (step penalty + shaping + reach bonus).
     rewards = np.full(B, -step_penalty, dtype=np.float32)
@@ -77,6 +78,12 @@ def compute_task_reward(
     progress = np.zeros(B, dtype=np.float32)
     progress[finite] = ctg_prev[finite] - ctg_curr[finite]
     rewards += shaping_coef * progress
+
+    # Sparse death penalty — fires on the step an episode ends with hp<=0.
+    alive = info.get("alive")
+    if alive is not None and death_penalty != 0.0:
+        died = dones & ~alive
+        rewards[died] -= death_penalty
 
     # Tasks 1-3: classification bonus.
     reached_yes = info.get("reached_yes")
@@ -103,18 +110,23 @@ def compute_task_reward(
     return rewards
 
 
-def _read_reward_cfg(config: Any) -> tuple[float, float, float, float, float]:
+def _read_reward_cfg(config: Any) -> tuple[float, float, float, float, float, float]:
     reward_cfg = config.reward if hasattr(config, "reward") else config.get("reward", {})
     if hasattr(reward_cfg, "reach_bonus"):
         reach_bonus = float(reward_cfg.reach_bonus)
         step_penalty = float(reward_cfg.step_penalty)
         shaping_coef = float(reward_cfg.shaping_coef)
+        death_penalty = float(getattr(reward_cfg, "death_penalty", 0.0))
         correct_bonus = float(getattr(reward_cfg, "correct_answer_bonus", 10.0))
         craft_bonus = float(getattr(reward_cfg, "craft_bonus", 10.0))
     else:
         reach_bonus = reward_cfg.get("reach_bonus", 10.0)
         step_penalty = reward_cfg.get("step_penalty", 0.01)
         shaping_coef = reward_cfg.get("shaping_coef", 0.1)
+        death_penalty = reward_cfg.get("death_penalty", 0.0)
         correct_bonus = reward_cfg.get("correct_answer_bonus", 10.0)
         craft_bonus = reward_cfg.get("craft_bonus", 10.0)
-    return reach_bonus, step_penalty, shaping_coef, correct_bonus, craft_bonus
+    return (
+        reach_bonus, step_penalty, shaping_coef,
+        death_penalty, correct_bonus, craft_bonus,
+    )

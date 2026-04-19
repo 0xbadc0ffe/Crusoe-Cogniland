@@ -1,4 +1,4 @@
-name: ppo_rnn_reward_grid
+name: ppo_rnn_death_penalty_grid
 entity: crusoe
 project: crusoe_in_cogniland
 method: grid
@@ -18,14 +18,12 @@ command:
 
 program: scripts/train.py
 
-# Grid over the two reward knobs that govern exploration/shaping, with
-# reach_bonus fixed as the scale anchor.
+# Grid over the sparse death_penalty. All other reward knobs stay at their
+# defaults (reach_bonus=10, step_penalty=0.01, shaping_coef=0.1).
 #
-# 4 * 4 = 16 runs.
+# 6 runs.
 parameters:
-  reward.reach_bonus:  {value: 10.0}
-  reward.step_penalty: {values: [0.0, 0.005, 0.01, 0.02]}
-  reward.shaping_coef: {values: [0.0, 0.025, 0.05, 0.1]}
-  seed:                {values: [42]}
+  reward.death_penalty: {values: [0.0, 2.5, 5.0, 7.5, 10.0, 15.0]}
+  seed:                 {value: 42}
 
   trainer.num_train_frames: {value: 10_000_000}
