@@ -80,6 +80,13 @@ trainer:
   num_train_frames: 10_000_000
   num_eval_frames: 50_000
   eval_interval_frames: 100_000
+  # Full multi-task evaluation (runs agent.evaluate for every task on every
+  # eval tick). Expensive: ~num_tasks * num_eval_frames extra rollouts per
+  # eval. Disable to keep only the cheap trajectory-viz plots.
+  full_eval_enabled: false
+  # Trajectory viz on 4 fixed eval maps (one per biome). If null, fires at
+  # every ``eval_interval_frames`` boundary. Set larger to render less often.
+  trajectory_viz_interval_frames: null
   # log_interval_episodes is currently unused by the trainer/logger.
   # log_interval_episodes: 50
 

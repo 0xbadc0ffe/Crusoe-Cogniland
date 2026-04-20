@@ -34,6 +34,19 @@ class Trainer:
         self.num_train_frames = config.trainer.num_train_frames
         self.num_eval_frames = config.trainer.num_eval_frames
         self.eval_interval_frames = config.trainer.get("eval_interval_frames", None)
+        # When false, skip the expensive per-task ``agent.evaluate`` loop.
+        # Trajectory viz still runs according to its own interval.
+        self.full_eval_enabled = bool(
+            config.trainer.get("full_eval_enabled", True)
+        )
+        # Optional override for trajectory-viz cadence. Falls back to
+        # ``eval_interval_frames`` when unset.
+        self.trajectory_viz_interval_frames = config.trainer.get(
+            "trajectory_viz_interval_frames", None
+        )
+        # Internal counter so trajectory-viz cadence stays independent of
+        # full-eval cadence when they differ.
+        self._next_trajectory_viz_frame: int = 0
 
         # W&B
         self.run_logger = RunLogger(config)
@@ -288,9 +301,67 @@ class Trainer:
         self.run_logger.wandb_run.log(extras)
 
     # ------------------------------------------------------------------ #
-    # Evaluation -- runs all N tasks separately
+    # Evaluation -- dispatches to full eval and/or trajectory viz
     # ------------------------------------------------------------------ #
     def _run_evaluation(self, global_train_frames: int):
+        """Dispatch evaluation: full multi-task eval (if enabled) and
+        trajectory viz (if its interval has been reached)."""
+        ran_full_eval = False
+        eval_metrics_for_ckpt: dict | None = None
+
+        if self.full_eval_enabled:
+            eval_metrics_for_ckpt = self._run_full_eval(global_train_frames)
+            ran_full_eval = True
+
+        # Trajectory viz on its own cadence. ``trajectory_viz_interval_frames``
+        # overrides ``eval_interval_frames`` when set.
+        traj_interval = self.trajectory_viz_interval_frames or self.eval_interval_frames
+        should_render_traj = (
+            self.trajectory_logger is not None
+            and traj_interval is not None
+            and global_train_frames >= self._next_trajectory_viz_frame
+        )
+        if should_render_traj:
+            self._run_trajectory_viz(global_train_frames)
+            self._next_trajectory_viz_frame = global_train_frames + int(traj_interval)
+
+        # Checkpoint: prefer real eval metrics; otherwise fall back to the
+        # train tracker rolling averages so best-tracking still works.
+        if self.checkpoint_callback is not None:
+            if eval_metrics_for_ckpt is None:
+                eval_metrics_for_ckpt = self._checkpoint_metrics_from_train()
+            self.checkpoint_callback.on_validation_end(
+                agent_state=self.agent_state,
+                step=int(self.agent_state.runtime.train_steps),
+                metrics=eval_metrics_for_ckpt,
+            )
+
+        if ran_full_eval or should_render_traj:
+            self.eval_set += 1
+
+    def _checkpoint_metrics_from_train(self) -> dict:
+        """Fallback 'eval' metrics for checkpoint best-tracking when full
+        evaluation is disabled. Uses the train tracker's rolling averages."""
+        hist_r = self.train_metrics.episode_reward_history
+        hist_s = self.train_metrics.episode_success_history
+        avg_r = float(np.mean(hist_r)) if len(hist_r) else 0.0
+        avg_s = float(np.mean(hist_s)) if len(hist_s) else 0.0
+        return {"eval_return": avg_r, "eval_success": avg_s}
+
+    def _run_trajectory_viz(self, global_train_frames: int):
+        """Render the 4-biome fixed-map trajectory plots and log to W&B."""
+        logger.info("=== Trajectory viz @ %d frames ===", global_train_frames)
+        traj_rng = self.rng_manager.get_key()
+        self.trajectory_logger.log(
+            agent_state=self.agent_state,
+            rng=traj_rng,
+            global_train_frames=global_train_frames,
+        )
+
+    def _run_full_eval(self, global_train_frames: int) -> dict:
+        """Full multi-task evaluation: runs ``agent.evaluate`` for every task,
+        logs per-task and aggregate ``eval/*`` metrics, and returns the
+        aggregate dict suitable for checkpoint best-tracking."""
         logger.info("=== Eval set %d (all %d tasks) ===", self.eval_set, self.num_tasks)
 
         all_task_metrics = {}
@@ -316,7 +387,6 @@ class Trainer:
             )
             pbar.close()
 
-            # Process episode info
             episode_info = agent_metrics.get("episode_info")
             if episode_info is not None:
                 returns = jnp.array(episode_info["returned_episode_returns"]).reshape(-1)
@@ -338,7 +408,6 @@ class Trainer:
             }
             all_task_metrics[task_id] = agg
 
-            # Log per-task eval
             self.run_logger.wandb_run.log({
                 f"eval/task_{task_id}/avg_reward":  agg["avg_reward"],
                 f"eval/task_{task_id}/avg_success": agg["avg_success"],
@@ -347,10 +416,9 @@ class Trainer:
                 "train_frames": global_train_frames,
             })
 
-        # Log aggregate across all tasks
-        avg_reward = np.mean([m["avg_reward"] for m in all_task_metrics.values()])
-        avg_success = np.mean([m["avg_success"] for m in all_task_metrics.values()])
-        avg_length = np.mean([m["avg_length"] for m in all_task_metrics.values()])
+        avg_reward = float(np.mean([m["avg_reward"] for m in all_task_metrics.values()]))
+        avg_success = float(np.mean([m["avg_success"] for m in all_task_metrics.values()]))
+        avg_length = float(np.mean([m["avg_length"] for m in all_task_metrics.values()]))
 
         self.run_logger.wandb_run.log({
             "eval/aggregate/avg_reward":  avg_reward,
@@ -359,7 +427,6 @@ class Trainer:
             "train_frames": global_train_frames,
         })
 
-        # Console table
         rows = []
         for tid, m in all_task_metrics.items():
             rows.append([f"task_{tid}", f"{m['avg_reward']:.3f}",
@@ -369,20 +436,4 @@ class Trainer:
                     tabulate(rows, headers=["task", "reward", "success", "episodes"],
                              tablefmt="grid"))
 
-        # Trajectory viz on fixed maps (one per biome)
-        if self.trajectory_logger is not None:
-            traj_rng = self.rng_manager.get_key()
-            self.trajectory_logger.log(
-                agent_state=self.agent_state,
-                rng=traj_rng,
-                global_train_frames=global_train_frames,
-            )
-
-        # Checkpoint (use aggregate reward as the tracking metric)
-        if self.checkpoint_callback is not None:
-            self.checkpoint_callback.on_validation_end(
-                agent_state=self.agent_state,
-                step=int(self.agent_state.runtime.train_steps),
-                metrics={"eval_return": avg_reward, "eval_success": avg_success},
-            )
-        self.eval_set += 1
+        return {"eval_return": avg_reward, "eval_success": avg_success}

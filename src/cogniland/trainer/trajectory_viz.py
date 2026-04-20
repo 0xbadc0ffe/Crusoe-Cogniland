@@ -44,13 +44,29 @@ class TrajectoryLogger:
         rgb = raw["rgb"]
         rgb = rgb.numpy() if hasattr(rgb, "numpy") else np.asarray(rgb)
 
-        # First index per biome, preserving biome order of appearance.
-        seen: dict[str, int] = {}
+        # Preferred (biome, seed) picks — if the seed is present in the val
+        # dataset for that biome, use it; otherwise fall back to the first
+        # occurrence of the biome.
+        preferred_seed_by_biome: dict[str, int] = {
+            "balanced": 258,
+            "archipelago": 262,
+        }
+
+        first_by_biome: dict[str, int] = {}
         for i, b in enumerate(biomes):
-            seen.setdefault(b, i)
-        self.biome_labels = list(seen.keys())
+            first_by_biome.setdefault(b, i)
+        self.biome_labels = list(first_by_biome.keys())
+
+        def _pick_index(biome: str) -> int:
+            want_seed = preferred_seed_by_biome.get(biome)
+            if want_seed is not None:
+                for i, (b, s) in enumerate(zip(biomes, seeds)):
+                    if b == biome and int(s) == int(want_seed):
+                        return i
+            return first_by_biome[biome]
+
         self.map_indices = np.array(
-            [seen[b] for b in self.biome_labels], dtype=np.int32
+            [_pick_index(b) for b in self.biome_labels], dtype=np.int32
         )
         self.map_seeds = [seeds[i] for i in self.map_indices]
         self.n = len(self.map_indices)
