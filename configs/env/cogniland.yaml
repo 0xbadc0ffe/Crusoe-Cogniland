@@ -71,18 +71,18 @@ curriculum:
   # Fires only on steps with positive HP delta (i.e. successful berry forage),
   # weighted by "missing HP" so the bonus is 0 at high HP and large near death.
   forage_bonus:
-    initial_coef: 0.5         # reward scale per +HP gained via berry forage (t=0)
-    anneal_frames: 20_000_000  # linear anneal to 0
+    initial_coef: 1.0         # reward scale per +HP gained via berry forage (t=0)
+    anneal_frames: 1_000_000  # linear anneal to 0
     hp_thresh: 90             # no reward for healing while hp >= this
     missing_hp_exp: 2         # non-linear weighting of missing HP (quadratic)
   # Flat bonus each time a movement action (0-3) arrives on a berry tile.
   # Shares the anneal schedule of forage_bonus (curriculum_frac is global).
   # Teaches the agent to *visit* berries, bootstrapping the foraging chain.
   berry_step_bonus:
-    initial_coef: 0.2         # per-arrival reward at t=0, anneals linearly to 0
+    initial_coef: 1.0         # per-arrival reward at t=0, anneals linearly to 0
 
 trainer:
-  num_train_frames: 10_000_000
+  num_train_frames: 5_000_000
   num_eval_frames: 50_000
   eval_interval_frames: 100_000
   # Full multi-task evaluation (runs agent.evaluate for every task on every

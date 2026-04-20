@@ -32,10 +32,25 @@ class ActorCriticRNN(nn.Module):
     """CNN + MLP + LSTM actor-critic for Cogniland maps.
 
     Input:
-        minimap:  [B, 5, 45, 45]  (channels-first, converted to channels-last internally)
+        minimap:  [B, 6, 45, 45]  (channels-first, converted to channels-last internally)
+                  channels: 0-2 RGB, 3 visibility, 4 target, 5 berry
         scalars:  [B, 6]
         task_emb: [B, task_embedding_dim]
         carry:    (h, c) each [B, lstm_size]
+
+    CNN design notes (April 2026 update):
+      - Two normalized coordinate channels are appended to the minimap before
+        the first conv. Because the agent always sits at the patch center,
+        these directly expose "direction to any pixel" to every subsequent
+        layer — a cheap fix for convolutions' translation equivariance on
+        egocentric observations.
+      - Filter widths doubled (16/32 -> 32/64) so the CNN can host separate
+        selectivity for RGB tile classes *and* the binary berry/target/vis
+        channels without competing for capacity.
+      - Final spatial reduction lands at 6x6 (was 4x4) and uses average
+        pooling instead of max. For sparse binary features (berries), mean
+        preserves density ("how many berries in this region") rather than
+        saturating at 1.0 on first sighting.
 
     Output:
         logits:  [B, num_actions]
@@ -50,28 +65,38 @@ class ActorCriticRNN(nn.Module):
     @nn.compact
     def __call__(self, minimap, scalars, task_emb, carry):
         # -- CNN (channels-last for Flax Conv) --
-        # Input: [B, 5, 45, 45] -> transpose to [B, 45, 45, 5]
+        # Input: [B, 6, 45, 45] -> transpose to [B, 45, 45, 6]
         x = jnp.transpose(minimap, (0, 2, 3, 1))
 
-        x = nn.Conv(features=16, kernel_size=(3, 3), padding="VALID",
-                     kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(x)
-        x = nn.relu(x)
-        # MaxPool 2x2
-        x = nn.max_pool(x, window_shape=(2, 2), strides=(2, 2))
+        # -- CoordConv: append (rel_row, rel_col) in [-1, 1] --
+        # Agent is always at the patch center (22, 22). Normalized coords let
+        # any subsequent conv compute "which direction is this feature from
+        # the agent" without the network rediscovering it.
+        B, H, W, _ = x.shape
+        rr = jnp.linspace(-1.0, 1.0, H, dtype=x.dtype)
+        cc = jnp.linspace(-1.0, 1.0, W, dtype=x.dtype)
+        rr = jnp.broadcast_to(rr[None, :, None, None], (B, H, W, 1))
+        cc = jnp.broadcast_to(cc[None, None, :, None], (B, H, W, 1))
+        x = jnp.concatenate([x, rr, cc], axis=-1)
 
         x = nn.Conv(features=32, kernel_size=(3, 3), padding="VALID",
                      kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(x)
         x = nn.relu(x)
-        # Adaptive max pool to 4x4: use global pooling with window = spatial dims
-        # After conv: spatial is reduced; we just pool down to 4x4
-        # Current spatial: floor((floor((45-2)/2+1) - 2)/1 + 1) = floor((22-2)+1) = 21
-        # Actually: (45-3+1)=43, pool-> 21, (21-3+1)=19
-        # Pool 19 -> 4: window=(4,4) stride=(4,4) gets us floor(19/4)=4
+        # MaxPool 2x2: 43 -> 21
+        x = nn.max_pool(x, window_shape=(2, 2), strides=(2, 2))
+
+        x = nn.Conv(features=64, kernel_size=(3, 3), padding="VALID",
+                     kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(x)
+        x = nn.relu(x)
+        # 21 -> Conv(3,VALID) -> 19; AvgPool(3,3) -> 6 (floor((19-3)/3)+1 = 6).
+        # Avg (not max) for the final reduction: berries/targets are sparse
+        # binary signals; averaging preserves *density* across the 3x3 region
+        # instead of saturating at 1.0 as soon as any cell fires.
         spatial = x.shape[1]  # should be 19
-        pool_size = spatial // 4
-        x = nn.max_pool(x, window_shape=(pool_size, pool_size),
+        pool_size = spatial // 6  # 3
+        x = nn.avg_pool(x, window_shape=(pool_size, pool_size),
                         strides=(pool_size, pool_size))
-        # Flatten: [B, 4, 4, 32] -> [B, 512]
+        # Flatten: [B, 6, 6, 64] -> [B, 2304]
         x = x.reshape((x.shape[0], -1))
 
         # -- Scalar MLP --
@@ -113,7 +138,7 @@ class ActorCriticRNN(nn.Module):
 # ---------------------------------------------------------------------------
 
 class Transition(NamedTuple):
-    obs_minimap: jnp.ndarray    # [B, 5, 45, 45]
+    obs_minimap: jnp.ndarray    # [B, 6, 45, 45]
     obs_scalars: jnp.ndarray    # [B, 6]
     action: jnp.ndarray         # [B]
     log_prob: jnp.ndarray       # [B]
@@ -239,7 +264,7 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
         """Single PPO gradient step on a minibatch.
 
         batch: dict with keys:
-            obs_minimap  [MB, 3, 45, 45]
+            obs_minimap  [MB, 6, 45, 45]
             obs_scalars  [MB, 6]
             task_emb     [MB, task_embedding_dim]
             action       [MB]
@@ -366,7 +391,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
     # ------------------------------------------------------------------
     def init(rng):
         rng, init_rng = jax.random.split(rng)
-        dummy_minimap = jnp.zeros((1, 5, 45, 45))
+        mm_shape = obs_space["minimap"] if isinstance(obs_space, dict) else (6, 45, 45)
+        dummy_minimap = jnp.zeros((1,) + tuple(mm_shape))
         dummy_scalars = jnp.zeros((1, 6))
         dummy_task_emb = jnp.zeros((1, task_embedding_dim))
         dummy_carry = (jnp.zeros((1, lstm_size)), jnp.zeros((1, lstm_size)))
@@ -580,7 +606,7 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             flat_size = T * B
 
             flat_data = {
-                "obs_minimap": jnp.concatenate([t.obs_minimap for t in storage], axis=0),   # [T*B, 3, 45, 45]
+                "obs_minimap": jnp.concatenate([t.obs_minimap for t in storage], axis=0),   # [T*B, 6, 45, 45]
                 "obs_scalars": jnp.concatenate([t.obs_scalars for t in storage], axis=0),   # [T*B, 6]
                 "task_emb": jnp.tile(task_emb_jax, (T, 1)),                                 # [T*B, task_emb_dim]
                 "action": jnp.concatenate([t.action for t in storage], axis=0),              # [T*B]

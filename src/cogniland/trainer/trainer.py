@@ -40,9 +40,14 @@ class Trainer:
             config.trainer.get("full_eval_enabled", True)
         )
         # Optional override for trajectory-viz cadence. Falls back to
-        # ``eval_interval_frames`` when unset.
-        self.trajectory_viz_interval_frames = config.trainer.get(
-            "trajectory_viz_interval_frames", None
+        # ``eval_interval_frames`` when unset. Coerce to int eagerly so a
+        # stray string (e.g. "None" from a W&B sweep dotlist) fails loudly
+        # at construction time rather than mid-run.
+        _traj_raw = config.trainer.get("trajectory_viz_interval_frames", None)
+        if isinstance(_traj_raw, str) and _traj_raw.strip().lower() in ("none", "null", ""):
+            _traj_raw = None
+        self.trajectory_viz_interval_frames = (
+            int(_traj_raw) if _traj_raw is not None else None
         )
         # Internal counter so trajectory-viz cadence stays independent of
         # full-eval cadence when they differ.
@@ -338,8 +343,14 @@ class Trainer:
             ran_full_eval = True
 
         # Trajectory viz on its own cadence. ``trajectory_viz_interval_frames``
-        # overrides ``eval_interval_frames`` when set.
-        traj_interval = self.trajectory_viz_interval_frames or self.eval_interval_frames
+        # overrides ``eval_interval_frames`` when set. Use ``is not None`` so
+        # a legitimate interval of 0 (fire every eval) isn't swallowed by
+        # truthiness.
+        traj_interval = (
+            self.trajectory_viz_interval_frames
+            if self.trajectory_viz_interval_frames is not None
+            else self.eval_interval_frames
+        )
         should_render_traj = (
             self.trajectory_logger is not None
             and traj_interval is not None

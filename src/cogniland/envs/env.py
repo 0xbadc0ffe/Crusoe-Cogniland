@@ -7,7 +7,7 @@ Runs B parallel games simultaneously. Each game has:
   - 8 actions: 4 cardinal moves, forage, craft_raft, craft_rope, craft_shoes
 
 Observations:
-  - minimap: float32 [B, 5, 45, 45] — 3 RGB channels + visibility mask + target indicator
+  - minimap: float32 [B, 6, 45, 45] — 3 RGB channels + visibility mask + target indicator + berry mask
   - scalars: float32 [B, 6] — compass, terrain, hp, wood, tool
 """
 
@@ -165,6 +165,7 @@ def _compute_minimap_batch(
     rgb: np.ndarray,
     heightmap: np.ndarray,
     terrain_idx: np.ndarray,
+    berry_mask: np.ndarray,
     map_idx: np.ndarray,
     pos_r: np.ndarray,
     pos_c: np.ndarray,
@@ -179,10 +180,11 @@ def _compute_minimap_batch(
 ) -> np.ndarray:
     """Compute minimap observations for a batch.
 
-    Returns: float32 [B, 5, 45, 45] where channels are:
+    Returns: float32 [B, 6, 45, 45] where channels are:
         0-2: RGB patch (true map colors; unseen cells are 0)
         3:   visibility mask (1.0 visible, 0.0 occluded / out-of-bounds)
         4:   target indicator (YES target: 1.0, NO target: 0.5, 0.0 if not visible or out of patch)
+        5:   berry mask (1.0 where a visible berry tile sits, 0.0 elsewhere)
 
     Fully vectorised over the batch. When ``occlude=True`` and
     ``vis_lut_packed`` + ``disk_stack`` are provided, occlusion is a single
@@ -240,7 +242,7 @@ def _compute_minimap_batch(
     patches = np.where(valid[..., None], patches, 0)                   # zero masked cells
 
     # --- Assemble output ----------------------------------------------------
-    result = np.empty((B, 5, D, D), dtype=np.float32)
+    result = np.empty((B, 6, D, D), dtype=np.float32)
     # Channels 0-2: RGB
     result[:, :3] = patches.transpose(0, 3, 1, 2).astype(np.float32) / 255.0
     # Channel 3: visibility mask
@@ -258,12 +260,19 @@ def _compute_minimap_batch(
             env_idx = np.where(visible)[0]
             result[env_idx, 4, ty[env_idx], tx[env_idx]] = val
 
+    # Channel 5: berry mask — 1.0 on visible berry tiles, 0.0 elsewhere.
+    # Uses the same `valid = vis_masks & in_bounds` gate as the RGB gather,
+    # so the agent only sees berries it could actually see in the scene.
+    berry_patches = berry_mask[mi_b, rows_c, cols_c]                   # [B, D, D] bool
+    result[:, 5] = np.where(valid, berry_patches, False).astype(np.float32)
+
     return result
 
 
 @jax.jit
 def _compute_minimap_jax(
     rgb_jax: jnp.ndarray,
+    berry_mask_jax: jnp.ndarray,
     vis_lut_packed_jax: jnp.ndarray,
     disk_stack_jax: jnp.ndarray,
     vis_per_terrain_jax: jnp.ndarray,
@@ -280,7 +289,7 @@ def _compute_minimap_jax(
 
     All map arrays are expected to live on-device; per-env index arrays
     (positions / map indices / target coords) are transferred per call.
-    Returns a [B, 5, 45, 45] float32 jnp array that stays on device.
+    Returns a [B, 6, 45, 45] float32 jnp array that stays on device.
     """
     B = pos_r.shape[0]
     R = MINIMAP_RADIUS
@@ -314,7 +323,7 @@ def _compute_minimap_jax(
     valid = vis_masks & in_bounds
     patches = jnp.where(valid[..., None], patches, jnp.zeros_like(patches))
 
-    # --- Assemble [B, 5, D, D] ---
+    # --- Assemble [B, 6, D, D] ---
     rgb_chw = patches.transpose(0, 3, 1, 2).astype(jnp.float32) / 255.0
     vis_chan = vis_masks.astype(jnp.float32)[:, None]
 
@@ -333,7 +342,14 @@ def _compute_minimap_jax(
         target = target.at[b_idx, ty_c, tx_c].set(new_vals)
     target_chan = target[:, None]
 
-    return jnp.concatenate([rgb_chw, vis_chan, target_chan], axis=1)
+    # --- Berry mask — same visibility gate as RGB so the agent only sees
+    # berries it could actually perceive. Binary channel; survives pooling
+    # cleanly and gives Dreamer/STORM a crisp reconstruction target. ---
+    berry_patches = berry_mask_jax[mi_b, rows_c, cols_c]
+    berry_patches = jnp.where(valid, berry_patches, jnp.zeros_like(berry_patches))
+    berry_chan = berry_patches.astype(jnp.float32)[:, None]
+
+    return jnp.concatenate([rgb_chw, vis_chan, target_chan, berry_chan], axis=1)
 
 
 def _compute_occlusion_mask(
@@ -642,12 +658,14 @@ class CognilandEnv:
         # runs on GPU. Tests that set ``occlude=False`` keep the numpy path.
         if self._occlude:
             self._rgb_jax = jnp.asarray(self._rgb)
+            self._berry_mask_jax = jnp.asarray(self._berry_mask)
             self._vis_lut_packed_jax = jnp.asarray(self._vis_lut_packed)
             self._disk_stack_jax = jnp.asarray(self._disk_stack)
             self._vis_per_terrain_jax = jnp.asarray(self._vis_per_terrain)
             self._terrain_idx_jax = jnp.asarray(self._terrain_idx)
         else:
             self._rgb_jax = None
+            self._berry_mask_jax = None
             self._vis_lut_packed_jax = None
             self._disk_stack_jax = None
             self._vis_per_terrain_jax = None
@@ -662,7 +680,7 @@ class CognilandEnv:
 
     def observation_space(self) -> dict:
         return {
-            "minimap": (5, MINIMAP_DIAMETER, MINIMAP_DIAMETER),
+            "minimap": (6, MINIMAP_DIAMETER, MINIMAP_DIAMETER),
             "scalars": (6,),
         }
 
@@ -1087,6 +1105,7 @@ class CognilandEnv:
         if self._occlude:
             minimap = _compute_minimap_jax(
                 self._rgb_jax,
+                self._berry_mask_jax,
                 self._vis_lut_packed_jax,
                 self._disk_stack_jax,
                 self._vis_per_terrain_jax,
@@ -1101,7 +1120,7 @@ class CognilandEnv:
             )
         else:
             minimap = _compute_minimap_batch(
-                self._rgb, self._heightmap, self._terrain_idx,
+                self._rgb, self._heightmap, self._terrain_idx, self._berry_mask,
                 self.map_idx, self.pos_r, self.pos_c,
                 self.yes_r, self.yes_c,
                 self.no_r, self.no_c,

@@ -1,4 +1,4 @@
-name: ppo_rnn_reward_sweep
+name: ppo_rnn_step_on_berry_bonus_sweep
 entity: crusoe
 project: crusoe_in_cogniland
 method: grid
@@ -31,7 +31,7 @@ parameters:
   seed:                         {value: 42}
   num_tasks:                    {value: 1}
   trainer.num_train_frames:     {value: 50_000_000}
-  trainer.full_eval_enabled:    {value: true}
+  trainer.full_eval_enabled:    {value: false}
 
   # New knob: flat bonus per movement-arrival on a berry tile (annealed).
   # 0.0 is the ablation control — verifies the bonus is doing work.

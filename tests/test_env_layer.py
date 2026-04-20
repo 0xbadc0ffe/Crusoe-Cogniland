@@ -120,7 +120,7 @@ class TestCognilandEnv:
         obs = env.reset(seed=42)
         assert "minimap" in obs
         assert "scalars" in obs
-        assert obs["minimap"].shape == (4, 5, MINIMAP_DIAMETER, MINIMAP_DIAMETER)
+        assert obs["minimap"].shape == (4, 6, MINIMAP_DIAMETER, MINIMAP_DIAMETER)
         assert obs["scalars"].shape == (4, 6)
         assert obs["minimap"].dtype == np.float32
         assert obs["scalars"].dtype == np.float32
@@ -167,7 +167,7 @@ class TestCognilandEnv:
         actions = np.full(4, 1, dtype=np.int32)
         obs, rewards, dones, info = env.step(actions)
 
-        assert obs["minimap"].shape == (4, 5, MINIMAP_DIAMETER, MINIMAP_DIAMETER)
+        assert obs["minimap"].shape == (4, 6, MINIMAP_DIAMETER, MINIMAP_DIAMETER)
         assert obs["scalars"].shape == (4, 6)
         assert rewards.shape == (4,)
         assert dones.shape == (4,)

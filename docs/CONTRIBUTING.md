@@ -67,10 +67,11 @@ Source of truth: `src/cogniland/envs/tile_effects.py` + the berry branch in `src
 
 The agent sees:
 
-- **minimap** `[B, 5, 45, 45]` — patch of the map centered on the agent, with Bresenham raycasting for line-of-sight occlusion. Vision radius depends on current terrain (mountains: 22, forest: 5). Channels:
+- **minimap** `[B, 6, 45, 45]` — patch of the map centered on the agent, with Bresenham raycasting for line-of-sight occlusion. Vision radius depends on current terrain (mountains: 22, forest: 5). Channels:
   - `0..2` — RGB of the map (unseen cells are 0).
   - `3` — visibility mask (1 visible, 0 occluded).
-  - `4` — target indicator (1 at the target cell if within the visibility region, 0 elsewhere).
+  - `4` — target indicator (YES=1.0, NO=0.5 if within the visibility region, 0 elsewhere).
+  - `5` — berry mask (1 where a visible berry tile sits, 0 elsewhere).
 - **scalars** `[B, 6]` — compass direction to target (unit vector x, y), tile class / 9, hp / 100, wood / 100, tool_id / 3. There are 10 tile classes (9 base terrains + berry), so the tile index is normalized by 9.
 - **task_embedding** `[B, 7]` — fixed one-hot vector identifying the current task (task i -> row i of `np.eye(7)`).
 

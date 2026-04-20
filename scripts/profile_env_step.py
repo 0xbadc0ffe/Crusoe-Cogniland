@@ -59,6 +59,7 @@ def main(num_envs: int = 256, num_steps: int = 200):
     for _ in range(num_steps):
         _compute_minimap_batch(
             env_inner._rgb, env_inner._heightmap, env_inner._terrain_idx,
+            env_inner._berry_mask,
             env_inner.map_idx, env_inner.pos_r, env_inner.pos_c,
             env_inner.yes_r, env_inner.yes_c,
             env_inner.no_r, env_inner.no_c,

@@ -1,9 +1,14 @@
-name: ppo_rnn_hpsearch
+name: ppo_rnn_training_hps
 entity: crusoe
 project: crusoe_in_cogniland
-method: random
+method: grid
 metric:
-  name: eval/aggregate/avg_reward
+  # Logged every training tick regardless of full_eval_enabled (see
+  # Trainer._log_training_metrics in src/cogniland/trainer/trainer.py).
+  # With round_robin task sampling across 256 parallel envs this is
+  # already an all-7-tasks aggregate. moving_avg_window_size=50 episodes
+  # (configs/env/cogniland.yaml) gives a low-noise end-of-training signal.
+  name: train/moving_avg_success_rate
   goal: maximize
 
 command:
@@ -18,22 +23,52 @@ command:
 
 program: scripts/train.py
 
-# Random search over the core PPO optimisation knobs. Ranges are centred on
-# the current defaults in configs/agent/ppo_rnn.yaml so the sweep probes the
-# neighbourhood rather than searching blind. Launch with e.g.
-#     ./scripts/launch_sweep.sh configs/sweeps/ppo_rnn_hpsearch.yaml -n 24
+# Head-to-head of two (lr, entropy_coef) regimes on a long 300M-frame
+# multi-task run. Everything else is at production defaults.
+#
+#   conservative : lr=3.5e-4, entropy_coef=1.5e-3  (current ppo_rnn.yaml)
+#   aggressive   : lr=7.0e-4, entropy_coef=5.0e-3  (2x lr, ~3.3x entropy)
+#
+# The yaml expresses this as a 2x2 grid (= 4 runs) rather than the 2
+# diagonal points alone: the two off-diagonal cells are cheap insurance
+# that tells you *which* of lr / entropy_coef is actually responsible
+# for any performance delta. To cut to strictly 2 runs, change one of
+# the two axes to ``{value: ...}`` and only grid the other.
+#
+# --- Shape of the rollout ---
+# Restored to the production defaults after the previous num_steps=128
+# OOM incident: num_envs=256, num_steps=64 (default), ppo_epochs=8
+# (default). mb_size = 256*64/4 = 4096 -> known-safe.
+#
+# --- Curriculum rescale ---
+# The env yaml ships with forage_bonus.anneal_frames=5M, tuned for
+# 5-10M-frame runs. At 300M that is a 1.7% anneal -- the curriculum
+# vanishes within the first few hundred PPO updates, long before the
+# agent has bootstrapped forage -> survive -> reach. Bumped to 50M here
+# (~17% of training). berry_step_bonus shares this schedule via the
+# global curriculum_frac (see MultiTaskEnvWrapper.set_curriculum_progress
+# in src/cogniland/envs/multitask_wrapper.py).
+#
+# --- Budget ---
+# Training fps ≈ 13k steps/s on the target GPU -> ~6.5 h / run.
+# 4 runs ≈ ~26 GPU-hours total.
+#
+# --- Evaluation ---
+# full_eval_enabled is NOT set, so the env-level default of false applies
+# and no per-task eval/* metrics are logged. Sweep selects on the
+# training aggregate declared above. Caveat: train/moving_avg_success
+# includes exploration noise, so the high-entropy cells may look
+# slightly worse than a greedy eval would show. If the final ranking is
+# close, re-run the top cell with full_eval_enabled=true as a tiebreaker.
+#
+# --- Launch ---
+# Grid size auto-detected:
+#     ./scripts/launch_sweep.sh configs/sweeps/ppo_rnn_hpsearch.yaml
 parameters:
-  seed: {value: 42}
+  seed:                                   {value: 42}
+  trainer.num_train_frames:               {value: 300_000_000}
+  env.num_parallel_envs:                  {value: 256}
+  curriculum.forage_bonus.anneal_frames:  {value: 50_000_000}
 
-  # Optimiser — current: lr=5e-4, clip_grad=0.5
-  agent.lr:           {distribution: log_uniform_values, min: 1.0e-4, max: 2.0e-3}
-  agent.clip_grad:    {values: [0.3, 0.5, 1.0]}
-
-  # PPO loss — current: clip_eps=0.2, entropy_coef=0.005, value_coef=0.5
-  agent.clip_eps:     {values: [0.1, 0.2, 0.3]}
-  agent.entropy_coef: {distribution: log_uniform_values, min: 1.0e-3, max: 2.0e-2}
-  agent.value_coef:   {values: [0.25, 0.5, 1.0]}
-
-  # Rollout + update cadence — current: gae_lambda=0.95, ppo_epochs=4
-  agent.gae_lambda:   {values: [0.9, 0.95, 0.98]}
-  agent.ppo_epochs:   {values: [2, 4, 8]}
+  agent.lr:           {values: [3.5e-4, 7.0e-4]}
+  agent.entropy_coef: {values: [1.5e-3, 5.0e-3]}

@@ -19,6 +19,15 @@ def load_config(agent_config_path: str, env_config_path: str) -> OmegaConf:
 def configure_sweep_config(
     base_config: OmegaConf, sweep_config_dict: dict
 ) -> OmegaConf:
-    """Apply W&B sweep overrides to the base config."""
-    dotlist = [f"{k}={v}" for k, v in sweep_config_dict.items()]
-    return OmegaConf.merge(base_config, OmegaConf.from_dotlist(dotlist))
+    """Apply W&B sweep overrides to the base config.
+
+    Uses ``OmegaConf.update`` with the raw Python values from ``run.config``
+    so that ``None``/``bool``/``int``/``float`` are preserved. The prior
+    dotlist approach stringified values (``f"{k}={v}"``), which turned
+    ``None`` into the literal string ``"None"`` — surprising downstream code
+    that expected a real ``None``.
+    """
+    cfg = OmegaConf.create(base_config)
+    for k, v in sweep_config_dict.items():
+        OmegaConf.update(cfg, k, v, merge=True)
+    return cfg
