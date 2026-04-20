@@ -296,6 +296,72 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
         return train_state, metrics
 
     # ------------------------------------------------------------------
+    # Fused PPO update: all ppo_epochs * num_minibatches gradient steps
+    # run inside a single jitted scan. This eliminates the Python loop
+    # and — crucially — the per-step ``float(metric)`` device->host syncs
+    # that previously serialised every gradient step.
+    # ------------------------------------------------------------------
+    @jax.jit
+    def _run_all_updates(train_state, flat_data, rng):
+        flat_size = flat_data["action"].shape[0]
+        mb_size = flat_size // num_minibatches
+
+        def _mb_body(ts, mb_idx):
+            mb = jax.tree.map(lambda v: v[mb_idx], flat_data)
+            if normalize_advantages:
+                adv = mb["advantage"]
+                mb["advantage"] = (adv - adv.mean()) / (adv.std() + 1e-8)
+
+            def loss_fn(params):
+                logits, value, _ = network.apply(
+                    params,
+                    mb["obs_minimap"],
+                    mb["obs_scalars"],
+                    mb["task_emb"],
+                    (mb["carry_h"], mb["carry_c"]),
+                )
+                log_probs = jax.nn.log_softmax(logits)
+                new_log_prob = log_probs[jnp.arange(logits.shape[0]), mb["action"]]
+                ratio = jnp.exp(new_log_prob - mb["old_log_prob"])
+                adv = mb["advantage"]
+                pg1 = -adv * ratio
+                pg2 = -adv * jnp.clip(ratio, 1.0 - clip_eps, 1.0 + clip_eps)
+                policy_loss = jnp.maximum(pg1, pg2).mean()
+                value_loss = 0.5 * ((value - mb["return_"]) ** 2).mean()
+                probs = jax.nn.softmax(logits)
+                entropy = -(probs * log_probs).sum(axis=-1).mean()
+                total_loss = policy_loss + value_coef * value_loss - entropy_coef * entropy
+                clipfrac = (jnp.abs(ratio - 1.0) > clip_eps).mean()
+                approx_kl = (0.5 * (mb["old_log_prob"] - new_log_prob) ** 2).mean()
+                return total_loss, {
+                    "policy_loss": policy_loss,
+                    "value_loss": value_loss,
+                    "entropy": entropy,
+                    "clipfrac": clipfrac,
+                    "approx_kl": approx_kl,
+                }
+
+            (_, metrics), grads = jax.value_and_grad(loss_fn, has_aux=True)(ts.params)
+            grads = jax.tree.map(lambda g: jnp.nan_to_num(g, nan=0.0), grads)
+            ts = ts.apply_gradients(grads=grads)
+            return ts, metrics
+
+        def _epoch_body(ts, epoch_rng):
+            perm = jax.random.permutation(epoch_rng, flat_size)
+            mb_indices = perm.reshape(num_minibatches, mb_size)
+            ts, epoch_metrics = jax.lax.scan(_mb_body, ts, mb_indices)
+            return ts, epoch_metrics
+
+        epoch_rngs = jax.random.split(rng, ppo_epochs)
+        train_state, all_metrics = jax.lax.scan(
+            _epoch_body, train_state, epoch_rngs
+        )
+        # Sum across (ppo_epochs, num_minibatches) to match the old
+        # agg_metrics accumulation convention (sum, divided at the end).
+        sum_metrics = jax.tree.map(lambda m: m.sum(), all_metrics)
+        return train_state, sum_metrics
+
+    # ------------------------------------------------------------------
     # init
     # ------------------------------------------------------------------
     def init(rng):
@@ -416,6 +482,7 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
         all_episode_lengths = []
         all_episode_flags = []
         all_episode_success = []
+        all_episode_biomes = []
 
         # Aggregate loss metrics
         agg_metrics = {
@@ -472,6 +539,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
                         all_episode_lengths.append(info["returned_episode_lengths"].copy())
                     if "task_success" in info:
                         all_episode_success.append(info["task_success"].copy())
+                    if "biome" in info:
+                        all_episode_biomes.append(np.asarray(info["biome"]).copy())
                 elif np.any(dones):
                     # Fallback: use dones directly
                     all_episode_flags.append(dones.copy())
@@ -481,6 +550,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
                         )
                     if "task_success" in info:
                         all_episode_success.append(info["task_success"].copy())
+                    if "biome" in info:
+                        all_episode_biomes.append(np.asarray(info["biome"]).copy())
 
                 obs = next_obs
                 global_step += num_envs
@@ -540,26 +611,16 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
                 new_opt_state = tuple(_maybe_set_lr(s) for s in train_state.opt_state)
                 train_state = train_state.replace(opt_state=new_opt_state)
 
-            # -- PPO epochs --
-            minibatch_size = flat_size // num_minibatches
+            # -- PPO epochs (fused: ppo_epochs * num_minibatches grad steps
+            # run inside a single jitted scan — eliminates Python loop and
+            # per-step device->host syncs).
+            rng, upd_rng = jax.random.split(rng)
+            train_state, sum_metrics = _run_all_updates(train_state, flat_data, upd_rng)
 
-            for _epoch in range(ppo_epochs):
-                rng, perm_rng = jax.random.split(rng)
-                perm = jax.random.permutation(perm_rng, flat_size)
-
-                for mb_start in range(0, flat_size, minibatch_size):
-                    mb_idx = perm[mb_start:mb_start + minibatch_size]
-                    mb = {k: v[mb_idx] for k, v in flat_data.items()}
-
-                    if normalize_advantages:
-                        adv = mb["advantage"]
-                        mb["advantage"] = (adv - adv.mean()) / (adv.std() + 1e-8)
-
-                    train_state, step_metrics = _ppo_update_step(train_state, mb, rng)
-
-                    for k in agg_metrics:
-                        agg_metrics[k] += float(step_metrics[k])
-                    train_steps += 1
+            # One blocking read per segment (was 32 per segment before).
+            for k in agg_metrics:
+                agg_metrics[k] += float(sum_metrics[k])
+            train_steps += ppo_epochs * num_minibatches
 
             n_updates += 1
 
@@ -598,6 +659,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             episode_info["returned_episode_lengths"] = np.concatenate(all_episode_lengths, axis=0)
         if all_episode_success:
             episode_info["task_success"] = np.concatenate(all_episode_success, axis=0)
+        if all_episode_biomes:
+            episode_info["biome"] = np.concatenate(all_episode_biomes, axis=0)
         metrics["episode_info"] = episode_info
 
         new_state = AgentState(
@@ -642,6 +705,7 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
         all_episode_lengths = []
         all_episode_flags = []
         all_episode_success = []
+        all_episode_biomes = []
         frames = 0
 
         while frames < num_eval_frames:
@@ -668,6 +732,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
                     all_episode_lengths.append(info["returned_episode_lengths"].copy())
                 if "task_success" in info:
                     all_episode_success.append(info["task_success"].copy())
+                if "biome" in info:
+                    all_episode_biomes.append(np.asarray(info["biome"]).copy())
 
             obs = next_obs
             frames += n_eval_envs
@@ -684,6 +750,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             episode_info["returned_episode_lengths"] = np.concatenate(all_episode_lengths, axis=0)
         if all_episode_success:
             episode_info["task_success"] = np.concatenate(all_episode_success, axis=0)
+        if all_episode_biomes:
+            episode_info["biome"] = np.concatenate(all_episode_biomes, axis=0)
 
         return {"episode_info": episode_info}
 

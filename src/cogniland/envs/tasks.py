@@ -120,30 +120,45 @@ def compute_task_reward(
             if mask.any():
                 rewards[mask] += craft_bonus
 
-    # Curriculum: annealed forage bonus. Dense shaping to teach the
-    #   forage -> survive -> reach chain. Fires only when HP increased
-    #   this step (i.e. a berry was successfully foraged), weighted by a
-    #   "missing HP" factor that is 0 at high HP and grows non-linearly at
-    #   low HP. Anneals linearly to 0 so the final policy is trained
-    #   against the unshaped reward.
-    if hp_before is not None and hp_after is not None and curriculum_frac < 1.0:
+    # Curriculum bonuses. All curriculum shaping anneals to 0 as
+    # ``curriculum_frac`` → 1 so the final policy is trained against the
+    # unshaped task reward.
+    if curriculum_frac < 1.0:
         cur_cfg = _get_cfg_section(config, "curriculum")
         if cur_cfg is not None:
-            fb = _get_cfg_section(cur_cfg, "forage_bonus")
-            if fb is not None:
-                initial_coef = float(_cfg_get(fb, "initial_coef", 0.0))
-                coef = initial_coef * max(0.0, 1.0 - float(curriculum_frac))
+            anneal_complement = max(0.0, 1.0 - float(curriculum_frac))
+
+            # Forage bonus: fires when HP increased this step (a berry was
+            # successfully foraged), weighted by a "missing HP" factor that is 0
+            # at high HP and grows non-linearly at low HP.
+            if hp_before is not None and hp_after is not None:
+                fb = _get_cfg_section(cur_cfg, "forage_bonus")
+                if fb is not None:
+                    initial_coef = float(_cfg_get(fb, "initial_coef", 0.0))
+                    coef = initial_coef * anneal_complement
+                    if coef > 0.0:
+                        hp_thresh = float(_cfg_get(fb, "hp_thresh", 90.0))
+                        exp = float(_cfg_get(fb, "missing_hp_exp", 2.0))
+                        dhp = np.maximum(
+                            0.0,
+                            hp_after.astype(np.float32) - hp_before.astype(np.float32),
+                        )
+                        missing = np.maximum(0.0, hp_thresh - hp_before.astype(np.float32))
+                        missing /= max(hp_thresh, 1e-6)
+                        weight = missing ** exp
+                        rewards += (coef * dhp * weight).astype(np.float32)
+
+            # Berry-step bonus: flat reward every time a movement action (0-3)
+            # lands on a berry tile. Decomposes the forage chain — rewards the
+            # agent for *visiting* berries before it learns to *harvest* them.
+            bs = _get_cfg_section(cur_cfg, "berry_step_bonus")
+            if bs is not None:
+                initial_coef = float(_cfg_get(bs, "initial_coef", 0.0))
+                coef = initial_coef * anneal_complement
                 if coef > 0.0:
-                    hp_thresh = float(_cfg_get(fb, "hp_thresh", 90.0))
-                    exp = float(_cfg_get(fb, "missing_hp_exp", 2.0))
-                    dhp = np.maximum(
-                        0.0,
-                        hp_after.astype(np.float32) - hp_before.astype(np.float32),
-                    )
-                    missing = np.maximum(0.0, hp_thresh - hp_before.astype(np.float32))
-                    missing /= max(hp_thresh, 1e-6)
-                    weight = missing ** exp
-                    rewards += (coef * dhp * weight).astype(np.float32)
+                    stepped = info.get("stepped_on_berry")
+                    if stepped is not None:
+                        rewards += (coef * np.asarray(stepped, dtype=np.float32))
 
     return rewards
 

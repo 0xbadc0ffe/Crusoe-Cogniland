@@ -1,7 +1,7 @@
 """Metrics tracking for training and evaluation."""
 
 import time
-from collections import deque
+from collections import defaultdict, deque
 from enum import Enum
 
 import numpy as np
@@ -77,3 +77,12 @@ class MetricsTracker:
             t: deque(maxlen=self.window_size) for t in range(self.num_tasks)
         }
         self.per_task_total_episodes = {t: 0 for t in range(self.num_tasks)}
+
+        # Per-biome rolling histories. Biome strings are discovered at
+        # runtime from the env's ``info['biome']``, so we use defaultdicts
+        # seeded with empty deques sized to ``window_size``.
+        _w = self.window_size
+        self.per_biome_reward_history = defaultdict(lambda: deque(maxlen=_w))
+        self.per_biome_success_history = defaultdict(lambda: deque(maxlen=_w))
+        self.per_biome_length_history = defaultdict(lambda: deque(maxlen=_w))
+        self.per_biome_total_episodes = defaultdict(int)

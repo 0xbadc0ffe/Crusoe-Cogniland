@@ -19,6 +19,8 @@ from typing import Any
 
 import numpy as np
 import torch
+import jax
+import jax.numpy as jnp
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import dijkstra as scipy_dijkstra
 
@@ -257,6 +259,81 @@ def _compute_minimap_batch(
             result[env_idx, 4, ty[env_idx], tx[env_idx]] = val
 
     return result
+
+
+@jax.jit
+def _compute_minimap_jax(
+    rgb_jax: jnp.ndarray,
+    vis_lut_packed_jax: jnp.ndarray,
+    disk_stack_jax: jnp.ndarray,
+    vis_per_terrain_jax: jnp.ndarray,
+    terrain_idx_jax: jnp.ndarray,
+    map_idx: jnp.ndarray,
+    pos_r: jnp.ndarray,
+    pos_c: jnp.ndarray,
+    yes_r: jnp.ndarray,
+    yes_c: jnp.ndarray,
+    no_r: jnp.ndarray,
+    no_c: jnp.ndarray,
+) -> jnp.ndarray:
+    """GPU port of ``_compute_minimap_batch`` (occlusion LUT path only).
+
+    All map arrays are expected to live on-device; per-env index arrays
+    (positions / map indices / target coords) are transferred per call.
+    Returns a [B, 5, 45, 45] float32 jnp array that stays on device.
+    """
+    B = pos_r.shape[0]
+    R = MINIMAP_RADIUS
+    D = MINIMAP_DIAMETER
+    H = rgb_jax.shape[1]
+    W = rgb_jax.shape[2]
+
+    pos_r_c = jnp.clip(pos_r, 0, H - 1)
+    pos_c_c = jnp.clip(pos_c, 0, W - 1)
+    t_idx = terrain_idx_jax[map_idx, pos_r_c, pos_c_c]
+    t_idx = jnp.clip(t_idx, 0, vis_per_terrain_jax.shape[0] - 1).astype(jnp.int32)
+    vis_r_b = vis_per_terrain_jax[t_idx]
+
+    # --- Visibility mask via bit-packed LUT (fast path only) ---
+    packed = vis_lut_packed_jax[map_idx, pos_r_c, pos_c_c]          # [B, 254] uint8
+    full = jnp.unpackbits(packed, axis=1, bitorder="little")        # [B, 2032] uint8
+    full = full[:, : D * D].reshape(B, D, D).astype(jnp.bool_)
+    vis_masks = full & disk_stack_jax[vis_r_b]                      # [B, D, D]
+
+    # --- RGB patch extraction ---
+    di = jnp.arange(-R, R + 1, dtype=pos_r.dtype)
+    rows = pos_r[:, None, None] + di[None, :, None]                 # [B, D, 1]
+    cols = pos_c[:, None, None] + di[None, None, :]                 # [B, 1, D]
+    rows_b = jnp.broadcast_to(rows, (B, D, D))
+    cols_b = jnp.broadcast_to(cols, (B, D, D))
+    in_bounds = (rows_b >= 0) & (rows_b < H) & (cols_b >= 0) & (cols_b < W)
+    rows_c = jnp.clip(rows_b, 0, H - 1)
+    cols_c = jnp.clip(cols_b, 0, W - 1)
+    mi_b = jnp.broadcast_to(map_idx[:, None, None], (B, D, D))
+    patches = rgb_jax[mi_b, rows_c, cols_c]                         # [B, D, D, 3]
+    valid = vis_masks & in_bounds
+    patches = jnp.where(valid[..., None], patches, jnp.zeros_like(patches))
+
+    # --- Assemble [B, 5, D, D] ---
+    rgb_chw = patches.transpose(0, 3, 1, 2).astype(jnp.float32) / 255.0
+    vis_chan = vis_masks.astype(jnp.float32)[:, None]
+
+    # --- Target indicator (NO=0.5, YES=1.0; YES wins on overlap) ---
+    b_idx = jnp.arange(B)
+    target = jnp.zeros((B, D, D), dtype=jnp.float32)
+    for tr, tc, val in ((no_r, no_c, 0.5), (yes_r, yes_c, 1.0)):
+        ty = tr - pos_r + R
+        tx = tc - pos_c + R
+        ty_c = jnp.clip(ty, 0, D - 1)
+        tx_c = jnp.clip(tx, 0, D - 1)
+        in_patch = (ty >= 0) & (ty < D) & (tx >= 0) & (tx < D)
+        visible = in_patch & vis_masks[b_idx, ty_c, tx_c]
+        prev = target[b_idx, ty_c, tx_c]
+        new_vals = jnp.where(visible, jnp.asarray(val, dtype=jnp.float32), prev)
+        target = target.at[b_idx, ty_c, tx_c].set(new_vals)
+    target_chan = target[:, None]
+
+    return jnp.concatenate([rgb_chw, vis_chan, target_chan], axis=1)
 
 
 def _compute_occlusion_mask(
@@ -510,6 +587,9 @@ class CognilandEnv:
         # Which tool (1=raft, 2=rope, 3=shoes) was newly crafted on the current
         # step, 0 otherwise. Consumed by tasks.py for craft-bonus dispatch.
         self.crafted_this_step: np.ndarray | None = None
+        # Per-step flag: True if a movement action (0-3) landed on a berry tile
+        # this step. Consumed by tasks.py for the berry-step curriculum bonus.
+        self.stepped_on_berry: np.ndarray | None = None
         self.done: np.ndarray | None = None
 
         # Per-episode cost-to-go map (Dijkstra from target), one per env
@@ -526,8 +606,52 @@ class CognilandEnv:
             dtype=np.float32,
         )
 
+        # Full drain LUT: [terrain, tool_id, shoes_active] -> float32 drain.
+        # Used by the vectorised step() to replace per-env drain_for() calls.
+        # Priority follows drain_for(): raft > rope > shoes > default. The last
+        # axis is 1 only when tool==shoes AND terrain==grassland AND the
+        # post-step consec_grass counter is >= shoes_k.
+        fx = self._effects
+        lut = np.zeros((len(TERRAIN_NAMES), 4, 2), dtype=np.float32)
+        for ti, name in enumerate(TERRAIN_NAMES):
+            base = float(fx.hp_drain.get(name, 1))
+            for tool_id in range(4):
+                for shoes_active in (0, 1):
+                    if tool_id == 1 and name in fx.raft_drain:
+                        d = float(fx.raft_drain[name])
+                    elif tool_id == 2 and name in fx.rope_drain:
+                        d = float(fx.rope_drain[name])
+                    elif (tool_id == 3 and name == "grassland"
+                          and shoes_active == 1):
+                        d = float(fx.shoes_drain_grassland)
+                    else:
+                        d = base
+                    lut[ti, tool_id, shoes_active] = d
+        self._drain_lut = lut
+        self._grass_idx = TERRAIN_NAMES.index("grassland")
+        self._forest_idx = TERRAIN_NAMES.index("forest")
+
         # Cache of per-map HP-drain graphs (built lazily on first use)
         self._graph_cache: dict[int, csr_matrix] = {}
+
+        # GPU-resident copies of the map arrays used by the jitted minimap
+        # kernel. Uploaded once here so every call reuses them (closure over
+        # these device arrays inside the jit cache). Total GPU bytes for 256
+        # train maps is ~1.1 GB, dominated by ``vis_lut_packed``.
+        # The non-occlusion fallback is kept on CPU — only the LUT fast path
+        # runs on GPU. Tests that set ``occlude=False`` keep the numpy path.
+        if self._occlude:
+            self._rgb_jax = jnp.asarray(self._rgb)
+            self._vis_lut_packed_jax = jnp.asarray(self._vis_lut_packed)
+            self._disk_stack_jax = jnp.asarray(self._disk_stack)
+            self._vis_per_terrain_jax = jnp.asarray(self._vis_per_terrain)
+            self._terrain_idx_jax = jnp.asarray(self._terrain_idx)
+        else:
+            self._rgb_jax = None
+            self._vis_lut_packed_jax = None
+            self._disk_stack_jax = None
+            self._vis_per_terrain_jax = None
+            self._terrain_idx_jax = None
 
     @property
     def num_envs(self) -> int:
@@ -623,6 +747,7 @@ class CognilandEnv:
         self.steps = np.zeros(B, dtype=np.int32)
         self.done = np.zeros(B, dtype=bool)
         self.crafted_this_step = np.zeros(B, dtype=np.int32)
+        self.stepped_on_berry = np.zeros(B, dtype=bool)
 
         # Precompute Dijkstra cost-to-go maps per env (one per episode),
         # measured from the midpoint between YES and NO targets.
@@ -670,6 +795,7 @@ class CognilandEnv:
         self.steps[indices] = 0
         self.done[indices] = False
         self.crafted_this_step[indices] = 0
+        self.stepped_on_berry[indices] = False
 
         # Recompute cost-to-go (from midpoint) for envs that just reset.
         for j, b in enumerate(indices):
@@ -703,6 +829,8 @@ class CognilandEnv:
 
         # Reset per-step craft flag (set below when a craft action succeeds).
         self.crafted_this_step.fill(0)
+        # Reset per-step berry-arrival flag (set below when movement lands on berry).
+        self.stepped_on_berry.fill(False)
 
         # Track which envs just finished (for episode return reporting)
         returned_episode = np.zeros(B, dtype=bool)
@@ -716,154 +844,163 @@ class CognilandEnv:
         is_forage = actions == 4
         is_craft = actions >= 5
 
+        H = self._map_size
+        W = self._map_size
+        fx = self._effects
+        hp_max = float(fx.hp_max)
+        wood_max = int(fx.wood_max)
+        berry_heal = float(fx.berry_heal)
+        forest_wood = int(fx.forest_wood)
+        craft_cost = int(fx.craft_cost)
+        shoes_k = int(fx.shoes_k)
+        grass_idx = self._grass_idx
+        forest_idx = self._forest_idx
+        drain_lut = self._drain_lut
+
         # --- Movement actions (0-3) ---
         move_mask = is_move & ~self.done
         if move_mask.any():
-            deltas = MOVE_DELTAS[actions[move_mask]]  # [M, 2]
             idx = np.where(move_mask)[0]
+            deltas = MOVE_DELTAS[actions[idx]]
+            cur_r = self.pos_r[idx]
+            cur_c = self.pos_c[idx]
+            new_r = cur_r + deltas[:, 0]
+            new_c = cur_c + deltas[:, 1]
 
-            new_r = self.pos_r[idx] + deltas[:, 0]
-            new_c = self.pos_c[idx] + deltas[:, 1]
+            in_bounds = (new_r >= 0) & (new_r < H) & (new_c >= 0) & (new_c < W)
+            new_r_safe = np.where(in_bounds, new_r, cur_r)
+            new_c_safe = np.where(in_bounds, new_c, cur_c)
 
-            # Bounds check
-            in_bounds = (
-                (new_r >= 0) & (new_r < self._map_size) &
-                (new_c >= 0) & (new_c < self._map_size)
-            )
+            mi = self.map_idx[idx]
+            t_idx = self._terrain_idx[mi, new_r_safe, new_c_safe]
+            deadly = in_bounds & (t_idx < 0)
+            valid_move = in_bounds & ~deadly                        # entered walkable cell
+            t_idx_safe = np.where(valid_move, t_idx, 0).astype(np.int32)
 
-            # For in-bounds moves, check terrain
-            for j, env_i in enumerate(idx):
-                if not in_bounds[j]:
-                    # Out of bounds: no-op, still costs a step
-                    self.steps[env_i] += 1
-                    continue
+            is_berry = valid_move & self._berry_mask[mi, new_r_safe, new_c_safe]
+            self.stepped_on_berry[idx] = is_berry
+            terrain_is_grass = valid_move & (t_idx_safe == grass_idx) & ~is_berry
 
-                nr, nc = int(new_r[j]), int(new_c[j])
-                mi = self.map_idx[env_i]
-                t_idx = int(self._terrain_idx[mi, nr, nc])
+            prev_consec = self.consec_grass[idx]
+            new_consec = np.where(terrain_is_grass, prev_consec + 1, 0)
+            tool_id = self.tool[idx]
+            shoes_active = (tool_id == 3) & terrain_is_grass & (new_consec >= shoes_k)
+            drain = drain_lut[t_idx_safe, tool_id, shoes_active.astype(np.int32)]
+            drain = np.where(valid_move & ~is_berry, drain, 0.0)
 
-                if t_idx < 0:
-                    # Deadly terrain — instant death
-                    self.pos_r[env_i] = nr
-                    self.pos_c[env_i] = nc
-                    self.hp[env_i] = 0.0
-                    self.steps[env_i] += 1
-                    self.done[env_i] = True
-                    continue
+            # Position: update on any in-bounds attempt (deadly moves also land).
+            final_r = np.where(in_bounds, new_r, cur_r)
+            final_c = np.where(in_bounds, new_c, cur_c)
+            self.pos_r[idx] = final_r
+            self.pos_c[idx] = final_c
 
-                terrain_name = TERRAIN_NAMES[t_idx]
-                new_consec = (
-                    int(self.consec_grass[env_i]) + 1
-                    if terrain_name == "grassland"
-                    else 0
-                )
-                tools = self._tool_set(int(self.tool[env_i]))
-                # Berry tiles are a free step (0 drain) — overrides terrain drain.
-                if self._berry_mask[mi, nr, nc]:
-                    drain = 0.0
-                else:
-                    drain = drain_for(terrain_name, tools, new_consec, self._effects)
+            # HP: apply drain on valid_move; deadly clears to 0; oob leaves unchanged.
+            new_hp = self.hp[idx] - drain
+            new_hp = np.where(deadly, 0.0, new_hp)
+            new_hp = np.where(new_hp < 0, 0.0, new_hp)
+            self.hp[idx] = new_hp
 
-                self.hp[env_i] -= drain
-                self.pos_r[env_i] = nr
-                self.pos_c[env_i] = nc
-                self.consec_grass[env_i] = new_consec
-                self.steps[env_i] += 1
+            # Consecutive-grass counter only updates on valid moves (old code
+            # left it unchanged on both oob and deadly attempts).
+            self.consec_grass[idx] = np.where(valid_move, new_consec, prev_consec)
 
-                if self.hp[env_i] <= 0:
-                    self.hp[env_i] = 0.0
-                    self.done[env_i] = True
-                elif (
-                    (self.pos_r[env_i] == self.yes_r[env_i] and
-                     self.pos_c[env_i] == self.yes_c[env_i])
-                    or
-                    (self.pos_r[env_i] == self.no_r[env_i] and
-                     self.pos_c[env_i] == self.no_c[env_i])
-                ):
-                    self.done[env_i] = True
+            # Done: deadly tile, hp<=0 after a valid drain, or reached YES/NO.
+            hp_dead = valid_move & (new_hp <= 0)
+            reached_yes = valid_move & (final_r == self.yes_r[idx]) & (final_c == self.yes_c[idx])
+            reached_no  = valid_move & (final_r == self.no_r[idx])  & (final_c == self.no_c[idx])
+            new_done = deadly | hp_dead | reached_yes | reached_no
+            self.done[idx] = self.done[idx] | new_done
+
+            self.steps[idx] += 1
 
         # --- Forage action (4) ---
         forage_mask = is_forage & ~self.done
         if forage_mask.any():
-            for env_i in np.where(forage_mask)[0]:
-                r, c = int(self.pos_r[env_i]), int(self.pos_c[env_i])
-                mi = self.map_idx[env_i]
-                t_idx = int(self._terrain_idx[mi, r, c])
-                if t_idx < 0:
-                    self.steps[env_i] += 1
-                    continue
+            idx = np.where(forage_mask)[0]
+            cur_r = self.pos_r[idx]
+            cur_c = self.pos_c[idx]
+            mi = self.map_idx[idx]
+            t_idx = self._terrain_idx[mi, cur_r, cur_c]
+            deadly = t_idx < 0
+            valid = ~deadly
+            t_idx_safe = np.where(valid, t_idx, 0).astype(np.int32)
 
-                terrain_name = TERRAIN_NAMES[t_idx]
-                is_berry = bool(self._berry_mask[mi, r, c])
+            is_berry = valid & self._berry_mask[mi, cur_r, cur_c]
+            is_forest = valid & ~is_berry & (t_idx_safe == forest_idx)
+            terrain_is_grass = valid & ~is_berry & (t_idx_safe == grass_idx)
 
-                if is_berry:
-                    self.hp[env_i] = min(
-                        float(self._effects.hp_max),
-                        float(self.hp[env_i]) + self._effects.berry_heal,
-                    )
-                    self.consec_grass[env_i] = 0
-                    self.steps[env_i] += 1
-                    continue
+            # Berry: heal & reset consec_grass; no drain.
+            heal = np.where(is_berry, berry_heal, 0.0)
+            # Non-berry non-deadly: maybe add wood (forest), then apply drain.
+            prev_consec = self.consec_grass[idx]
+            new_consec = np.where(terrain_is_grass, prev_consec + 1, 0)
+            tool_id = self.tool[idx]
+            shoes_active = (tool_id == 3) & terrain_is_grass & (new_consec >= shoes_k)
+            drain = drain_lut[t_idx_safe, tool_id, shoes_active.astype(np.int32)]
+            drain = np.where(valid & ~is_berry, drain, 0.0)
 
-                if terrain_name == "forest":
-                    self.wood[env_i] = min(
-                        int(self.wood[env_i]) + self._effects.forest_wood,
-                        self._effects.wood_max,
-                    )
+            new_hp = self.hp[idx] + heal - drain
+            new_hp = np.minimum(new_hp, hp_max)
+            new_hp = np.where(new_hp < 0, 0.0, new_hp)
+            self.hp[idx] = new_hp
 
-                new_consec = (
-                    int(self.consec_grass[env_i]) + 1
-                    if terrain_name == "grassland"
-                    else 0
-                )
-                tools = self._tool_set(int(self.tool[env_i]))
-                drain = drain_for(terrain_name, tools, new_consec, self._effects)
-                self.hp[env_i] -= drain
-                self.consec_grass[env_i] = new_consec
-                self.steps[env_i] += 1
+            add_wood = np.where(is_forest, forest_wood, 0).astype(np.int32)
+            new_wood = np.minimum(self.wood[idx] + add_wood, wood_max)
+            self.wood[idx] = new_wood
 
-                if self.hp[env_i] <= 0:
-                    self.hp[env_i] = 0.0
-                    self.done[env_i] = True
+            # consec_grass: 0 on berry; unchanged on deadly; new_consec otherwise.
+            self.consec_grass[idx] = np.where(
+                is_berry, 0,
+                np.where(deadly, prev_consec, new_consec),
+            )
+
+            # Done only if drain killed us (berry can't kill; deadly forage = no-op).
+            hp_dead = valid & ~is_berry & (new_hp <= 0)
+            self.done[idx] = self.done[idx] | hp_dead
+            self.steps[idx] += 1
 
         # --- Craft actions (5-7) ---
         craft_mask = is_craft & ~self.done
         if craft_mask.any():
-            for env_i in np.where(craft_mask)[0]:
-                action = int(actions[env_i])
-                tool_name = CRAFT_TOOLS[action]
-                tool_id = {"raft": 1, "rope": 2, "shoes": 3}[tool_name]
+            idx = np.where(craft_mask)[0]
+            # Action 5,6,7 -> tool_id 1,2,3
+            new_tool_id = (actions[idx] - 4).astype(np.int32)
+            can_craft = (self.tool[idx] == 0) & (self.wood[idx] >= craft_cost)
+            self.wood[idx] = np.where(can_craft, self.wood[idx] - craft_cost, self.wood[idx])
+            updated_tool = np.where(can_craft, new_tool_id, self.tool[idx])
+            self.tool[idx] = updated_tool
+            self.crafted_this_step[idx] = np.where(can_craft, new_tool_id, 0).astype(np.int32)
 
-                if (self.tool[env_i] == 0 and
-                        self.wood[env_i] >= self._effects.craft_cost):
-                    self.wood[env_i] -= self._effects.craft_cost
-                    self.tool[env_i] = tool_id
-                    self.crafted_this_step[env_i] = tool_id
+            # Apply a standing-tile drain using the (possibly newly updated) tool.
+            cur_r = self.pos_r[idx]
+            cur_c = self.pos_c[idx]
+            mi = self.map_idx[idx]
+            t_idx = self._terrain_idx[mi, cur_r, cur_c]
+            valid = t_idx >= 0
+            t_idx_safe = np.where(valid, t_idx, 0).astype(np.int32)
+            is_berry = valid & self._berry_mask[mi, cur_r, cur_c]
+            terrain_is_grass = valid & ~is_berry & (t_idx_safe == grass_idx)
 
-                r, c = int(self.pos_r[env_i]), int(self.pos_c[env_i])
-                mi = self.map_idx[env_i]
-                t_idx = int(self._terrain_idx[mi, r, c])
-                if t_idx >= 0:
-                    terrain_name = TERRAIN_NAMES[t_idx]
-                    if self._berry_mask[mi, r, c]:
-                        drain = 0.0
-                        new_consec = 0
-                    else:
-                        new_consec = (
-                            int(self.consec_grass[env_i]) + 1
-                            if terrain_name == "grassland"
-                            else 0
-                        )
-                        tools = self._tool_set(int(self.tool[env_i]))
-                        drain = drain_for(terrain_name, tools, new_consec, self._effects)
-                    self.hp[env_i] -= drain
-                    self.consec_grass[env_i] = new_consec
+            prev_consec = self.consec_grass[idx]
+            new_consec = np.where(terrain_is_grass, prev_consec + 1, 0)
+            shoes_active = (updated_tool == 3) & terrain_is_grass & (new_consec >= shoes_k)
+            drain = drain_lut[t_idx_safe, updated_tool, shoes_active.astype(np.int32)]
+            # Old code: if valid -> apply drain (incl. berry which sets drain=0 and new_consec=0).
+            drain = np.where(valid & ~is_berry, drain, 0.0)
+            # On berry the old code also resets consec_grass to 0 (grass mask below handles that).
 
-                self.steps[env_i] += 1
+            new_hp = self.hp[idx] - drain
+            new_hp = np.where(new_hp < 0, 0.0, new_hp)
+            self.hp[idx] = new_hp
 
-                if self.hp[env_i] <= 0:
-                    self.hp[env_i] = 0.0
-                    self.done[env_i] = True
+            # consec_grass: 0 on berry or non-grass; prev+1 on grass; unchanged on deadly.
+            self.consec_grass[idx] = np.where(
+                valid, np.where(is_berry, 0, new_consec), prev_consec
+            )
+
+            hp_dead = valid & (new_hp <= 0)
+            self.done[idx] = self.done[idx] | hp_dead
+            self.steps[idx] += 1
 
         # --- Check timeout ---
         timeout_mask = (self.steps >= self._max_steps) & ~self.done
@@ -921,6 +1058,9 @@ class CognilandEnv:
             # Tool id crafted on this step (0=none, 1=raft, 2=rope, 3=shoes) —
             # used by tasks 4-6 to fire the craft bonus once per episode.
             "crafted": self.crafted_this_step.copy(),
+            # Whether a movement action (0-3) landed on a berry tile this step —
+            # used by the berry-step curriculum bonus in tasks.py.
+            "stepped_on_berry": self.stepped_on_berry.copy(),
         }
 
         dones = self.done.copy()
@@ -933,21 +1073,43 @@ class CognilandEnv:
 
         return obs, rewards, dones, info
 
-    def _get_obs(self) -> dict[str, np.ndarray]:
-        """Build observation dict for all envs."""
+    def _get_obs(self) -> dict:
+        """Build observation dict for all envs.
+
+        When ``self._occlude`` is True (training default) the minimap is
+        computed on GPU via ``_compute_minimap_jax`` and returned as a jnp
+        array; ``scalars`` stays as a numpy array. When ``occlude=False``
+        (test-only fast path) we use the pure-numpy fallback.
+        """
         B = self._num_envs
 
         # Compute minimap
-        minimap = _compute_minimap_batch(
-            self._rgb, self._heightmap, self._terrain_idx,
-            self.map_idx, self.pos_r, self.pos_c,
-            self.yes_r, self.yes_c,
-            self.no_r, self.no_c,
-            self._vis_per_terrain,
-            vis_lut_packed=self._vis_lut_packed,
-            disk_stack=self._disk_stack,
-            occlude=self._occlude,
-        )
+        if self._occlude:
+            minimap = _compute_minimap_jax(
+                self._rgb_jax,
+                self._vis_lut_packed_jax,
+                self._disk_stack_jax,
+                self._vis_per_terrain_jax,
+                self._terrain_idx_jax,
+                jnp.asarray(self.map_idx),
+                jnp.asarray(self.pos_r),
+                jnp.asarray(self.pos_c),
+                jnp.asarray(self.yes_r),
+                jnp.asarray(self.yes_c),
+                jnp.asarray(self.no_r),
+                jnp.asarray(self.no_c),
+            )
+        else:
+            minimap = _compute_minimap_batch(
+                self._rgb, self._heightmap, self._terrain_idx,
+                self.map_idx, self.pos_r, self.pos_c,
+                self.yes_r, self.yes_c,
+                self.no_r, self.no_c,
+                self._vis_per_terrain,
+                vis_lut_packed=self._vis_lut_packed,
+                disk_stack=self._disk_stack,
+                occlude=self._occlude,
+            )
 
         # Compute scalars
         scalars = np.zeros((B, 6), dtype=np.float32)
@@ -963,14 +1125,12 @@ class CognilandEnv:
         # Current tile class, normalized to [0, 1]. 10 classes:
         #   0..8 = ocean, deep_water, water, beach, sandy, grassland, forest, rocky, mountains
         #   9    = berry (overlay on forest/beach — overrides the base terrain)
-        for i in range(B):
-            mi = self.map_idx[i]
-            r, c = int(self.pos_r[i]), int(self.pos_c[i])
-            if self._berry_mask[mi, r, c]:
-                tile_cls = 9
-            else:
-                tile_cls = max(0, int(self._terrain_idx[mi, r, c]))
-            scalars[i, 2] = tile_cls / 9.0
+        mi_all = self.map_idx
+        t_here = self._terrain_idx[mi_all, self.pos_r, self.pos_c]
+        tile_cls = np.maximum(t_here, 0)
+        berry_here = self._berry_mask[mi_all, self.pos_r, self.pos_c]
+        tile_cls = np.where(berry_here, 9, tile_cls).astype(np.float32)
+        scalars[:, 2] = tile_cls / 9.0
 
         scalars[:, 3] = self.hp / float(self._effects.hp_max)
         scalars[:, 4] = self.wood.astype(np.float32) / float(self._effects.wood_max)

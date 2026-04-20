@@ -217,6 +217,9 @@ class Trainer:
         success_flat = np.asarray(
             jnp.array(episode_info["task_success"]).reshape(-1)
         ).astype(np.int32)
+        biome_flat = episode_info.get("biome")
+        if biome_flat is not None:
+            biome_flat = np.asarray(biome_flat).reshape(-1)
 
         if not bool(done_flat.any()):
             self._log_agent_metrics(metrics, total_trained)
@@ -237,6 +240,7 @@ class Trainer:
         returns_np = returns_flat[done_flat]
         lengths_np = lengths_flat[done_flat]
         successes_np = success_flat[done_flat]
+        biomes_np = biome_flat[done_flat] if biome_flat is not None else None
 
         ma_r = ma_s = ma_l = 0.0
         for i in range(len(returns_np)):
@@ -244,6 +248,7 @@ class Trainer:
             l = int(lengths_np[i])
             s = int(successes_np[i])
             t_id = int(task_of_ep[i])
+            biome = str(biomes_np[i]) if biomes_np is not None else None
 
             self.train_metrics.episode_reward_history.append(r)
             self.train_metrics.episode_length_history.append(l)
@@ -255,6 +260,12 @@ class Trainer:
                 self.train_metrics.per_task_success_history[t_id].append(s)
                 self.train_metrics.per_task_length_history[t_id].append(l)
                 self.train_metrics.per_task_total_episodes[t_id] += 1
+
+            if biome is not None:
+                self.train_metrics.per_biome_reward_history[biome].append(r)
+                self.train_metrics.per_biome_success_history[biome].append(s)
+                self.train_metrics.per_biome_length_history[biome].append(l)
+                self.train_metrics.per_biome_total_episodes[biome] += 1
 
             ma_r = float(np.mean(self.train_metrics.episode_reward_history))
             ma_s = float(np.mean(self.train_metrics.episode_success_history))
@@ -286,6 +297,19 @@ class Trainer:
                 log_dict[f"train/task_{t}/avg_length"] = float(np.mean(hist_l))
                 log_dict[f"train/task_{t}/episodes"] = \
                     self.train_metrics.per_task_total_episodes[t]
+
+            # Per-biome rolling averages. Only emit for biomes with at least
+            # one observed episode so far in the run (keeps panels clean).
+            for biome_name, hist_s in self.train_metrics.per_biome_success_history.items():
+                if len(hist_s) == 0:
+                    continue
+                hist_r = self.train_metrics.per_biome_reward_history[biome_name]
+                hist_l = self.train_metrics.per_biome_length_history[biome_name]
+                log_dict[f"train/biome_{biome_name}/avg_success_rate"] = float(np.mean(hist_s))
+                log_dict[f"train/biome_{biome_name}/avg_reward"] = float(np.mean(hist_r))
+                log_dict[f"train/biome_{biome_name}/avg_length"] = float(np.mean(hist_l))
+                log_dict[f"train/biome_{biome_name}/episodes"] = \
+                    self.train_metrics.per_biome_total_episodes[biome_name]
 
             self.run_logger.wandb_run.log(log_dict)
 
