@@ -1,0 +1,80 @@
+experiment_name: default
+results_path: results
+offline: false
+entity: crusoe
+project: crusoe_in_cogniland
+seed: 42
+env_id: cogniland-v0
+num_tasks: 1
+task_embedding_dim: 7
+task_sampling: round_robin
+env:
+  num_parallel_envs: 256
+  num_parallel_envs_eval: 8
+  max_steps: 1000
+  train_maps: data/maps/train.pt
+  val_maps: data/maps/val.pt
+  test_maps: data/maps/test.pt
+  occlude: true
+  init_hp: 100
+  hp_max: 100
+  wood_max: 100
+  craft_cost: 100
+  terrain_vis_radius:
+    ocean: 16
+    deep_water: 12
+    water: 10
+    beach: 7
+    sandy: 7
+    grassland: 7
+    forest: 5
+    rocky: 10
+    mountains: 22
+  min_spawn_target_manhattan: 0
+reward:
+  reach_bonus: 10
+  step_penalty: 0.02
+  shaping_coef: 0.1
+trainer:
+  num_train_frames: 50000000
+  num_eval_frames: 10000
+  eval_interval_frames: 500000
+metrics_tracker:
+  moving_avg_window_size: 50
+agent:
+  name: ppo_rnn
+  type: ppo_rnn
+  lr: 0.00025
+  anneal_lr: true
+  num_steps: 64
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_eps: 0.1
+  entropy_coef: 0.01
+  value_coef: 0.5
+  clip_grad: 0.5
+  normalize_advantages: true
+  ppo_epochs: 4
+  num_minibatches: 4
+  hidden_size: 256
+  head_num_layers: 1
+  activation: relu
+  use_rnn: true
+  lstm_size: 256
+  checkpoint:
+    enabled: true
+    save_best: true
+    save_last: true
+    save_only_best: true
+    upload_to_wandb: false
+    checkpoint_dir: checkpoints
+name: cogniland_ppo_rnn
+pid: 406369
+raw_obs_space:
+  minimap:
+  - 5
+  - 45
+  - 45
+  scalars:
+  - 6
+results_dir: results/nm6cm9bj
