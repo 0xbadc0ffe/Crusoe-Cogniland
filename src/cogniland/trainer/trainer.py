@@ -74,16 +74,23 @@ class Trainer:
         self.agent_state = self.agent.init(self.rng_manager.get_key())
 
         # Metrics: one train tracker (aggregate), N eval trackers (per-task)
-        self.train_metrics = MetricsTracker(config, config.env.num_parallel_envs, "train")
+        self.train_metrics = MetricsTracker(
+            config, config.env.num_parallel_envs, "train", num_tasks=self.num_tasks,
+        )
         self.train_metrics.initialize()
         self.run_logger.register_metrics(self.train_metrics)
 
         num_eval_envs = config.env.get("num_parallel_envs_eval", config.env.num_parallel_envs)
         self.eval_trackers = {}
         for task_id in range(self.num_tasks):
-            t = MetricsTracker(config, num_eval_envs, "eval")
+            t = MetricsTracker(config, num_eval_envs, "eval", num_tasks=self.num_tasks)
             self.eval_trackers[task_id] = t
             self.run_logger.register_metrics(t, prefix_override=f"eval/task_{task_id}")
+
+        # Last segment's task assignment per env (set at the start of each
+        # training segment). Used to map finished episodes back to their task
+        # for per-task metric logging.
+        self._train_task_ids: np.ndarray | None = None
 
         self.eval_set = 0
 
@@ -140,6 +147,7 @@ class Trainer:
             task_rng, train_rng = jax.random.split(rng)
             task_ids = self.task_sampler.sample(rng=task_rng)
             self.train_env.set_tasks(task_ids)
+            self._train_task_ids = np.asarray(task_ids, dtype=np.int32)
 
             # Advance the curriculum schedule for this segment.
             frac = self._curriculum_frac(total_trained)
@@ -173,37 +181,73 @@ class Trainer:
     # Training metrics (aggregate across tasks)
     # ------------------------------------------------------------------ #
     def _log_training_metrics(self, metrics: dict, total_trained: int, pbar, fps: float):
-        """Log aggregate training metrics. Task identity is not tracked here."""
+        """Log aggregate + per-task training metrics.
+
+        Per-task identity is recovered from ``self._train_task_ids`` (the task
+        assignment fixed for this segment) by mapping each flat episode index
+        ``i`` back to its env via ``i % num_envs``.
+        """
         episode_info = metrics.get("episode_info")
         if episode_info is None:
             self._log_agent_metrics(metrics, total_trained)
             return
 
-        returns = jnp.array(episode_info["returned_episode_returns"]).reshape(-1)
-        lengths = jnp.array(episode_info["returned_episode_lengths"]).reshape(-1)
-        done = jnp.array(episode_info["returned_episode"]).reshape(-1)
+        returns_flat = np.asarray(
+            jnp.array(episode_info["returned_episode_returns"]).reshape(-1)
+        )
+        lengths_flat = np.asarray(
+            jnp.array(episode_info["returned_episode_lengths"]).reshape(-1)
+        )
+        done_flat = np.asarray(
+            jnp.array(episode_info["returned_episode"]).reshape(-1)
+        ).astype(bool)
+        success_flat = np.asarray(
+            jnp.array(episode_info["task_success"]).reshape(-1)
+        ).astype(np.int32)
 
-        if not bool(done.any()):
+        if not bool(done_flat.any()):
             self._log_agent_metrics(metrics, total_trained)
             return
 
-        returns_np = np.array(returns[done])
-        lengths_np = np.array(lengths[done])
-        task_success = jnp.array(episode_info["task_success"]).reshape(-1)
-        successes_np = np.array(task_success[done]).astype(np.int32)
+        # Map each finished episode to its env, then to its task. Agent
+        # rollouts concatenate per-step [B] arrays, so flat index i -> env idx
+        # (i % num_envs). Task assignment is fixed for the whole segment via
+        # ``set_tasks(task_ids)``.
+        num_envs = self.train_env.num_envs
+        done_indices = np.where(done_flat)[0]
+        env_idx = done_indices % num_envs
+        if self._train_task_ids is not None and len(self._train_task_ids) == num_envs:
+            task_of_ep = self._train_task_ids[env_idx]
+        else:
+            task_of_ep = np.zeros(len(done_indices), dtype=np.int32)
 
+        returns_np = returns_flat[done_flat]
+        lengths_np = lengths_flat[done_flat]
+        successes_np = success_flat[done_flat]
+
+        ma_r = ma_s = ma_l = 0.0
         for i in range(len(returns_np)):
-            r, l, s = float(returns_np[i]), int(lengths_np[i]), int(successes_np[i])
+            r = float(returns_np[i])
+            l = int(lengths_np[i])
+            s = int(successes_np[i])
+            t_id = int(task_of_ep[i])
+
             self.train_metrics.episode_reward_history.append(r)
             self.train_metrics.episode_length_history.append(l)
             self.train_metrics.episode_success_history.append(s)
             self.train_metrics.env_total_episodes += 1
 
+            if t_id in self.train_metrics.per_task_reward_history:
+                self.train_metrics.per_task_reward_history[t_id].append(r)
+                self.train_metrics.per_task_success_history[t_id].append(s)
+                self.train_metrics.per_task_length_history[t_id].append(l)
+                self.train_metrics.per_task_total_episodes[t_id] += 1
+
             ma_r = float(np.mean(self.train_metrics.episode_reward_history))
             ma_s = float(np.mean(self.train_metrics.episode_success_history))
             ma_l = float(np.mean(self.train_metrics.episode_length_history))
 
-            self.run_logger.wandb_run.log({
+            log_dict = {
                 "train/reward": r,
                 "train/success": s,
                 "train/length": l,
@@ -215,7 +259,22 @@ class Trainer:
                 "train/episode": self.train_metrics.env_total_episodes,
                 "train_steps":   total_trained,
                 "train_episode": self.train_metrics.env_total_episodes,
-            })
+            }
+            # Per-task rolling averages. Only emit for tasks with at least
+            # one observed episode to avoid flatlining at 0 pre-data.
+            for t in range(self.num_tasks):
+                hist_s = self.train_metrics.per_task_success_history[t]
+                hist_r = self.train_metrics.per_task_reward_history[t]
+                hist_l = self.train_metrics.per_task_length_history[t]
+                if len(hist_s) == 0:
+                    continue
+                log_dict[f"train/task_{t}/avg_success_rate"] = float(np.mean(hist_s))
+                log_dict[f"train/task_{t}/avg_reward"] = float(np.mean(hist_r))
+                log_dict[f"train/task_{t}/avg_length"] = float(np.mean(hist_l))
+                log_dict[f"train/task_{t}/episodes"] = \
+                    self.train_metrics.per_task_total_episodes[t]
+
+            self.run_logger.wandb_run.log(log_dict)
 
         pbar.set_postfix(ep=self.train_metrics.env_total_episodes,
                          ma_r=f"{ma_r:.2f}", fps=f"{fps:.0f}")

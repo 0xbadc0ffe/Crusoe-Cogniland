@@ -14,10 +14,17 @@ class Mode(Enum):
 
 
 class MetricsTracker:
-    def __init__(self, config: OmegaConf, num_parallel_envs: int, mode: str):
+    def __init__(
+        self,
+        config: OmegaConf,
+        num_parallel_envs: int,
+        mode: str,
+        num_tasks: int = 1,
+    ):
         self.config = config
         self.mode = Mode(mode)
         self.num_parallel_envs = num_parallel_envs
+        self.num_tasks = int(num_tasks)
         self.window_size = config.metrics_tracker.moving_avg_window_size
 
         self.metrics_base = ["frame", "episode", "fps", "reward", "success", "length"]
@@ -56,3 +63,17 @@ class MetricsTracker:
         self.episode_length_history = deque(
             [0] * self.window_size, maxlen=self.window_size
         )
+
+        # Per-task rolling histories (empty deques — we don't seed with zeros
+        # because absent data should not skew the mean toward 0 before any
+        # episode of that task has finished).
+        self.per_task_reward_history = {
+            t: deque(maxlen=self.window_size) for t in range(self.num_tasks)
+        }
+        self.per_task_success_history = {
+            t: deque(maxlen=self.window_size) for t in range(self.num_tasks)
+        }
+        self.per_task_length_history = {
+            t: deque(maxlen=self.window_size) for t in range(self.num_tasks)
+        }
+        self.per_task_total_episodes = {t: 0 for t in range(self.num_tasks)}
