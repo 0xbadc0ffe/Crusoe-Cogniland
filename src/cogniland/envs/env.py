@@ -797,37 +797,37 @@ class CognilandEnv:
                     continue
 
                 terrain_name = TERRAIN_NAMES[t_idx]
+                is_berry = bool(self._berry_mask[mi, r, c])
 
-                if self._berry_mask[mi, r, c]:
-                    # Berry forage: heal, no drain
+                if is_berry:
                     self.hp[env_i] = min(
                         float(self._effects.hp_max),
                         float(self.hp[env_i]) + self._effects.berry_heal,
                     )
+                    self.consec_grass[env_i] = 0
                     self.steps[env_i] += 1
-                elif terrain_name == "forest":
-                    # Forest forage: +wood, costs drain
+                    continue
+
+                if terrain_name == "forest":
                     self.wood[env_i] = min(
                         int(self.wood[env_i]) + self._effects.forest_wood,
                         self._effects.wood_max,
                     )
-                    new_consec = (
-                        int(self.consec_grass[env_i]) + 1
-                        if terrain_name == "grassland"
-                        else 0
-                    )
-                    tools = self._tool_set(int(self.tool[env_i]))
-                    drain = drain_for(terrain_name, tools, new_consec, self._effects)
-                    self.hp[env_i] -= drain
-                    self.consec_grass[env_i] = new_consec
-                    self.steps[env_i] += 1
 
-                    if self.hp[env_i] <= 0:
-                        self.hp[env_i] = 0.0
-                        self.done[env_i] = True
-                else:
-                    # No-op forage, still costs a step
-                    self.steps[env_i] += 1
+                new_consec = (
+                    int(self.consec_grass[env_i]) + 1
+                    if terrain_name == "grassland"
+                    else 0
+                )
+                tools = self._tool_set(int(self.tool[env_i]))
+                drain = drain_for(terrain_name, tools, new_consec, self._effects)
+                self.hp[env_i] -= drain
+                self.consec_grass[env_i] = new_consec
+                self.steps[env_i] += 1
+
+                if self.hp[env_i] <= 0:
+                    self.hp[env_i] = 0.0
+                    self.done[env_i] = True
 
         # --- Craft actions (5-7) ---
         craft_mask = is_craft & ~self.done
@@ -842,8 +842,31 @@ class CognilandEnv:
                     self.wood[env_i] -= self._effects.craft_cost
                     self.tool[env_i] = tool_id
                     self.crafted_this_step[env_i] = tool_id
-                # Regardless of success, costs a step
+
+                r, c = int(self.pos_r[env_i]), int(self.pos_c[env_i])
+                mi = self.map_idx[env_i]
+                t_idx = int(self._terrain_idx[mi, r, c])
+                if t_idx >= 0:
+                    terrain_name = TERRAIN_NAMES[t_idx]
+                    if self._berry_mask[mi, r, c]:
+                        drain = 0.0
+                        new_consec = 0
+                    else:
+                        new_consec = (
+                            int(self.consec_grass[env_i]) + 1
+                            if terrain_name == "grassland"
+                            else 0
+                        )
+                        tools = self._tool_set(int(self.tool[env_i]))
+                        drain = drain_for(terrain_name, tools, new_consec, self._effects)
+                    self.hp[env_i] -= drain
+                    self.consec_grass[env_i] = new_consec
+
                 self.steps[env_i] += 1
+
+                if self.hp[env_i] <= 0:
+                    self.hp[env_i] = 0.0
+                    self.done[env_i] = True
 
         # --- Check timeout ---
         timeout_mask = (self.steps >= self._max_steps) & ~self.done

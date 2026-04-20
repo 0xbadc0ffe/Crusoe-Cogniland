@@ -23,7 +23,7 @@ program: scripts/train.py
 #
 # 6 runs.
 parameters:
-  reward.death_penalty: {values: [0.0, 2.5, 5.0, 7.5, 10.0, 15.0]}
+  reward.death_penalty: {values: [2.5, 5.0, 7.5, 10.0, 15.0]}
   seed:                 {value: 42}
 
-  trainer.num_train_frames: {value: 10_000_000}
+  trainer.num_train_frames: {value: 100_000_000}
