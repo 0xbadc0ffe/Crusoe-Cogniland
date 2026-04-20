@@ -1,4 +1,7 @@
-"""Adapter for reference agents (DreamerV3, STORM) that expect a specific API.
+"""
+TODO: To use dreamer and storm we need to convert the environment to jax - we won't need this file anymore
+
+Adapter for reference agents (DreamerV3, STORM) that expect a specific API.
 
 Wraps MultiTaskEnvWrapper and presents a state-based interface where step()
 returns a state object compatible with the reference agent training loops.

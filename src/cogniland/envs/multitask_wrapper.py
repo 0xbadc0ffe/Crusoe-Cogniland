@@ -39,17 +39,14 @@ class MultiTaskEnvWrapper:
         self._num_tasks = num_tasks
         self._task_embedding_dim = task_embedding_dim
 
-        # Task embeddings: random orthogonal vectors (fixed at init)
-        rng = np.random.default_rng(12345)
-        raw = rng.standard_normal((num_tasks, task_embedding_dim)).astype(np.float32)
-        # Orthogonalize via QR if possible
-        if num_tasks <= task_embedding_dim:
-            q, _ = np.linalg.qr(raw.T)
-            self._task_embeddings = q.T[:num_tasks]
-        else:
-            # More tasks than dims — just normalize
-            norms = np.linalg.norm(raw, axis=1, keepdims=True)
-            self._task_embeddings = raw / np.maximum(norms, 1e-8)
+        # Task embeddings: fixed one-hot vectors. Task i -> row i of the
+        # identity matrix. Requires ``num_tasks <= task_embedding_dim``.
+        if num_tasks > task_embedding_dim:
+            raise ValueError(
+                f"one-hot task embedding requires task_embedding_dim "
+                f"({task_embedding_dim}) >= num_tasks ({num_tasks})"
+            )
+        self._task_embeddings = np.eye(task_embedding_dim, dtype=np.float32)[:num_tasks]
 
         # Current task assignment
         self.task_ids = np.zeros(env.num_envs, dtype=np.int32)

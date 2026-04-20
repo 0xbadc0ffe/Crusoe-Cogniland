@@ -72,7 +72,7 @@ The agent sees:
   - `3` — visibility mask (1 visible, 0 occluded).
   - `4` — target indicator (1 at the target cell if within the visibility region, 0 elsewhere).
 - **scalars** `[B, 6]` — compass direction to target (unit vector x, y), tile class / 9, hp / 100, wood / 100, tool_id / 3. There are 10 tile classes (9 base terrains + berry), so the tile index is normalized by 9.
-- **task_embedding** `[B, 7]` — fixed orthogonal vector identifying the current task.
+- **task_embedding** `[B, 7]` — fixed one-hot vector identifying the current task (task i -> row i of `np.eye(7)`).
 
 ### Maps
 
