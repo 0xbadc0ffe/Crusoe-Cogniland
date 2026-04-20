@@ -1,4 +1,4 @@
-name: ppo_rnn_death_penalty_grid
+name: ppo_rnn_death_penalty_healing_annealing_grid
 entity: crusoe
 project: crusoe_in_cogniland
 method: grid
@@ -21,9 +21,9 @@ program: scripts/train.py
 # Grid over the sparse death_penalty. All other reward knobs stay at their
 # defaults (reach_bonus=10, step_penalty=0.01, shaping_coef=0.1).
 #
-# 6 runs.
+# number of runs.
+run_cap: 6
 parameters:
-  reward.death_penalty: {values: [2.5, 5.0, 7.5, 10.0, 15.0]}
+  reward.death_penalty: {values: [2.5, 5.0]}
   seed:                 {value: 42}
-
   trainer.num_train_frames: {value: 100_000_000}

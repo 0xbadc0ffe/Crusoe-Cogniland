@@ -228,7 +228,7 @@ Trainer(config, agent).run()
 obs["minimap"]:  float32 [B, 5, 45, 45]   (2*22+1 = 45)
     channels 0-2 — RGB patch of the map, centered on agent (unseen cells = 0)
     channel 3    — visibility mask (1 visible, 0 occluded via heightmap raycasting)
-    channel 4    — target indicator (1 at target cell if visible, 0 elsewhere)
+    channel 4    — target indicator (YES target: 1.0, NO target: 0.5, 0.0 if not visible or out of patch)
 
 obs["scalars"]:  float32 [B, 6]
     compass_x, compass_y    — unit vector toward target

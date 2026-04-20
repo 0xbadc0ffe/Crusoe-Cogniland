@@ -65,6 +65,15 @@ class MultiTaskEnvWrapper:
         # needs this persistent flag. Resets on episode end.
         self._episode_crafted_tool = np.zeros(env.num_envs, dtype=np.int32)
 
+        # Curriculum state (forage bonus). See configs/env/cogniland.yaml
+        # -> curriculum.forage_bonus. ``_prev_hp`` tracks the HP at the start
+        # of each step (post auto-reset for envs that finished last step).
+        self._init_hp = float(getattr(env, "_effects", None).init_hp) \
+            if hasattr(env, "_effects") and env._effects is not None \
+            else 100.0
+        self._prev_hp = np.full(env.num_envs, self._init_hp, dtype=np.float32)
+        self._curriculum_frac = 0.0
+
     @property
     def num_envs(self) -> int:
         return self.env.num_envs
@@ -78,6 +87,14 @@ class MultiTaskEnvWrapper:
     def set_tasks(self, task_ids: np.ndarray) -> None:
         """Set task IDs for all envs."""
         self.task_ids = np.asarray(task_ids, dtype=np.int32)
+
+    def set_curriculum_progress(self, frac: float) -> None:
+        """Advance the curriculum schedule.
+
+        ``frac`` is expected to be ``total_trained_frames / anneal_frames``.
+        Clamped to ``[0, 1]``; at ``frac >= 1`` the auxiliary reward is 0.
+        """
+        self._curriculum_frac = float(np.clip(frac, 0.0, 1.0))
 
     def get_task_embeddings(self, task_ids: np.ndarray) -> np.ndarray:
         """Look up task embeddings.
@@ -99,6 +116,7 @@ class MultiTaskEnvWrapper:
         obs = self.env.reset(seed=seed, map_indices=map_indices)
         self._episode_returns.fill(0.0)
         self._episode_crafted_tool.fill(0)
+        self._prev_hp.fill(self._init_hp)
         # Add task embedding to observations
         obs["task_embedding"] = self.get_task_embeddings(self.task_ids)
         return obs
@@ -111,12 +129,29 @@ class MultiTaskEnvWrapper:
         Returns:
             (obs_dict, rewards, dones, info)
         """
+        # Snapshot HP at the start of this step before the env applies drain.
+        hp_before = self._prev_hp.copy()
+
         obs, base_rewards, dones, info = self.env.step(actions)
+
+        # Post-step, pre-auto-reset HP. Falls back to ``hp_before`` if the env
+        # did not expose ``info['hp']`` (keeps older envs working; dhp will
+        # simply be 0 and the forage bonus won't fire).
+        hp_after = info.get("hp")
+        if hp_after is None:
+            hp_after = hp_before
 
         # Compute task-specific rewards
         rewards = compute_task_reward(
             self.task_ids, base_rewards, dones, info, self._config,
+            curriculum_frac=self._curriculum_frac,
+            hp_before=hp_before, hp_after=hp_after,
         )
+
+        # Advance prev_hp for the next step. Envs that just finished will
+        # auto-reset inside the base env, so their next-step baseline is
+        # ``init_hp`` rather than the pre-reset value (0 on death, etc.).
+        self._prev_hp = np.where(dones, self._init_hp, hp_after).astype(np.float32)
 
         # Track the tool crafted at any point during the episode.
         crafted_this_step = info.get("crafted")

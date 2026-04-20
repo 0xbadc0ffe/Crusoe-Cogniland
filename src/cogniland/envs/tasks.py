@@ -48,6 +48,9 @@ def compute_task_reward(
     dones: np.ndarray,
     info: dict[str, Any],
     config: Any,
+    curriculum_frac: float = 1.0,
+    hp_before: np.ndarray | None = None,
+    hp_after: np.ndarray | None = None,
 ) -> np.ndarray:
     """Compute task-specific rewards for a batch of environments.
 
@@ -58,6 +61,16 @@ def compute_task_reward(
         info: dict from env.step() with 'reached', 'ctg_prev', 'ctg_curr',
             'reached_yes', 'reached_no', 'biome', 'crafted', 'alive'
         config: config object with reward params
+        curriculum_frac: progress through the curriculum anneal, clamped to
+            [0, 1]. ``1.0`` (default) disables the auxiliary forage bonus so
+            callers that don't know about the curriculum get the unshaped
+            reward.
+        hp_before: float array [B] — HP at the start of the step (before the
+            env applied drain / healed via forage). Required for the forage
+            bonus; if ``None``, the bonus is skipped.
+        hp_after: float array [B] — HP at the end of the step (post-step,
+            pre-auto-reset). Required for the forage bonus; if ``None``, the
+            bonus is skipped.
 
     Returns:
         float array [B] — modified rewards
@@ -107,7 +120,52 @@ def compute_task_reward(
             if mask.any():
                 rewards[mask] += craft_bonus
 
+    # Curriculum: annealed forage bonus. Dense shaping to teach the
+    #   forage -> survive -> reach chain. Fires only when HP increased
+    #   this step (i.e. a berry was successfully foraged), weighted by a
+    #   "missing HP" factor that is 0 at high HP and grows non-linearly at
+    #   low HP. Anneals linearly to 0 so the final policy is trained
+    #   against the unshaped reward.
+    if hp_before is not None and hp_after is not None and curriculum_frac < 1.0:
+        cur_cfg = _get_cfg_section(config, "curriculum")
+        if cur_cfg is not None:
+            fb = _get_cfg_section(cur_cfg, "forage_bonus")
+            if fb is not None:
+                initial_coef = float(_cfg_get(fb, "initial_coef", 0.0))
+                coef = initial_coef * max(0.0, 1.0 - float(curriculum_frac))
+                if coef > 0.0:
+                    hp_thresh = float(_cfg_get(fb, "hp_thresh", 90.0))
+                    exp = float(_cfg_get(fb, "missing_hp_exp", 2.0))
+                    dhp = np.maximum(
+                        0.0,
+                        hp_after.astype(np.float32) - hp_before.astype(np.float32),
+                    )
+                    missing = np.maximum(0.0, hp_thresh - hp_before.astype(np.float32))
+                    missing /= max(hp_thresh, 1e-6)
+                    weight = missing ** exp
+                    rewards += (coef * dhp * weight).astype(np.float32)
+
     return rewards
+
+
+def _get_cfg_section(cfg: Any, key: str) -> Any:
+    """Fetch a sub-section from an OmegaConf node or a plain dict-ish config."""
+    if cfg is None:
+        return None
+    if hasattr(cfg, key):
+        return getattr(cfg, key)
+    if hasattr(cfg, "get"):
+        return cfg.get(key, None)
+    return None
+
+
+def _cfg_get(cfg: Any, key: str, default: Any) -> Any:
+    """Best-effort attribute/key lookup with default."""
+    if hasattr(cfg, key):
+        return getattr(cfg, key)
+    if hasattr(cfg, "get"):
+        return cfg.get(key, default)
+    return default
 
 
 def _read_reward_cfg(config: Any) -> tuple[float, float, float, float, float, float]:

@@ -66,6 +66,16 @@ reward:
   correct_answer_bonus: 10.0  # tasks 1-3: bonus for reaching the biome-matching target
   craft_bonus: 10.0           # tasks 4-6: bonus on the step the required tool is crafted
 
+curriculum:
+  # Annealed auxiliary reward to bootstrap the forage -> survive -> reach chain.
+  # Fires only on steps with positive HP delta (i.e. successful berry forage),
+  # weighted by "missing HP" so the bonus is 0 at high HP and large near death.
+  forage_bonus:
+    initial_coef: 0.5         # reward scale per +HP gained via berry forage (t=0)
+    anneal_frames: 20_000_000  # linear anneal to 0 
+    hp_thresh: 90             # no reward for healing while hp >= this
+    missing_hp_exp: 2         # non-linear weighting of missing HP (quadratic)
+
 trainer:
   num_train_frames: 10_000_000
   num_eval_frames: 50_000

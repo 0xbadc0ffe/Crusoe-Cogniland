@@ -47,6 +47,22 @@ class Trainer:
         self.train_env = make_env(config.env_id, config, train=True)
         self.eval_env = make_env(config.env_id, config, train=False)
 
+        # Curriculum (forage bonus). Eval is pinned to frac=1.0 for the whole
+        # run so reported eval/* metrics always reflect the unshaped task
+        # reward, making curves comparable across the anneal.
+        fb = None
+        cur_cfg = config.get("curriculum", None) if hasattr(config, "get") else getattr(config, "curriculum", None)
+        if cur_cfg is not None:
+            fb = cur_cfg.get("forage_bonus", None) if hasattr(cur_cfg, "get") else getattr(cur_cfg, "forage_bonus", None)
+        if fb is not None:
+            self._forage_initial_coef = float(fb.get("initial_coef", 0.0) if hasattr(fb, "get") else getattr(fb, "initial_coef", 0.0))
+            self._forage_anneal_frames = float(fb.get("anneal_frames", 0) if hasattr(fb, "get") else getattr(fb, "anneal_frames", 0))
+        else:
+            self._forage_initial_coef = 0.0
+            self._forage_anneal_frames = 0.0
+        if hasattr(self.eval_env, "set_curriculum_progress"):
+            self.eval_env.set_curriculum_progress(1.0)
+
         # Task sampler
         self.task_sampler = TaskSampler(
             num_tasks=self.num_tasks,
@@ -92,6 +108,19 @@ class Trainer:
             self.checkpoint_callback = None
 
     # ------------------------------------------------------------------ #
+    # Curriculum helpers
+    # ------------------------------------------------------------------ #
+    def _curriculum_frac(self, total_trained: int) -> float:
+        """Linear anneal: 0 at start, 1 at ``anneal_frames``, clamped."""
+        if self._forage_anneal_frames <= 0.0:
+            return 1.0
+        return float(min(1.0, max(0.0, total_trained / self._forage_anneal_frames)))
+
+    def _curriculum_forage_coef(self, total_trained: int) -> float:
+        """Current scalar value of the annealed forage coefficient."""
+        return self._forage_initial_coef * max(0.0, 1.0 - self._curriculum_frac(total_trained))
+
+    # ------------------------------------------------------------------ #
     # Main loop
     # ------------------------------------------------------------------ #
     def run(self):
@@ -111,6 +140,11 @@ class Trainer:
             task_rng, train_rng = jax.random.split(rng)
             task_ids = self.task_sampler.sample(rng=task_rng)
             self.train_env.set_tasks(task_ids)
+
+            # Advance the curriculum schedule for this segment.
+            frac = self._curriculum_frac(total_trained)
+            if hasattr(self.train_env, "set_curriculum_progress"):
+                self.train_env.set_curriculum_progress(frac)
 
             t0 = time.time()
             self.agent_state, metrics = self.agent.train(
@@ -190,9 +224,9 @@ class Trainer:
     def _log_agent_metrics(self, metrics: dict, train_steps: int):
         extras = {f"train/{k}": v for k, v in metrics.items()
                   if k != "episode_info" and isinstance(v, (int, float))}
-        if extras:
-            extras["train_steps"] = train_steps
-            self.run_logger.wandb_run.log(extras)
+        extras["train/curriculum/forage_coef"] = self._curriculum_forage_coef(train_steps)
+        extras["train_steps"] = train_steps
+        self.run_logger.wandb_run.log(extras)
 
     # ------------------------------------------------------------------ #
     # Evaluation -- runs all N tasks separately

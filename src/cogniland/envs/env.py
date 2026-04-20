@@ -89,7 +89,7 @@ def _sample_spawn_target_batch(
     terrain_idx: np.ndarray,
     map_indices: np.ndarray,
     rng: np.random.Generator,
-    min_manhattan: int = 60,
+    min_manhattan: int = 0,
     water_idx: int = 2,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Sample spawn and paired (YES, NO) targets for a batch of envs.
@@ -180,7 +180,7 @@ def _compute_minimap_batch(
     Returns: float32 [B, 5, 45, 45] where channels are:
         0-2: RGB patch (true map colors; unseen cells are 0)
         3:   visibility mask (1.0 visible, 0.0 occluded / out-of-bounds)
-        4:   target indicator (1.0 at target cell if visible, 0.0 elsewhere)
+        4:   target indicator (YES target: 1.0, NO target: 0.5, 0.0 if not visible or out of patch)
 
     Fully vectorised over the batch. When ``occlude=True`` and
     ``vis_lut_packed`` + ``disk_stack`` are provided, occlusion is a single
@@ -268,9 +268,6 @@ def _compute_occlusion_mask(
     W: int,
 ) -> np.ndarray:
     """Compute visibility mask with Bresenham raycasting.
-
-    TODO: This is the expensive per-env loop. For large batch sizes, consider
-    vectorizing or using a simplified circular mask as a fast path.
 
     Returns: bool [D, D] where True = visible.
     """
@@ -903,6 +900,7 @@ class CognilandEnv:
             "reached_yes": reached_yes,
             "reached_no": reached_no,
             "alive": self.hp > 0,
+            "hp": self.hp.copy(),
             "dist_to_target": np.sqrt(
                 (self.pos_r.astype(np.float32) - self.mid_r.astype(np.float32)) ** 2 +
                 (self.pos_c.astype(np.float32) - self.mid_c.astype(np.float32)) ** 2
