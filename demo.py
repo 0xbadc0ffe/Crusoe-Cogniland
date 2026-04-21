@@ -490,6 +490,9 @@ class AIAgentPlayer:
       * its ``checkpoints/`` subdir
       * the env-specific subdir (``checkpoints/<env_id>/``)
       * or a concrete ``best/`` / ``last/`` / ``step_XXXXXXXX/`` orbax dir.
+
+    The task embedding is a fixed-size one-hot of length ``TASK_EMBEDDING_DIM``
+    (see ``cogniland.envs.tasks``), independent of the saved config.
     """
 
     def __init__(self, checkpoint_dir: str | Path, prefer: str = "best"):
@@ -577,7 +580,8 @@ class AIAgentPlayer:
             stack[r] = m
         self._disk_stack = stack
 
-        self._task_embedding_dim = int(getattr(self.config, "task_embedding_dim", 7))
+        from cogniland.envs.tasks import TASK_EMBEDDING_DIM
+        self._task_embedding_dim = TASK_EMBEDDING_DIM
         self.deterministic = True
         self.task_id = 0
 

@@ -31,7 +31,7 @@ def _build_env(num_envs: int = 1, min_manhattan: int | None = None):
     if min_manhattan is not None:
         cfg.env.min_spawn_target_manhattan = min_manhattan
     env = CognilandEnv(cfg, cfg.env.train_maps, num_envs=num_envs)
-    wrapper = MultiTaskEnvWrapper(env, cfg, num_tasks=1, task_embedding_dim=7)
+    wrapper = MultiTaskEnvWrapper(env, cfg)
     return wrapper, cfg
 
 

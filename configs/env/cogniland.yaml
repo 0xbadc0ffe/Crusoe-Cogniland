@@ -8,12 +8,11 @@ project: crusoe_in_cogniland
 seed: 42
 
 env_id: cogniland-v0
-num_tasks: 1                  # task 0 only for now; expandable to 7
-task_embedding_dim: 7         # keep 7-d one-hot so obs shape is stable
+tasks: [0]                    # task ids included in training; sampler draws from this list
 task_sampling: round_robin
 
 env:
-  num_parallel_envs: 128       # small for fast local iteration; raise for sweeps
+  num_parallel_envs: 128
   num_parallel_envs_eval: 8
   max_steps: 1000
 
@@ -45,30 +44,17 @@ env:
   min_spawn_target_manhattan: 0
 
 reward:
-  reach_bonus: 20.0           # sparse bonus on reaching target
-  step_penalty: 0.01          # per-step cost (≤ 10 over max_steps=1000)
-  shaping_coef: 0.3           # PBRS: shaping_coef * (ctg_prev - ctg_curr). 0.3 is
-                              # strong enough to give a directional gradient that
-                              # survives gae(γ=0.99, λ=0.95) and the 64-env noise
-                              # floor. 0.1 was too weak; 0.5 amplifies backward drift.
-  death_penalty: 0.0          # death cliff (was 5.0) makes PPO collapse to "die fast"
-                              # local optimum regardless of exploration. Drop entirely
-                              # until we have a policy that reliably reaches the
-                              # target; then revisit whether a small penalty helps.
-  correct_answer_bonus: 10.0  # tasks 1-3: biome-matching classification
-  craft_bonus: 10.0           # tasks 4-6: craft required tool
-  forage_berry_bonus: 0.0     # Markovian bonus when agent forages on a berry tile.
-                              # Teaches "detour via berries to heal" without the
-                              # non-Markovian HP-dependence of the old curriculum
-                              # bonus. Keep 0 by default; raise for berry-detour
-                              # stress tests where the HP budget < direct-path ctg.
+  reach_bonus: 150.0           # sparse bonus on reaching target
+  step_penalty: 0.02          # per-step cost (≤ 10 over max_steps=1000)
+  shaping_coef: 0.3           # Potential-based Reward Shaping: shaping_coef * (ctg_prev - ctg_curr). 
+  death_penalty: 15.0         
+  correct_answer_bonus: 100.0  # tasks 1-3: biome-matching classification
+  craft_bonus: 100.0           # tasks 4-6: craft required tool
+  forage_berry_bonus: 0.0
 
 trainer:
-  num_train_frames: 2_000_000
+  num_train_frames: 10_000_000
   num_eval_frames: 50_000
   eval_interval_frames: 100_000
   full_eval_enabled: false
-  trajectory_viz_interval_frames: null
-
-metrics_tracker:
-  moving_avg_window_size: 50
+  trajectory_viz_interval_frames: 10_000

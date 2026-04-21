@@ -8,6 +8,7 @@ import numpy as np
 
 from cogniland.envs.env import CognilandEnv
 from cogniland.envs.tasks import (
+    TASK_EMBEDDING_DIM,
     _TASK_BIOME_QUESTION,
     _TASK_CRAFT_TOOL,
     compute_task_reward,
@@ -17,24 +18,15 @@ from cogniland.envs.tasks import (
 class MultiTaskEnvWrapper:
     """Wraps CognilandEnv with task reward + one-hot task embedding."""
 
-    def __init__(
-        self,
-        env: CognilandEnv,
-        config: Any,
-        num_tasks: int = 1,
-        task_embedding_dim: int = 7,
-    ):
+    def __init__(self, env: CognilandEnv, config: Any):
         self.env = env
         self._config = config
-        self._num_tasks = num_tasks
-        self._task_embedding_dim = task_embedding_dim
 
-        if num_tasks > task_embedding_dim:
-            raise ValueError(
-                f"one-hot task embedding requires task_embedding_dim "
-                f"({task_embedding_dim}) >= num_tasks ({num_tasks})"
-            )
-        self._task_embeddings = np.eye(task_embedding_dim, dtype=np.float32)[:num_tasks]
+        # Full one-hot table indexed by the task id itself — task 3's embedding
+        # is row 3, task 5's is row 5, etc. The wrapper doesn't need to know
+        # which tasks are being sampled; every task id in [0, TASK_EMBEDDING_DIM)
+        # is a valid row.
+        self._task_embeddings = np.eye(TASK_EMBEDDING_DIM, dtype=np.float32)
 
         self.task_ids = np.zeros(env.num_envs, dtype=np.int32)
 

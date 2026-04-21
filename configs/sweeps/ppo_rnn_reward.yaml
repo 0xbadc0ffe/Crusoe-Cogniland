@@ -20,16 +20,16 @@ program: scripts/train.py
 
 # Characterise reward + curriculum shaping on the navigation task.
 #
-# Pinned to num_tasks=1 so the ~1.4M-frames-per-task dilution of the 7-task
+# Pinned to tasks=[0] so the ~1.4M-frames-per-task dilution of the 7-task
 # production setup doesn't mask the reward signal. A follow-up multi-task
-# sweep can re-open num_tasks around the winning reward point.
+# sweep can re-open the task list around the winning reward point.
 #
 # Grid: 4 x 3 x 2 = 24 runs, 10M frames each.
 # Launch with e.g.
 #     ./scripts/launch_sweep.sh configs/sweeps/ppo_rnn_reward.yaml -n 24 -r 1
 parameters:
   seed:                         {value: 42}
-  num_tasks:                    {value: 1}
+  tasks:                        {value: [0]}
   trainer.num_train_frames:     {value: 50_000_000}
   trainer.full_eval_enabled:    {value: false}
 

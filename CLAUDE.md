@@ -26,8 +26,10 @@ then collapses" failure mode. Keep these in mind before tweaking:
   that survives GAE discount and minibatch advantage normalisation.
 - `agent.entropy_coef=3e-2` (up from 1.5e-3) — lower coefs let entropy collapse before
   the agent has stumbled on enough reach-target trajectories to learn from.
-- `num_tasks=1` in `configs/env/cogniland.yaml` — multi-task round-robin across 7 tasks
-  dilutes the task-0 signal 7× with stub tasks 1-6, swamping the shared trunk gradient.
+- `tasks: [0]` in `configs/env/cogniland.yaml` — multi-task round-robin across all
+  7 tasks dilutes the task-0 signal 7× with stub tasks 1-6, swamping the shared
+  trunk gradient. `tasks` is a list of task ids; widen it (e.g. `[0, 4]`) to
+  train on a subset of tasks without forcing all 7 into the mix.
 - `env.biome_filter=[balanced]` restricts training to the 64 balanced-biome maps for fast
   iteration. `null` uses all 256 maps.
 
@@ -103,7 +105,7 @@ Trainer(config, agent).run()
   ├─ MultiTaskEnvWrapper(CognilandEnv)        # 32 parallel training envs
   ├─ MultiTaskEnvWrapper(CognilandEnv)        # 4 eval envs
   ├─ RunLogger(config)                       # W&B init + artifact upload
-  ├─ TaskSampler(num_tasks, num_envs)        # task assignment per segment
+  ├─ TaskSampler(task_ids, num_envs)         # task assignment per segment
   │
   ├─ while total_trained < num_train_frames:
   │    ├─ task_ids = task_sampler.sample()
@@ -114,7 +116,7 @@ Trainer(config, agent).run()
   │    ├─ _log_training_metrics()            # train/* scalars
   │    │
   │    └─ [periodic] _run_evaluation()
-  │         ├─ for task_id in range(num_tasks):
+  │         ├─ for task_id in config.tasks:
   │         │    ├─ agent.evaluate(state, eval_env, rng, task_ids=fixed(task_id))
   │         │    └─ log eval/task_{i}/* scalars
   │         └─ log eval/aggregate/* scalars + console table
@@ -369,27 +371,37 @@ Defaults from `configs/agent/ppo_rnn.yaml`: `embed_dim=8`, `hidden_size=128`,
 
 ## W&B Metrics
 
-### Training (step metric: `train_steps`)
+Raw per-episode values only — no rolling averages are maintained in code.
+Use W&B's UI smoothing to visualise trends.
+
+### Training (step metric: `train_steps` / `train_episode`)
 
 | Key | Description |
 |-----|-------------|
-| `train/reward` | Episode return |
-| `train/success` | 1 if return > 0 |
-| `train/length` | Episode length |
-| `train/moving_avg_reward` | Rolling mean return |
-| `train/moving_avg_success_rate` | Rolling mean success |
+| `train/reward` | Episode return (one entry per finished episode) |
+| `train/success` | 1 if task success criterion met, else 0 |
+| `train/length` | Episode length in steps |
 | `train/fps` | Training frames/sec |
-| `train/<agent_key>` | Agent-specific scalars (policy_loss, value_loss, entropy, etc.) |
+| `train/frame`, `train/episode` | Global counters |
+| `train/task_{t}/reward` | Same as `train/reward` but scoped to episodes run on task `t` |
+| `train/task_{t}/success`, `train/task_{t}/length` | Per-task raw scalars |
+| `train/biome_{b}/reward` | Per-biome raw episode return |
+| `train/biome_{b}/success`, `train/biome_{b}/length` | Per-biome raw scalars |
+| `train/<agent_key>` | Agent-specific scalars (policy_loss, value_loss, entropy, …) |
 
 ### Evaluation (step metric: `train_frames`)
 
+Aggregated over every finished episode in one eval set.
+
 | Key | Description |
 |-----|-------------|
-| `eval/task_{i}/avg_reward` | Mean reward on task i |
-| `eval/task_{i}/avg_success` | Mean success rate on task i |
-| `eval/task_{i}/avg_length` | Mean episode length on task i |
-| `eval/aggregate/avg_reward` | Mean reward across all tasks |
-| `eval/aggregate/avg_success` | Mean success across all tasks |
+| `eval/task_{i}/reward` | Mean reward on task `i` |
+| `eval/task_{i}/success` | Mean success on task `i` |
+| `eval/task_{i}/length` | Mean episode length on task `i` |
+| `eval/task_{i}/episodes` | Number of finished eval episodes |
+| `eval/aggregate/reward` | Mean reward across all configured tasks |
+| `eval/aggregate/success` | Mean success across all configured tasks |
+| `eval/aggregate/length` | Mean length across all configured tasks |
 
 ---
 

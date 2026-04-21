@@ -18,6 +18,12 @@ from typing import Any
 import numpy as np
 
 
+# Total number of task slots. The one-hot task embedding fed to the agent is
+# always this size, regardless of which tasks are actually sampled, so the
+# observation shape stays stable across runs and checkpoints.
+TASK_EMBEDDING_DIM = 7
+
+
 # Task → target biome (for classification tasks 1-3)
 _TASK_BIOME_QUESTION = {
     1: "archipelago",

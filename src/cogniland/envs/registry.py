@@ -48,12 +48,5 @@ def make_env(env_id: str, config: Any, train: bool = True) -> MultiTaskEnvWrappe
         else:
             num_envs = getattr(env_cfg, "num_parallel_envs", 32)
 
-    num_tasks = config.num_tasks if hasattr(config, "num_tasks") else config.get("num_tasks", 1)
-    emb_dim = (
-        config.task_embedding_dim
-        if hasattr(config, "task_embedding_dim")
-        else config.get("task_embedding_dim", 7)
-    )
-
     env = CognilandEnv(config, maps_path, int(num_envs))
-    return MultiTaskEnvWrapper(env, config, int(num_tasks), int(emb_dim))
+    return MultiTaskEnvWrapper(env, config)

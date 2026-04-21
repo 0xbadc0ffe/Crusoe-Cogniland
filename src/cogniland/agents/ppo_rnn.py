@@ -38,6 +38,7 @@ from cogniland.agents.agent import Agent
 from cogniland.agents.registry import register_agent
 from cogniland.agents.state import AgentState, RuntimeState
 from cogniland.envs.env import NUM_TILE_CLASSES
+from cogniland.envs.tasks import TASK_EMBEDDING_DIM
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +75,7 @@ class ActorCriticRNN(nn.Module):
     hidden_size: int = 128
     embed_dim: int = 8
     num_tile_classes: int = NUM_TILE_CLASSES
-    task_embedding_dim: int = 7
+    task_embedding_dim: int = TASK_EMBEDDING_DIM
     use_rnn: bool = True
 
     @nn.compact
@@ -192,8 +193,7 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
     """
     agent_cfg = config.agent
     num_actions = act_space if isinstance(act_space, int) else int(act_space)
-    task_embedding_dim = getattr(config, "task_embedding_dim", 7)
-    num_tasks = getattr(config, "num_tasks", 1)
+    task_embedding_dim = TASK_EMBEDDING_DIM
 
     lr = agent_cfg.lr
     anneal_lr = agent_cfg.anneal_lr

@@ -3,12 +3,10 @@ entity: crusoe
 project: crusoe_in_cogniland
 method: grid
 metric:
-  # Reported every training tick. With spawn_distance_range=[10, 100] the
-  # rolling avg is a ~50/50 blend of easy and berry-detour-required episodes,
-  # so a >= 0.40 here means the policy is meaningfully solving hard spawns.
-  # Evaluation is fully disabled in this sweep (see parameters below); all
-  # monitoring runs off train/* metrics.
-  name: train/moving_avg_success_rate
+  # Reported every training tick. Raw per-episode success — rely on W&B
+  # sweep smoothing. Evaluation is fully disabled in this sweep (see
+  # parameters below); all monitoring runs off train/* metrics.
+  name: train/success
   goal: maximize
 
 command:

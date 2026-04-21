@@ -162,9 +162,12 @@ if mask_N.any():
     rewards[mask_N] += my_bonus * my_condition[mask_N]
 ```
 
-Then bump `num_tasks` (and if needed `task_embedding_dim ≥ num_tasks`) in
-`configs/env/cogniland.yaml`, and — if the task needs a success criterion visible in
-eval metrics — extend `MultiTaskEnvWrapper._compute_task_success` to recognise it.
+Then add the task id to the `tasks:` list in `configs/env/cogniland.yaml` (e.g.
+`tasks: [0, 4]`) and — if the task needs a success criterion visible in eval
+metrics — extend `MultiTaskEnvWrapper._compute_task_success` to recognise it.
+The one-hot task embedding has a fixed width of `TASK_EMBEDDING_DIM` (see
+`src/cogniland/envs/tasks.py`, currently 7), so new task ids are valid
+as long as they are `< TASK_EMBEDDING_DIM`.
 
 ## Agent layer
 
@@ -253,7 +256,8 @@ The `train()` function must return `(new_state, metrics)` where `metrics` contai
 The `task_ids` kwarg is a numpy int array `[num_envs]`. Use it to look up task embeddings:
 
 ```python
-task_emb = np.eye(config.task_embedding_dim, dtype=np.float32)[task_ids]
+from cogniland.envs.tasks import TASK_EMBEDDING_DIM
+task_emb = np.eye(TASK_EMBEDDING_DIM, dtype=np.float32)[task_ids]
 ```
 
 ### Env API (from the agent's perspective)
@@ -279,13 +283,16 @@ The Trainer runs a single training loop (not one per task). It:
 
 ### W&B metrics
 
+Raw values only — no rolling averages are maintained in code.
+
 | Key | Step metric | When |
 |-----|------------|------|
 | `train/reward`, `train/success`, `train/length` | `train_steps` | Per completed episode |
-| `train/moving_avg_*` | `train_steps` | Rolling window |
+| `train/task_{t}/{reward,success,length}` | `train_steps` | Per episode, scoped to task `t` |
+| `train/biome_{b}/{reward,success,length}` | `train_steps` | Per episode, scoped to biome `b` |
 | `train/<agent_key>` | `train_steps` | Per training segment |
-| `eval/task_{i}/avg_*` | `train_frames` | Each eval checkpoint |
-| `eval/aggregate/avg_*` | `train_frames` | Each eval checkpoint |
+| `eval/task_{i}/{reward,success,length,episodes}` | `train_frames` | Each eval checkpoint |
+| `eval/aggregate/{reward,success,length}` | `train_frames` | Each eval checkpoint |
 
 ### Config system
 

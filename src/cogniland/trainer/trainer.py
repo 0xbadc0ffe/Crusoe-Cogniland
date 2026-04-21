@@ -29,7 +29,12 @@ class Trainer:
     def __init__(self, config: OmegaConf, agent: Agent):
         self.config = config
         self.agent = agent
-        self.num_tasks = config.num_tasks
+        # ``config.tasks`` is the list of task ids included in training. The
+        # sampler draws from this list; eval loops iterate over it. Coerce to
+        # a plain Python list so downstream indexing works with OmegaConf or
+        # native lists alike.
+        self.tasks: list[int] = [int(t) for t in config.tasks]
+        self.num_tasks: int = len(self.tasks)
 
         self.num_train_frames = config.trainer.num_train_frames
         self.num_eval_frames = config.trainer.num_eval_frames
@@ -67,7 +72,7 @@ class Trainer:
 
         # Task sampler
         self.task_sampler = TaskSampler(
-            num_tasks=self.num_tasks,
+            task_ids=self.tasks,
             num_envs=config.env.num_parallel_envs,
             mode=config.get("task_sampling", "round_robin"),
         )
@@ -75,17 +80,17 @@ class Trainer:
         # Agent
         self.agent_state = self.agent.init(self.rng_manager.get_key())
 
-        # Metrics: one train tracker (aggregate), N eval trackers (per-task)
+        # Metrics: one train tracker (aggregate), one eval tracker per task id
         self.train_metrics = MetricsTracker(
-            config, config.env.num_parallel_envs, "train", num_tasks=self.num_tasks,
+            config, config.env.num_parallel_envs, "train",
         )
         self.train_metrics.initialize()
         self.run_logger.register_metrics(self.train_metrics)
 
         num_eval_envs = config.env.get("num_parallel_envs_eval", config.env.num_parallel_envs)
         self.eval_trackers = {}
-        for task_id in range(self.num_tasks):
-            t = MetricsTracker(config, num_eval_envs, "eval", num_tasks=self.num_tasks)
+        for task_id in self.tasks:
+            t = MetricsTracker(config, num_eval_envs, "eval")
             self.eval_trackers[task_id] = t
             self.run_logger.register_metrics(t, prefix_override=f"eval/task_{task_id}")
 
@@ -141,7 +146,9 @@ class Trainer:
     # Main loop
     # ------------------------------------------------------------------ #
     def run(self):
-        logger.info("=== Multi-task training start (%d tasks) ===", self.num_tasks)
+        logger.info(
+            "=== Multi-task training start (tasks=%s) ===", self.tasks,
+        )
         total_trained = 0
         pbar = tqdm(total=self.num_train_frames, desc="train")
 
@@ -191,7 +198,12 @@ class Trainer:
     # Training metrics (aggregate across tasks)
     # ------------------------------------------------------------------ #
     def _log_training_metrics(self, metrics: dict, total_trained: int, pbar, fps: float):
-        """Log aggregate + per-task training metrics.
+        """Log raw per-episode training metrics.
+
+        One W&B log call per finished episode. We emit raw values only (no
+        rolling averages) — W&B's UI smoothing covers that. Per-task keys
+        (``train/task_{t}/...``) fire only on episodes that ran that task;
+        per-biome keys (``train/biome_{b}/...``) likewise.
 
         Per-task identity is recovered from ``self._train_task_ids`` (the task
         assignment fixed for this segment) by mapping each flat episode index
@@ -222,10 +234,6 @@ class Trainer:
             self._log_agent_metrics(metrics, total_trained)
             return
 
-        # Map each finished episode to its env, then to its task. Agent
-        # rollouts concatenate per-step [B] arrays, so flat index i -> env idx
-        # (i % num_envs). Task assignment is fixed for the whole segment via
-        # ``set_tasks(task_ids)``.
         num_envs = self.train_env.num_envs
         done_indices = np.where(done_flat)[0]
         env_idx = done_indices % num_envs
@@ -239,7 +247,7 @@ class Trainer:
         successes_np = success_flat[done_flat]
         biomes_np = biome_flat[done_flat] if biome_flat is not None else None
 
-        ma_r = ma_s = ma_l = 0.0
+        last_r = last_s = 0.0
         for i in range(len(returns_np)):
             r = float(returns_np[i])
             l = int(lengths_np[i])
@@ -247,84 +255,43 @@ class Trainer:
             t_id = int(task_of_ep[i])
             biome = str(biomes_np[i]) if biomes_np is not None else None
 
-            self.train_metrics.episode_reward_history.append(r)
-            self.train_metrics.episode_length_history.append(l)
-            self.train_metrics.episode_success_history.append(s)
             self.train_metrics.env_total_episodes += 1
-
-            if t_id in self.train_metrics.per_task_reward_history:
-                self.train_metrics.per_task_reward_history[t_id].append(r)
-                self.train_metrics.per_task_success_history[t_id].append(s)
-                self.train_metrics.per_task_length_history[t_id].append(l)
-                self.train_metrics.per_task_total_episodes[t_id] += 1
-
-            if biome is not None:
-                self.train_metrics.per_biome_reward_history[biome].append(r)
-                self.train_metrics.per_biome_success_history[biome].append(s)
-                self.train_metrics.per_biome_length_history[biome].append(l)
-                self.train_metrics.per_biome_total_episodes[biome] += 1
-
-            ma_r = float(np.mean(self.train_metrics.episode_reward_history))
-            ma_s = float(np.mean(self.train_metrics.episode_success_history))
-            ma_l = float(np.mean(self.train_metrics.episode_length_history))
+            last_r, last_s = r, s
 
             log_dict = {
                 "train/reward": r,
                 "train/success": s,
                 "train/length": l,
-                "train/moving_avg_reward":       ma_r,
-                "train/moving_avg_success_rate": ma_s,
-                "train/moving_avg_length":       ma_l,
                 "train/fps":     fps,
                 "train/frame":   total_trained,
                 "train/episode": self.train_metrics.env_total_episodes,
                 "train_steps":   total_trained,
                 "train_episode": self.train_metrics.env_total_episodes,
+                f"train/task_{t_id}/reward": r,
+                f"train/task_{t_id}/success": s,
+                f"train/task_{t_id}/length": l,
             }
-            # Per-task rolling averages. Only emit for tasks with at least
-            # one observed episode to avoid flatlining at 0 pre-data.
-            for t in range(self.num_tasks):
-                hist_s = self.train_metrics.per_task_success_history[t]
-                hist_r = self.train_metrics.per_task_reward_history[t]
-                hist_l = self.train_metrics.per_task_length_history[t]
-                if len(hist_s) == 0:
-                    continue
-                log_dict[f"train/task_{t}/avg_success_rate"] = float(np.mean(hist_s))
-                log_dict[f"train/task_{t}/avg_reward"] = float(np.mean(hist_r))
-                log_dict[f"train/task_{t}/avg_length"] = float(np.mean(hist_l))
-                log_dict[f"train/task_{t}/episodes"] = \
-                    self.train_metrics.per_task_total_episodes[t]
-
-            # Per-biome rolling averages. Only emit for biomes with at least
-            # one observed episode so far in the run (keeps panels clean).
-            for biome_name, hist_s in self.train_metrics.per_biome_success_history.items():
-                if len(hist_s) == 0:
-                    continue
-                hist_r = self.train_metrics.per_biome_reward_history[biome_name]
-                hist_l = self.train_metrics.per_biome_length_history[biome_name]
-                log_dict[f"train/biome_{biome_name}/avg_success_rate"] = float(np.mean(hist_s))
-                log_dict[f"train/biome_{biome_name}/avg_reward"] = float(np.mean(hist_r))
-                log_dict[f"train/biome_{biome_name}/avg_length"] = float(np.mean(hist_l))
-                log_dict[f"train/biome_{biome_name}/episodes"] = \
-                    self.train_metrics.per_biome_total_episodes[biome_name]
+            if biome is not None:
+                log_dict[f"train/biome_{biome}/reward"] = r
+                log_dict[f"train/biome_{biome}/success"] = s
+                log_dict[f"train/biome_{biome}/length"] = l
 
             self.run_logger.wandb_run.log(log_dict)
 
-        # Compact ma_success alongside ma_r in the tqdm postfix.
         pbar.set_postfix(ep=self.train_metrics.env_total_episodes,
-                         ma_r=f"{ma_r:.2f}",
-                         ma_s=f"{ma_s:.2f}",
+                         r=f"{last_r:.2f}",
+                         s=f"{last_s:.2f}",
                          fps=f"{fps:.0f}")
-        # Also print loss dynamics to stdout every segment so offline runs have
-        # a human-readable trace of entropy / value_loss / policy_loss.
+        # Print loss dynamics to stdout every segment so offline runs have a
+        # human-readable trace of entropy / value_loss / policy_loss.
         loss_bits = []
         for k in ("policy_loss", "value_loss", "entropy", "approx_kl", "clipfrac"):
             v = metrics.get(k)
             if isinstance(v, (int, float)):
                 loss_bits.append(f"{k}={v:+.3f}")
         if loss_bits:
-            logger.info("[frame %d] ma_r=%+.2f ma_s=%+.2f  %s",
-                        total_trained, ma_r, ma_s, "  ".join(loss_bits))
+            logger.info("[frame %d] r=%+.2f s=%+.2f  %s",
+                        total_trained, last_r, last_s, "  ".join(loss_bits))
         self._log_agent_metrics(metrics, total_trained)
 
     def _log_agent_metrics(self, metrics: dict, train_steps: int):
@@ -380,12 +347,12 @@ class Trainer:
 
     def _checkpoint_metrics_from_train(self) -> dict:
         """Fallback 'eval' metrics for checkpoint best-tracking when full
-        evaluation is disabled. Uses the train tracker's rolling averages."""
-        hist_r = self.train_metrics.episode_reward_history
-        hist_s = self.train_metrics.episode_success_history
-        avg_r = float(np.mean(hist_r)) if len(hist_r) else 0.0
-        avg_s = float(np.mean(hist_s)) if len(hist_s) else 0.0
-        return {"eval_return": avg_r, "eval_success": avg_s}
+        evaluation is disabled. Returns zeros — with raw (no rolling-average)
+        logging the trainer no longer has a smoothed train signal to expose,
+        and checkpoint best-tracking should be driven by real eval when
+        it matters.
+        """
+        return {"eval_return": 0.0, "eval_success": 0.0}
 
     def _run_trajectory_viz(self, global_train_frames: int):
         """Render the 4-biome fixed-map trajectory plots and log to W&B."""
@@ -398,14 +365,16 @@ class Trainer:
         )
 
     def _run_full_eval(self, global_train_frames: int) -> dict:
-        """Full multi-task evaluation: runs ``agent.evaluate`` for every task,
-        logs per-task and aggregate ``eval/*`` metrics, and returns the
-        aggregate dict suitable for checkpoint best-tracking."""
-        logger.info("=== Eval set %d (all %d tasks) ===", self.eval_set, self.num_tasks)
+        """Full multi-task evaluation: runs ``agent.evaluate`` for every
+        configured task, logs per-task and aggregate ``eval/*`` metrics, and
+        returns the aggregate dict for checkpoint best-tracking."""
+        logger.info(
+            "=== Eval set %d (tasks=%s) ===", self.eval_set, self.tasks,
+        )
 
         all_task_metrics = {}
 
-        for task_id in range(self.num_tasks):
+        for task_id in self.tasks:
             tracker = self.eval_trackers[task_id]
             tracker.initialize()
 
@@ -440,39 +409,42 @@ class Trainer:
                 tracker.env_total_episodes += int(done.sum())
 
             agg = {
-                "avg_reward":  float(np.mean(tracker.episode_reward_history)),
-                "avg_success": float(np.mean(tracker.episode_success_history)),
-                "avg_length":  float(np.mean(tracker.episode_length_history)),
-                "episodes":    tracker.env_total_episodes,
+                "reward":   float(np.mean(tracker.episode_reward_history))
+                            if tracker.episode_reward_history else 0.0,
+                "success":  float(np.mean(tracker.episode_success_history))
+                            if tracker.episode_success_history else 0.0,
+                "length":   float(np.mean(tracker.episode_length_history))
+                            if tracker.episode_length_history else 0.0,
+                "episodes": tracker.env_total_episodes,
             }
             all_task_metrics[task_id] = agg
 
             self.run_logger.wandb_run.log({
-                f"eval/task_{task_id}/avg_reward":  agg["avg_reward"],
-                f"eval/task_{task_id}/avg_success": agg["avg_success"],
-                f"eval/task_{task_id}/avg_length":  agg["avg_length"],
-                f"eval/task_{task_id}/episodes":    agg["episodes"],
+                f"eval/task_{task_id}/reward":   agg["reward"],
+                f"eval/task_{task_id}/success":  agg["success"],
+                f"eval/task_{task_id}/length":   agg["length"],
+                f"eval/task_{task_id}/episodes": agg["episodes"],
                 "train_frames": global_train_frames,
             })
 
-        avg_reward = float(np.mean([m["avg_reward"] for m in all_task_metrics.values()]))
-        avg_success = float(np.mean([m["avg_success"] for m in all_task_metrics.values()]))
-        avg_length = float(np.mean([m["avg_length"] for m in all_task_metrics.values()]))
+        reward = float(np.mean([m["reward"] for m in all_task_metrics.values()]))
+        success = float(np.mean([m["success"] for m in all_task_metrics.values()]))
+        length = float(np.mean([m["length"] for m in all_task_metrics.values()]))
 
         self.run_logger.wandb_run.log({
-            "eval/aggregate/avg_reward":  avg_reward,
-            "eval/aggregate/avg_success": avg_success,
-            "eval/aggregate/avg_length":  avg_length,
+            "eval/aggregate/reward":  reward,
+            "eval/aggregate/success": success,
+            "eval/aggregate/length":  length,
             "train_frames": global_train_frames,
         })
 
         rows = []
         for tid, m in all_task_metrics.items():
-            rows.append([f"task_{tid}", f"{m['avg_reward']:.3f}",
-                         f"{m['avg_success']:.3f}", m['episodes']])
-        rows.append(["AGGREGATE", f"{avg_reward:.3f}", f"{avg_success:.3f}", ""])
+            rows.append([f"task_{tid}", f"{m['reward']:.3f}",
+                         f"{m['success']:.3f}", m['episodes']])
+        rows.append(["AGGREGATE", f"{reward:.3f}", f"{success:.3f}", ""])
         logger.info("\nEval set %d\n%s", self.eval_set,
                     tabulate(rows, headers=["task", "reward", "success", "episodes"],
                              tablefmt="grid"))
 
-        return {"eval_return": avg_reward, "eval_success": avg_success}
+        return {"eval_return": reward, "eval_success": success}

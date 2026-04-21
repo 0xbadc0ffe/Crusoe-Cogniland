@@ -48,7 +48,7 @@ def _make_config(**overrides):
         step_penalty=0.01,
         shaping_coef=0.05,
     )
-    return SimpleNamespace(env=env, seed=42, num_tasks=1, task_embedding_dim=7, reward=reward)
+    return SimpleNamespace(env=env, seed=42, tasks=[0], reward=reward)
 
 
 # ---------------------------------------------------------------------------
@@ -57,13 +57,13 @@ def _make_config(**overrides):
 
 class TestTaskSampler:
     def test_round_robin_single_task(self):
-        ts = TaskSampler(num_tasks=1, num_envs=4, mode="round_robin")
+        ts = TaskSampler(task_ids=[0], num_envs=4, mode="round_robin")
         result = ts.sample()
         assert result.shape == (4,)
         assert (result == 0).all()
 
     def test_round_robin_multi_task(self):
-        ts = TaskSampler(num_tasks=3, num_envs=6, mode="round_robin")
+        ts = TaskSampler(task_ids=[0, 1, 2], num_envs=6, mode="round_robin")
         r1 = ts.sample()
         assert r1.shape == (6,)
         # First batch: [0, 1, 2, 0, 1, 2]
@@ -74,25 +74,25 @@ class TestTaskSampler:
         np.testing.assert_array_equal(r2, [0, 1, 2, 0, 1, 2])
 
     def test_round_robin_wrap(self):
-        ts = TaskSampler(num_tasks=3, num_envs=5, mode="round_robin")
+        ts = TaskSampler(task_ids=[0, 1, 2], num_envs=5, mode="round_robin")
         r1 = ts.sample()
         np.testing.assert_array_equal(r1, [0, 1, 2, 0, 1])
         r2 = ts.sample()
         np.testing.assert_array_equal(r2, [2, 0, 1, 2, 0])
 
+    def test_round_robin_non_contiguous_task_ids(self):
+        ts = TaskSampler(task_ids=[0, 3, 5], num_envs=6, mode="round_robin")
+        r1 = ts.sample()
+        np.testing.assert_array_equal(r1, [0, 3, 5, 0, 3, 5])
+
     def test_fixed(self):
-        ts = TaskSampler(num_tasks=5, num_envs=3, mode="round_robin")
+        ts = TaskSampler(task_ids=[0, 1], num_envs=3, mode="round_robin")
         result = ts.fixed(2)
         assert result.shape == (3,)
         assert (result == 2).all()
 
-    def test_fixed_out_of_range(self):
-        ts = TaskSampler(num_tasks=3, num_envs=2, mode="round_robin")
-        with pytest.raises(ValueError):
-            ts.fixed(5)
-
     def test_random_mode(self):
-        ts = TaskSampler(num_tasks=4, num_envs=100, mode="random")
+        ts = TaskSampler(task_ids=[0, 1, 2, 3], num_envs=100, mode="random")
         rng = np.random.default_rng(0)
         result = ts.sample(rng)
         assert result.shape == (100,)
@@ -103,7 +103,11 @@ class TestTaskSampler:
 
     def test_invalid_mode(self):
         with pytest.raises(ValueError):
-            TaskSampler(num_tasks=1, num_envs=1, mode="invalid")
+            TaskSampler(task_ids=[0], num_envs=1, mode="invalid")
+
+    def test_empty_task_list(self):
+        with pytest.raises(ValueError):
+            TaskSampler(task_ids=[], num_envs=1)
 
 
 # ---------------------------------------------------------------------------

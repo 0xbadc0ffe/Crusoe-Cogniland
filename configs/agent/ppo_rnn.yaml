@@ -2,22 +2,20 @@ agent:
   name: ppo_rnn
   type: ppo_rnn
 
-  lr: 3e-4
+  lr: 5e-4
   anneal_lr: true
   num_steps: 128                # rollout = 64 envs * 128 steps = 8192 transitions
   gamma: 0.99
   gae_lambda: 0.95
   clip_eps: 0.2
-  entropy_coef: 3e-2            # needs to stay high (>=1e-2) early to keep the
-                                # policy stochastic enough to stumble on the reach
-                                # bonus at all. 5e-3 collapsed within 200k frames.
+  entropy_coef: 3e-2            # needs to stay high (>=1e-2) early.
   value_coef: 0.5
   clip_grad: 0.5
   normalize_advantages: true
   ppo_epochs: 4
   num_minibatches: 4            # minibatch = 2048 samples
 
-  hidden_size: 128
+  hidden_size: 128              # width of the two Dense → ReLU layers that sit between the CNN/scalar concat and the LSTM.
   lstm_size: 128
   embed_dim: 8                  # tile-class embedding dim
   num_tile_classes: 14          # keep in sync with envs/env.py::NUM_TILE_CLASSES

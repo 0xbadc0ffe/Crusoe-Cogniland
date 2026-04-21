@@ -5,10 +5,8 @@ method: grid
 metric:
   # Logged every training tick regardless of full_eval_enabled (see
   # Trainer._log_training_metrics in src/cogniland/trainer/trainer.py).
-  # With round_robin task sampling across 256 parallel envs this is
-  # already an all-7-tasks aggregate. moving_avg_window_size=50 episodes
-  # (configs/env/cogniland.yaml) gives a low-noise end-of-training signal.
-  name: train/moving_avg_success_rate
+  # Raw per-episode 0/1; rely on W&B's sweep smoothing to reduce noise.
+  name: train/success
   goal: maximize
 
 command:
@@ -56,8 +54,8 @@ program: scripts/train.py
 # --- Evaluation ---
 # full_eval_enabled is NOT set, so the env-level default of false applies
 # and no per-task eval/* metrics are logged. Sweep selects on the
-# training aggregate declared above. Caveat: train/moving_avg_success
-# includes exploration noise, so the high-entropy cells may look
+# training aggregate declared above. Caveat: train/success is raw 0/1
+# including exploration noise, so the high-entropy cells may look
 # slightly worse than a greedy eval would show. If the final ranking is
 # close, re-run the top cell with full_eval_enabled=true as a tiebreaker.
 #

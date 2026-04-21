@@ -96,7 +96,8 @@ def profile_num_envs(num_envs: int, num_steps: int = 64, warmup: int = 8,
           f"(Dijkstra for {num_envs} envs)")
 
     # Task embedding (one-hot, task 0 for all)
-    task_emb = jnp.zeros((num_envs, cfg.task_embedding_dim), dtype=jnp.float32)
+    from cogniland.envs.tasks import TASK_EMBEDDING_DIM
+    task_emb = jnp.zeros((num_envs, TASK_EMBEDDING_DIM), dtype=jnp.float32)
     task_emb = task_emb.at[:, 0].set(1.0)
 
     # LSTM carry

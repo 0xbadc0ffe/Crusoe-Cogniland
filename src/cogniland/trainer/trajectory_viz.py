@@ -22,6 +22,7 @@ import wandb
 
 from cogniland.envs.env import CognilandEnv
 from cogniland.envs.multitask_wrapper import MultiTaskEnvWrapper
+from cogniland.envs.tasks import TASK_EMBEDDING_DIM
 from cogniland.shared import setup_logger
 
 logger = setup_logger(__name__)
@@ -89,12 +90,8 @@ class TrajectoryLogger:
         self.env._auto_reset_enabled = False
         self.env._min_manhattan = 120
 
-        num_tasks = getattr(config, "num_tasks", 1)
-        emb_dim = getattr(config, "task_embedding_dim", 7)
-        self.wrapper = MultiTaskEnvWrapper(
-            self.env, config, num_tasks=int(num_tasks), task_embedding_dim=int(emb_dim)
-        )
-        self.task_embedding_dim = int(emb_dim)
+        self.wrapper = MultiTaskEnvWrapper(self.env, config)
+        self.task_embedding_dim = TASK_EMBEDDING_DIM
         self.max_steps = int(config.env.max_steps)
 
     # ------------------------------------------------------------------ #
