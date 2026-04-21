@@ -33,16 +33,23 @@ class RunLogger:
             run.name = "_".join([
                 config.name, config.agent.name, config.experiment_name, run.id
             ])
-        artifact = wandb.Artifact(name="config", type="config")
-        path = "config.yaml"
-        with open(path, "w") as f:
-            f.write(OmegaConf.to_yaml(config))
-        artifact.add_file(path)
-        run.log_artifact(artifact)
+        # Use the run-scoped wandb dir so parallel runs don't race on a shared
+        # ``config.yaml`` in the cwd.
+        import tempfile
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix="_config.yaml", delete=False,
+        ) as tmp:
+            tmp.write(OmegaConf.to_yaml(config))
+            path = tmp.name
         try:
-            os.remove(path)
-        except OSError:
-            pass
+            artifact = wandb.Artifact(name="config", type="config")
+            artifact.add_file(path, name="config.yaml")
+            run.log_artifact(artifact)
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
         return run
 
     def register_metrics(self, tracker: MetricsTracker, prefix_override: str = None):

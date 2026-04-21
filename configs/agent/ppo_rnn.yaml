@@ -2,30 +2,34 @@ agent:
   name: ppo_rnn
   type: ppo_rnn
 
-  lr: 3.5e-4
+  lr: 3e-4
   anneal_lr: true
-  num_steps: 64                 # rollout = 256 envs * 64 steps = 16k transitions
+  num_steps: 128                # rollout = 64 envs * 128 steps = 8192 transitions
   gamma: 0.99
-  gae_lambda: 0.98
+  gae_lambda: 0.95
   clip_eps: 0.2
-  entropy_coef: 1.5e-3
+  entropy_coef: 3e-2            # needs to stay high (>=1e-2) early to keep the
+                                # policy stochastic enough to stumble on the reach
+                                # bonus at all. 5e-3 collapsed within 200k frames.
   value_coef: 0.5
-  clip_grad: 0.3
+  clip_grad: 0.5
   normalize_advantages: true
-  ppo_epochs: 8
-  num_minibatches: 4            # minibatch = 4k samples (GPU-friendly)
+  ppo_epochs: 4
+  num_minibatches: 4            # minibatch = 2048 samples
 
-  hidden_size: 256
+  hidden_size: 128
+  lstm_size: 128
+  embed_dim: 8                  # tile-class embedding dim
+  num_tile_classes: 14          # keep in sync with envs/env.py::NUM_TILE_CLASSES
   head_num_layers: 1
   activation: relu
 
   use_rnn: true
-  lstm_size: 256
 
   checkpoint:
     enabled: true
-    save_best: true                  # save to best/ when avg eval success improves
-    save_last: true                  # refresh last/ on every validation
-    save_only_best: true             # skip intermediate step_* snapshots
+    save_best: true
+    save_last: true
+    save_only_best: true
     upload_to_wandb: false
     checkpoint_dir: checkpoints

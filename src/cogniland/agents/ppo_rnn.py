@@ -1,10 +1,18 @@
 """PPO-RNN agent — recurrent PPO with LSTM in JAX/Flax.
 
-Architecture:
-    Minimap CNN -> flatten -> concat(scalar_mlp, task_emb) -> trunk MLP -> LSTM -> actor/critic heads
-
-The env is numpy-based. The training loop converts obs to JAX arrays for the
-forward pass and converts actions back to numpy for env.step().
+Architecture (~222k params total):
+    Minimap [B, 45, 45] int8
+      -> nn.Embed(NUM_TILE_CLASSES=14, embed_dim=8)
+      -> CoordConv: append (rel_row, rel_col) normalised in [-1, 1]
+      -> Conv(10->24, 3x3 VALID) -> ReLU -> MaxPool(2,2)  (43 -> 21)
+      -> Conv(24->48, 3x3 VALID) -> ReLU                  (21 -> 19)
+      -> AvgPool(3,3) -> AvgPool(2,2)                     (19 -> 6 -> 3)
+      -> flatten (432)
+    Scalars [B, 6] -> Dense(32) -> ReLU                   (224)
+    Concat (432 + 32 + 7 task_emb = 471)
+      -> Dense(128) -> ReLU -> Dense(128) -> ReLU          (60416 + 16512)
+      -> OptimizedLSTMCell(128)                           (131584)
+      -> actor Dense(128->8)  critic Dense(128->1)
 """
 
 from __future__ import annotations
@@ -22,6 +30,7 @@ from flax.training.train_state import TrainState
 from cogniland.agents.agent import Agent
 from cogniland.agents.registry import register_agent
 from cogniland.agents.state import AgentState, RuntimeState
+from cogniland.envs.env import NUM_TILE_CLASSES
 
 
 # ---------------------------------------------------------------------------
@@ -29,28 +38,17 @@ from cogniland.agents.state import AgentState, RuntimeState
 # ---------------------------------------------------------------------------
 
 class ActorCriticRNN(nn.Module):
-    """CNN + MLP + LSTM actor-critic for Cogniland maps.
+    """CNN + MLP + LSTM actor-critic consuming tile-index minimap.
 
     Input:
-        minimap:  [B, 6, 45, 45]  (channels-first, converted to channels-last internally)
-                  channels: 0-2 RGB, 3 visibility, 4 target, 5 berry
+        minimap:  [B, 45, 45] int8 — per-cell tile class (0..NUM_TILE_CLASSES-1)
         scalars:  [B, 6]
         task_emb: [B, task_embedding_dim]
         carry:    (h, c) each [B, lstm_size]
 
-    CNN design notes (April 2026 update):
-      - Two normalized coordinate channels are appended to the minimap before
-        the first conv. Because the agent always sits at the patch center,
-        these directly expose "direction to any pixel" to every subsequent
-        layer — a cheap fix for convolutions' translation equivariance on
-        egocentric observations.
-      - Filter widths doubled (16/32 -> 32/64) so the CNN can host separate
-        selectivity for RGB tile classes *and* the binary berry/target/vis
-        channels without competing for capacity.
-      - Final spatial reduction lands at 6x6 (was 4x4) and uses average
-        pooling instead of max. For sparse binary features (berries), mean
-        preserves density ("how many berries in this region") rather than
-        saturating at 1.0 on first sighting.
+    The minimap is embedded via ``nn.Embed(NUM_TILE_CLASSES, embed_dim)`` so
+    the network learns a dense vector per tile class rather than re-learning
+    a discrete class mapping from RGB pixels.
 
     Output:
         logits:  [B, num_actions]
@@ -58,78 +56,77 @@ class ActorCriticRNN(nn.Module):
         new_carry: (h, c)
     """
     num_actions: int = 8
-    lstm_size: int = 256
-    hidden_size: int = 256
+    lstm_size: int = 128
+    hidden_size: int = 128
+    embed_dim: int = 8
+    num_tile_classes: int = NUM_TILE_CLASSES
     task_embedding_dim: int = 7
+    use_rnn: bool = True
 
     @nn.compact
     def __call__(self, minimap, scalars, task_emb, carry):
-        # -- CNN (channels-last for Flax Conv) --
-        # Input: [B, 6, 45, 45] -> transpose to [B, 45, 45, 6]
-        x = jnp.transpose(minimap, (0, 2, 3, 1))
+        # -- Tile embedding: [B, 45, 45] int -> [B, 45, 45, embed_dim] float --
+        mm = minimap.astype(jnp.int32)
+        x = nn.Embed(
+            num_embeddings=self.num_tile_classes,
+            features=self.embed_dim,
+            embedding_init=nn.initializers.normal(stddev=0.5),
+        )(mm)
 
-        # -- CoordConv: append (rel_row, rel_col) in [-1, 1] --
-        # Agent is always at the patch center (22, 22). Normalized coords let
-        # any subsequent conv compute "which direction is this feature from
-        # the agent" without the network rediscovering it.
+        # -- CoordConv: append normalized (rel_row, rel_col) in [-1, 1] --
+        # Agent sits at the patch center. Two extra channels let the CNN see
+        # "direction to this pixel" without re-learning translation from
+        # scratch in a non-translation-invariant egocentric obs.
         B, H, W, _ = x.shape
         rr = jnp.linspace(-1.0, 1.0, H, dtype=x.dtype)
         cc = jnp.linspace(-1.0, 1.0, W, dtype=x.dtype)
         rr = jnp.broadcast_to(rr[None, :, None, None], (B, H, W, 1))
         cc = jnp.broadcast_to(cc[None, None, :, None], (B, H, W, 1))
-        x = jnp.concatenate([x, rr, cc], axis=-1)
+        x = jnp.concatenate([x, rr, cc], axis=-1)   # [B, 45, 45, embed_dim+2]
 
-        x = nn.Conv(features=32, kernel_size=(3, 3), padding="VALID",
-                     kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(x)
+        x = nn.Conv(features=24, kernel_size=(3, 3), padding="VALID",
+                    kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(x)
         x = nn.relu(x)
-        # MaxPool 2x2: 43 -> 21
-        x = nn.max_pool(x, window_shape=(2, 2), strides=(2, 2))
+        x = nn.max_pool(x, window_shape=(2, 2), strides=(2, 2))  # 43 -> 21
 
-        x = nn.Conv(features=64, kernel_size=(3, 3), padding="VALID",
-                     kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(x)
-        x = nn.relu(x)
-        # 21 -> Conv(3,VALID) -> 19; AvgPool(3,3) -> 6 (floor((19-3)/3)+1 = 6).
-        # Avg (not max) for the final reduction: berries/targets are sparse
-        # binary signals; averaging preserves *density* across the 3x3 region
-        # instead of saturating at 1.0 as soon as any cell fires.
-        spatial = x.shape[1]  # should be 19
-        pool_size = spatial // 6  # 3
-        x = nn.avg_pool(x, window_shape=(pool_size, pool_size),
-                        strides=(pool_size, pool_size))
-        # Flatten: [B, 6, 6, 64] -> [B, 2304]
-        x = x.reshape((x.shape[0], -1))
+        x = nn.Conv(features=48, kernel_size=(3, 3), padding="VALID",
+                    kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(x)
+        x = nn.relu(x)                                            # 21 -> 19
+        x = nn.avg_pool(x, window_shape=(3, 3), strides=(3, 3))   # 19 -> 6
+        x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))   # 6 -> 3
+        x = x.reshape((x.shape[0], -1))                           # [B, 432]
 
-        # -- Scalar MLP --
-        s = nn.Dense(64, kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(scalars)
+        s = nn.Dense(32, kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(scalars)
         s = nn.relu(s)
 
-        # -- Concat CNN + scalars + task embedding --
-        # x: [B, 512], s: [B, 64], task_emb: [B, 7] -> [B, 583]
-        h = jnp.concatenate([x, s, task_emb], axis=-1)
+        h = jnp.concatenate([x, s, task_emb], axis=-1)            # [B, 471]
 
-        # -- Trunk MLP --
-        h = nn.Dense(self.hidden_size, kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(h)
+        h = nn.Dense(self.hidden_size,
+                     kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(h)
         h = nn.relu(h)
-        h = nn.Dense(self.hidden_size, kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(h)
+        h = nn.Dense(self.hidden_size,
+                     kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(h)
         h = nn.relu(h)
 
-        # -- LSTM --
-        lstm_cell = nn.OptimizedLSTMCell(features=self.lstm_size,
-                                          kernel_init=nn.initializers.orthogonal(1.0),
-                                          recurrent_kernel_init=nn.initializers.orthogonal(1.0))
-        new_carry, h = lstm_cell(carry, h)
+        if self.use_rnn:
+            lstm_cell = nn.OptimizedLSTMCell(
+                features=self.lstm_size,
+                kernel_init=nn.initializers.orthogonal(1.0),
+                recurrent_kernel_init=nn.initializers.orthogonal(1.0),
+            )
+            new_carry, h = lstm_cell(carry, h)
+        else:
+            # MLP-only path: skip the LSTM, just thread carry through for
+            # a shape-stable API. The carry is returned unchanged.
+            new_carry = carry
 
-        # -- Actor head (small init for near-uniform initial policy) --
         logits = nn.Dense(self.num_actions,
                           kernel_init=nn.initializers.orthogonal(0.01),
                           bias_init=nn.initializers.zeros)(h)
-
-        # -- Critic head --
         value = nn.Dense(1,
                          kernel_init=nn.initializers.orthogonal(1.0),
                          bias_init=nn.initializers.zeros)(h)
-        value = value.squeeze(-1)  # [B]
-
+        value = value.squeeze(-1)
         return logits, value, new_carry
 
 
@@ -138,8 +135,8 @@ class ActorCriticRNN(nn.Module):
 # ---------------------------------------------------------------------------
 
 class Transition(NamedTuple):
-    obs_minimap: jnp.ndarray    # [B, 6, 45, 45]
-    obs_scalars: jnp.ndarray    # [B, 6]
+    obs_minimap: jnp.ndarray    # [B, 45, 45] int8
+    obs_scalars: jnp.ndarray    # [B, 6] float32
     action: jnp.ndarray         # [B]
     log_prob: jnp.ndarray       # [B]
     value: jnp.ndarray          # [B]
@@ -181,6 +178,9 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
     num_minibatches = agent_cfg.num_minibatches
     hidden_size = agent_cfg.hidden_size
     lstm_size = agent_cfg.lstm_size
+    embed_dim = int(getattr(agent_cfg, "embed_dim", 8))
+    num_tile_classes = int(getattr(agent_cfg, "num_tile_classes", NUM_TILE_CLASSES))
+    use_rnn = bool(getattr(agent_cfg, "use_rnn", True))
 
     num_envs = config.env.num_parallel_envs
 
@@ -188,7 +188,10 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
         num_actions=num_actions,
         lstm_size=lstm_size,
         hidden_size=hidden_size,
+        embed_dim=embed_dim,
+        num_tile_classes=num_tile_classes,
         task_embedding_dim=task_embedding_dim,
+        use_rnn=use_rnn,
     )
 
     # ------------------------------------------------------------------
@@ -391,8 +394,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
     # ------------------------------------------------------------------
     def init(rng):
         rng, init_rng = jax.random.split(rng)
-        mm_shape = obs_space["minimap"] if isinstance(obs_space, dict) else (6, 45, 45)
-        dummy_minimap = jnp.zeros((1,) + tuple(mm_shape))
+        mm_shape = obs_space["minimap"] if isinstance(obs_space, dict) else (45, 45)
+        dummy_minimap = jnp.zeros((1,) + tuple(mm_shape), dtype=jnp.int32)
         dummy_scalars = jnp.zeros((1, 6))
         dummy_task_emb = jnp.zeros((1, task_embedding_dim))
         dummy_carry = (jnp.zeros((1, lstm_size)), jnp.zeros((1, lstm_size)))
@@ -496,8 +499,18 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             task_emb_np = np.zeros((num_envs, task_embedding_dim), dtype=np.float32)
         task_emb_jax = jnp.asarray(task_emb_np)
 
-        # LR annealing setup
-        total_updates = num_train_frames // (num_steps * num_envs)
+        # LR annealing setup — use the configured total training frames as the
+        # horizon so the anneal is global, not per-segment. ``train()`` is
+        # called once per eval interval with a slice of frames; if we used the
+        # slice as the horizon, LR would oscillate between lr and ~lr*(1-seg)
+        # across segments instead of annealing smoothly to 0.
+        total_frames_full = int(getattr(config.trainer, "num_train_frames", num_train_frames))
+        total_updates = max(1, total_frames_full // (num_steps * num_envs))
+
+        # Global update counter lives on the runtime so the anneal advances
+        # across successive ``train()`` calls in the same run.
+        n_updates_global_start = int(getattr(state.runtime, "train_steps", 0))
+        n_updates_global_start = n_updates_global_start // max(1, ppo_epochs * num_minibatches)
 
         # Reset env — our env returns obs dict only (no info)
         obs = env.reset()
@@ -624,7 +637,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             # ``InjectStatefulHyperparamsState`` is a NamedTuple, so we use
             # ``_replace`` (the NamedTuple API) rather than Flax's ``replace``.
             if anneal_lr and total_updates > 0:
-                frac = 1.0 - (n_updates / total_updates)
+                global_updates = n_updates_global_start + n_updates
+                frac = 1.0 - (global_updates / total_updates)
                 cur_lr = lr * max(frac, 0.0)
                 cur_lr_jax = jnp.asarray(cur_lr, dtype=jnp.float32)
 

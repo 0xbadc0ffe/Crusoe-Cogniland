@@ -1,0 +1,88 @@
+name: ppo_rnn_berry_detour
+entity: crusoe
+project: crusoe_in_cogniland
+method: grid
+metric:
+  # Reported every training tick. With spawn_distance_range=[10, 100] the
+  # rolling avg is a ~50/50 blend of easy and berry-detour-required episodes,
+  # so a >= 0.40 here means the policy is meaningfully solving hard spawns.
+  # full_eval_enabled: false (env default), so no eval/* metrics exist.
+  name: train/moving_avg_success_rate
+  goal: maximize
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - --env-config
+  - configs/env/cogniland.yaml
+  - --agent-config
+  - configs/agent/ppo_rnn.yaml
+  - --sweep
+
+program: scripts/train.py
+
+# Single-seed coarse grid: find ANY reward+exploration combination where the
+# agent commits to the berry-detour skill. All interactive 5M-frame runs
+# plateaued around 34% mixed-curriculum success (0% on min_manhattan=80)
+# with the current "best" knobs. This sweep probes whether a bigger reach
+# signal, stronger shaping, or more exploration unlocks detour emergence.
+#
+# Binary-extreme grid on five independent reward/policy dials — 2^5 = 32
+# runs, 20M frames each. One seed (42). Add seed diversity only after a
+# configuration clears ma_s >= 0.40.
+#
+# Spawn-distance curriculum is ON: all runs start at [0, 20] (easy — reach
+# skill bootstraps in the HP budget) and linearly widen the upper bound
+# to 100 over the first 5M frames, then hold at [0, 100] for the remaining
+# 15M. See Trainer._apply_spawn_distance_schedule + CognilandEnv's
+# spawn_distance_schedule config.
+#
+# 20M gives each cell enough past the ~5M saturation seen in interactive
+# runs to show whether it's actually converging or oscillating. LR anneals
+# over num_train_frames so LR->0 lines up with the 20M end (see
+# agents/ppo_rnn.py::train's n_updates_global fix).
+#
+# Each run ≈ 55 min on a 4090 (6k fps). 32 runs on an 8-agent cluster
+# wall-clocks at ~3.7 h; on 4 agents ~7.3 h.
+#
+# Launch:
+#   ./scripts/launch_sweep.sh configs/sweeps/ppo_rnn_berry_detour.yaml
+#   # auto-detects grid size (32) and submits a 32-wide SLURM array.
+
+parameters:
+  # --- Fixed ---
+  seed:                               {value: 42}
+  trainer.num_train_frames:           {value: 20_000_000}
+  trainer.eval_interval_frames:       {value: 500_000}
+  trainer.trajectory_viz_interval_frames: {value: 5_000_000}
+  env.num_parallel_envs:              {value: 64}
+  env.num_parallel_envs_eval:         {value: 8}
+  # Curriculum: start easy ([0, 20]), widen to full ([0, 100]) over first
+  # 5M frames, then hold. ``spawn_distance_schedule`` takes precedence over
+  # any static ``spawn_distance_range`` at env-init time.
+  env.spawn_distance_schedule:
+    value:
+      start: [0, 20]
+      end: [0, 100]
+      anneal_frames: 5_000_000
+
+  # --- 5 independent axes, binary extremes ---
+  # The value on the left is the current best-known setting; the right is
+  # a significantly stronger alternative. Each axis is a hypothesis about
+  # what's missing to unlock detour learning.
+
+  # Is the terminal reach signal too weak vs the per-step berry bonus?
+  reward.reach_bonus:                 {values: [20.0, 100.0]}
+
+  # How attractive must berries be to justify a detour?
+  reward.forage_berry_bonus:          {values: [1.0, 3.0]}
+
+  # Does survival pressure matter, and how much is too much?
+  reward.death_penalty:               {values: [0.5, 2.0]}
+
+  # Is the dense PBRS gradient strong enough to credit full detour arcs?
+  reward.shaping_coef:                {values: [0.3, 1.0]}
+
+  # Does sustained exploration let PPO escape the "berry farming" local opt?
+  agent.entropy_coef:                 {values: [5e-2, 1e-1]}

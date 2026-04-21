@@ -8,39 +8,29 @@ project: crusoe_in_cogniland
 seed: 42
 
 env_id: cogniland-v0
-num_tasks: 7
-task_embedding_dim: 7
+num_tasks: 1                  # task 0 only for now; expandable to 7
+task_embedding_dim: 7         # keep 7-d one-hot so obs shape is stable
 task_sampling: round_robin
 
 env:
-  # map_size is inferred from the loaded map dataset in `CognilandEnv`
-  # (see `src/cogniland/envs/env.py`); this config key is currently unused.
-  # map_size: 128
-  num_parallel_envs: 256            # scaled up — vectorised env runs ~14k steps/s
+  num_parallel_envs: 64       # small for fast local iteration; raise for sweeps
   num_parallel_envs_eval: 8
   max_steps: 1000
 
-  # Map dataset paths
   train_maps: data/maps/train.pt
   val_maps: data/maps/val.pt
   test_maps: data/maps/test.pt
 
-  # Minimap
-  # minimap_max_ray is currently unused (minimap radius is hard-coded in
-  # `src/cogniland/envs/env.py` as MINIMAP_RADIUS=22).
-  # minimap_max_ray: 22
-  occlude: true
-  # clear_tolerance is currently unused (occlusion uses the constant
-  # CLEAR_TOLERANCE=0.15 in `src/cogniland/envs/env.py`).
-  # clear_tolerance: 0.15
+  # Restrict to a subset of biomes (list) or null for all biomes.
+  biome_filter: [balanced]
 
-  # Tile effects (can override TileEffects defaults)
+  occlude: true
+
   init_hp: 100
   hp_max: 100
   wood_max: 100
   craft_cost: 100
 
-  # Terrain visibility radii
   terrain_vis_radius:
     ocean: 16
     deep_water: 12
@@ -52,48 +42,33 @@ env:
     rocky: 10
     mountains: 22
 
-  # Spawn/target
   min_spawn_target_manhattan: 0
 
-# Task 0 reward
 reward:
   reach_bonus: 20.0           # sparse bonus on reaching target
   step_penalty: 0.01          # per-step cost (≤ 10 over max_steps=1000)
-  shaping_coef: 0.1           # PBRS: shaping_coef * (ctg_prev - ctg_curr)
-                              # telescopes to +shaping_coef * ctg_spawn on success
-                              # (typical ctg_spawn ~ 50–200 HP → cumulative ~2.5–10)
-  death_penalty: 5.0          # sparse penalty applied when the agent dies (hp<=0)
-  correct_answer_bonus: 10.0  # tasks 1-3: bonus for reaching the biome-matching target
-  craft_bonus: 10.0           # tasks 4-6: bonus on the step the required tool is crafted
-
-curriculum:
-  # Annealed auxiliary reward to bootstrap the forage -> survive -> reach chain.
-  # Fires only on steps with positive HP delta (i.e. successful berry forage),
-  # weighted by "missing HP" so the bonus is 0 at high HP and large near death.
-  forage_bonus:
-    initial_coef: 1.0         # reward scale per +HP gained via berry forage (t=0)
-    anneal_frames: 1_000_000  # linear anneal to 0
-    hp_thresh: 90             # no reward for healing while hp >= this
-    missing_hp_exp: 2         # non-linear weighting of missing HP (quadratic)
-  # Flat bonus each time a movement action (0-3) arrives on a berry tile.
-  # Shares the anneal schedule of forage_bonus (curriculum_frac is global).
-  # Teaches the agent to *visit* berries, bootstrapping the foraging chain.
-  berry_step_bonus:
-    initial_coef: 1.0         # per-arrival reward at t=0, anneals linearly to 0
+  shaping_coef: 0.3           # PBRS: shaping_coef * (ctg_prev - ctg_curr). 0.3 is
+                              # strong enough to give a directional gradient that
+                              # survives gae(γ=0.99, λ=0.95) and the 64-env noise
+                              # floor. 0.1 was too weak; 0.5 amplifies backward drift.
+  death_penalty: 0.0          # death cliff (was 5.0) makes PPO collapse to "die fast"
+                              # local optimum regardless of exploration. Drop entirely
+                              # until we have a policy that reliably reaches the
+                              # target; then revisit whether a small penalty helps.
+  correct_answer_bonus: 10.0  # tasks 1-3: biome-matching classification
+  craft_bonus: 10.0           # tasks 4-6: craft required tool
+  forage_berry_bonus: 0.0     # Markovian bonus when agent forages on a berry tile.
+                              # Teaches "detour via berries to heal" without the
+                              # non-Markovian HP-dependence of the old curriculum
+                              # bonus. Keep 0 by default; raise for berry-detour
+                              # stress tests where the HP budget < direct-path ctg.
 
 trainer:
-  num_train_frames: 5_000_000
+  num_train_frames: 2_000_000
   num_eval_frames: 50_000
   eval_interval_frames: 100_000
-  # Full multi-task evaluation (runs agent.evaluate for every task on every
-  # eval tick). Expensive: ~num_tasks * num_eval_frames extra rollouts per
-  # eval. Disable to keep only the cheap trajectory-viz plots.
   full_eval_enabled: false
-  # Trajectory viz on 4 fixed eval maps (one per biome). If null, fires at
-  # every ``eval_interval_frames`` boundary. Set larger to render less often.
   trajectory_viz_interval_frames: null
-  # log_interval_episodes is currently unused by the trainer/logger.
-  # log_interval_episodes: 50
 
 metrics_tracker:
   moving_avg_window_size: 50

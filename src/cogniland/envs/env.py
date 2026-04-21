@@ -2,12 +2,12 @@
 
 Runs B parallel games simultaneously. Each game has:
   - An agent with HP, wood, tool, position
-  - A 128x128 map with terrain, berries, heightmap, RGB
+  - A 128x128 map with terrain, berries, heightmap
   - Spawn and target positions
   - 8 actions: 4 cardinal moves, forage, craft_raft, craft_rope, craft_shoes
 
 Observations:
-  - minimap: float32 [B, 6, 45, 45] — 3 RGB channels + visibility mask + target indicator + berry mask
+  - minimap: int8 [B, 45, 45] — per-cell tile-class id in TILE_CLASS_* (see below)
   - scalars: float32 [B, 6] — compass, terrain, hp, wood, tool
 """
 
@@ -54,9 +54,25 @@ MINIMAP_DIAMETER = 2 * MINIMAP_RADIUS + 1  # 45
 # Height tolerance for occlusion
 CLEAR_TOLERANCE = 0.15
 
+# Tile-class enum for the int8 minimap. Exactly one label per cell —
+# berry / target / deadly override the base terrain.
+TILE_UNSEEN = 0
+# terrain classes 1..9 = TERRAIN_NAMES[0..8] + 1
+TILE_BERRY = 10
+TILE_TARGET_YES = 11
+TILE_TARGET_NO = 12
+TILE_DEADLY = 13
+NUM_TILE_CLASSES = 14
 
-def _load_maps(maps_path: str) -> dict[str, np.ndarray]:
-    """Load map dataset and convert everything to numpy."""
+
+def _load_maps(maps_path: str, biome_filter=None) -> dict[str, np.ndarray]:
+    """Load map dataset and return numpy arrays.
+
+    Args:
+        maps_path: path to the .pt file.
+        biome_filter: optional iterable of biome names to keep (subsets the
+            loaded arrays). ``None`` keeps everything.
+    """
     data = torch.load(maps_path, map_location="cpu", weights_only=False)
     if "visibility_lut" not in data:
         raise RuntimeError(
@@ -64,23 +80,40 @@ def _load_maps(maps_path: str) -> dict[str, np.ndarray]:
             f"    python scripts/generate_dataset.py"
         )
     result = {}
-    for key in ("rgb", "heightmap", "terrain_idx", "berry_mask", "visibility_lut"):
+    for key in ("heightmap", "terrain_idx", "berry_mask", "visibility_lut"):
         t = data[key]
         if isinstance(t, torch.Tensor):
             result[key] = t.numpy()
         else:
             result[key] = np.array(t)
-    # Ensure correct dtypes
-    result["rgb"] = result["rgb"].astype(np.uint8)
+    # Optional RGB (kept for trajectory viz only; not consumed by the env obs).
+    if "rgb" in data:
+        rgb = data["rgb"]
+        result["rgb"] = (rgb.numpy() if isinstance(rgb, torch.Tensor) else np.array(rgb)).astype(np.uint8)
+
     result["heightmap"] = result["heightmap"].astype(np.float32)
     result["terrain_idx"] = result["terrain_idx"].astype(np.int8)
     result["berry_mask"] = result["berry_mask"].astype(bool)
     result["visibility_lut"] = result["visibility_lut"].astype(np.uint8)
-    # Biome labels (string per map); default to "unknown" if dataset predates them.
+
     biomes = data.get("biomes", None)
     if biomes is None:
-        biomes = ["unknown"] * result["rgb"].shape[0]
+        biomes = ["unknown"] * result["terrain_idx"].shape[0]
     result["biomes"] = np.array([str(b) for b in biomes], dtype=object)
+
+    if biome_filter is not None:
+        allowed = set(str(b) for b in biome_filter)
+        mask = np.array([b in allowed for b in result["biomes"]], dtype=bool)
+        if not mask.any():
+            raise ValueError(
+                f"biome_filter {sorted(allowed)} matched 0 maps in {maps_path} "
+                f"(available biomes: {sorted(set(result['biomes'].tolist()))})"
+            )
+        for key in ("heightmap", "terrain_idx", "berry_mask", "visibility_lut", "biomes"):
+            result[key] = result[key][mask]
+        if "rgb" in result:
+            result["rgb"] = result["rgb"][mask]
+
     return result
 
 
@@ -91,15 +124,17 @@ def _sample_spawn_target_batch(
     terrain_idx: np.ndarray,
     map_indices: np.ndarray,
     rng: np.random.Generator,
-    min_manhattan: int = 0,
+    min_manhattan: int | np.ndarray = 0,
+    max_manhattan: int | np.ndarray | None = None,
     water_idx: int = 2,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Sample spawn and paired (YES, NO) targets for a batch of envs.
 
     YES is placed on a sampled land cell. NO is ``TARGET_GAP`` columns to the
     right of YES, on the same row. Both targets plus all intervening cells
-    must be land. Spawn is sampled on land with Manhattan distance
-    ``>= min_manhattan`` from the targets' midpoint.
+    must be land. Spawn is sampled on land with Manhattan distance in
+    ``[min_manhattan[i], max_manhattan[i]]`` (inclusive) from the targets'
+    midpoint. ``max_manhattan=None`` means no upper bound (default).
 
     Returns: spawn_r, spawn_c, yes_r, yes_c, no_r, no_c — all shape [B].
     """
@@ -112,8 +147,22 @@ def _sample_spawn_target_batch(
     no_r = np.zeros(B, dtype=np.int32)
     no_c = np.zeros(B, dtype=np.int32)
 
+    # Broadcast scalar distance to per-env if needed
+    if isinstance(min_manhattan, (int, float, np.integer)):
+        min_manhattan_arr = np.full(B, int(min_manhattan), dtype=np.int32)
+    else:
+        min_manhattan_arr = np.asarray(min_manhattan, dtype=np.int32)
+    if max_manhattan is None:
+        max_manhattan_arr = np.full(B, H + W, dtype=np.int32)
+    elif isinstance(max_manhattan, (int, float, np.integer)):
+        max_manhattan_arr = np.full(B, int(max_manhattan), dtype=np.int32)
+    else:
+        max_manhattan_arr = np.asarray(max_manhattan, dtype=np.int32)
+
     for i in range(B):
         tidx = terrain_idx[map_indices[i]]
+        min_m = int(min_manhattan_arr[i])
+        max_m = int(max_manhattan_arr[i])
         # Valid YES candidates: land, and column + TARGET_GAP in-bounds and all
         # cells from c to c+TARGET_GAP on the same row are land.
         land_mask = tidx > water_idx
@@ -144,7 +193,8 @@ def _sample_spawn_target_batch(
             mid_r, mid_c = yr, yc + TARGET_GAP // 2
             si = rng.integers(len(all_land))
             sr, sc = int(all_land[si, 0]), int(all_land[si, 1])
-            if abs(sr - mid_r) + abs(sc - mid_c) >= min_manhattan:
+            dm = abs(sr - mid_r) + abs(sc - mid_c)
+            if min_m <= dm <= max_m:
                 spawn_r[i], spawn_c[i] = sr, sc
                 yes_r[i], yes_c[i] = yr, yc
                 no_r[i], no_c[i] = nr, nc
@@ -161,9 +211,7 @@ def _sample_spawn_target_batch(
     return spawn_r, spawn_c, yes_r, yes_c, no_r, no_c
 
 
-def _compute_minimap_batch(
-    rgb: np.ndarray,
-    heightmap: np.ndarray,
+def _compute_tile_idx_batch(
     terrain_idx: np.ndarray,
     berry_mask: np.ndarray,
     map_idx: np.ndarray,
@@ -178,105 +226,90 @@ def _compute_minimap_batch(
     disk_stack: np.ndarray | None,
     occlude: bool = True,
 ) -> np.ndarray:
-    """Compute minimap observations for a batch.
+    """Compute per-cell tile-class minimap (int8 [B, 45, 45]).
 
-    Returns: float32 [B, 6, 45, 45] where channels are:
-        0-2: RGB patch (true map colors; unseen cells are 0)
-        3:   visibility mask (1.0 visible, 0.0 occluded / out-of-bounds)
-        4:   target indicator (YES target: 1.0, NO target: 0.5, 0.0 if not visible or out of patch)
-        5:   berry mask (1.0 where a visible berry tile sits, 0.0 elsewhere)
+    Class enum:
+        0              TILE_UNSEEN (occluded or OOB)
+        1..9           base terrain (TERRAIN_NAMES[i] -> i + 1)
+        10             TILE_BERRY
+        11/12          TILE_TARGET_YES / NO
+        13             TILE_DEADLY (terrain_idx == -1)
 
-    Fully vectorised over the batch. When ``occlude=True`` and
-    ``vis_lut_packed`` + ``disk_stack`` are provided, occlusion is a single
-    fancy-index into the LUT + AND with ``disk_stack[vis_r]``.
+    Priority on visible cells: deadly > berry > target > base terrain.
+    (Target overrides base so the agent can always locate the goal when in
+    sight; berry overlays forest/beach; deadly is absolute.)
     """
     B = len(pos_r)
     R = MINIMAP_RADIUS
     D = MINIMAP_DIAMETER
-    H, W = rgb.shape[1], rgb.shape[2]
+    H, W = terrain_idx.shape[1], terrain_idx.shape[2]
 
-    # --- Per-env vis radius from current terrain ----------------------------
     pos_r_c = np.clip(pos_r, 0, H - 1)
     pos_c_c = np.clip(pos_c, 0, W - 1)
-    t_idx = terrain_idx[map_idx, pos_r_c, pos_c_c]
-    t_idx = np.clip(t_idx, 0, len(vis_per_terrain) - 1).astype(np.int32)
-    vis_r_b = vis_per_terrain[t_idx]  # [B]
+    t_idx_here = terrain_idx[map_idx, pos_r_c, pos_c_c]
+    t_idx_here = np.clip(t_idx_here, 0, len(vis_per_terrain) - 1).astype(np.int32)
+    vis_r_b = vis_per_terrain[t_idx_here]
 
-    # --- Visibility masks [B, D, D] -----------------------------------------
     if occlude and vis_lut_packed is not None and disk_stack is not None:
-        # LUT fast path. ``vis_lut_packed[mi, pr, pc]`` with [B] indices
-        # returns [B, 254]. Batched unpack + AND with per-env disk.
-        packed = vis_lut_packed[map_idx, pos_r, pos_c]                 # [B, 254]
+        packed = vis_lut_packed[map_idx, pos_r_c, pos_c_c]
         full = np.unpackbits(packed, axis=1, bitorder="little")
         full = full[:, : D * D].reshape(B, D, D).astype(bool)
-        vis_masks = full & disk_stack[vis_r_b]                         # [B, D, D]
-    elif occlude:
-        # Fallback: live Bresenham raycast per env (should not be hit in
-        # practice — ``_load_maps`` now requires the LUT).
-        vis_masks = np.zeros((B, D, D), dtype=bool)
-        for b in range(B):
-            vis_masks[b] = _compute_occlusion_mask(
-                heightmap[map_idx[b]], int(pos_r[b]), int(pos_c[b]),
-                int(vis_r_b[b]), H, W,
-            )
+        vis_masks = full & disk_stack[vis_r_b]
     else:
-        # No occlusion: simple disk per env (test fast path).
         yy, xx = np.ogrid[-R:R + 1, -R:R + 1]
-        dist_sq = yy * yy + xx * xx                                    # [D, D]
-        vis_masks = dist_sq[None] <= (vis_r_b[:, None, None] ** 2)     # [B, D, D]
+        dist_sq = yy * yy + xx * xx
+        vis_masks = dist_sq[None] <= (vis_r_b[:, None, None] ** 2)
 
-    # --- RGB patch extraction: single fancy-index call ----------------------
     di = np.arange(-R, R + 1, dtype=pos_r.dtype)
-    rows = pos_r[:, None, None] + di[None, :, None]                    # [B, D, 1]
-    cols = pos_c[:, None, None] + di[None, None, :]                    # [B, 1, D]
+    rows = pos_r[:, None, None] + di[None, :, None]
+    cols = pos_c[:, None, None] + di[None, None, :]
     rows_b = np.broadcast_to(rows, (B, D, D))
     cols_b = np.broadcast_to(cols, (B, D, D))
-
     in_bounds = (rows_b >= 0) & (rows_b < H) & (cols_b >= 0) & (cols_b < W)
-    rows_c = np.clip(rows_b, 0, H - 1)
-    cols_c = np.clip(cols_b, 0, W - 1)
+    rows_cl = np.clip(rows_b, 0, H - 1)
+    cols_cl = np.clip(cols_b, 0, W - 1)
     mi_b = np.broadcast_to(map_idx[:, None, None], (B, D, D))
 
-    patches = rgb[mi_b, rows_c, cols_c]                                # [B, D, D, 3]
-    valid = vis_masks & in_bounds                                      # [B, D, D]
-    patches = np.where(valid[..., None], patches, 0)                   # zero masked cells
+    t_raw = terrain_idx[mi_b, rows_cl, cols_cl]             # [B, D, D] int8, -1=deadly
+    b_raw = berry_mask[mi_b, rows_cl, cols_cl]              # [B, D, D] bool
+    valid = vis_masks & in_bounds                           # [B, D, D]
 
-    # --- Assemble output ----------------------------------------------------
-    result = np.empty((B, 6, D, D), dtype=np.float32)
-    # Channels 0-2: RGB
-    result[:, :3] = patches.transpose(0, 3, 1, 2).astype(np.float32) / 255.0
-    # Channel 3: visibility mask
-    result[:, 3] = vis_masks.astype(np.float32)
-    # Channel 4: target indicator — NO=0.5, YES=1.0 on a single channel.
-    result[:, 4] = 0.0
-    for tr, tc, val in ((no_r, no_c, 0.5), (yes_r, yes_c, 1.0)):
+    # Start from TILE_UNSEEN; fill in visible cells.
+    out = np.zeros((B, D, D), dtype=np.int8)
+    # Base terrain: 1..9 for non-deadly, keep 0 (unseen) on invalid cells.
+    base = (t_raw.astype(np.int16) + 1)                     # -1 -> 0, others shifted
+    base = np.where(valid, base, 0).astype(np.int16)
+    # Deadly border (terrain_idx == -1) gets explicit class 13.
+    deadly = valid & (t_raw == -1)
+    base = np.where(deadly, TILE_DEADLY, base)
+    # Berry overlay on valid non-deadly cells.
+    berry = valid & b_raw & ~deadly
+    base = np.where(berry, TILE_BERRY, base)
+    out = base.astype(np.int8)
+
+    # Targets — splat at their (local_ty, local_tx) if visible and in patch.
+    b_idx = np.arange(B)
+    for tr, tc, cls in ((no_r, no_c, TILE_TARGET_NO), (yes_r, yes_c, TILE_TARGET_YES)):
         ty = tr - pos_r + R
         tx = tc - pos_c + R
         ty_c = np.clip(ty, 0, D - 1)
         tx_c = np.clip(tx, 0, D - 1)
         in_patch = (ty >= 0) & (ty < D) & (tx >= 0) & (tx < D)
-        visible = in_patch & vis_masks[np.arange(B), ty_c, tx_c]
+        visible = in_patch & vis_masks[b_idx, ty_c, tx_c]
         if visible.any():
             env_idx = np.where(visible)[0]
-            result[env_idx, 4, ty[env_idx], tx[env_idx]] = val
+            out[env_idx, ty[env_idx], tx[env_idx]] = cls
 
-    # Channel 5: berry mask — 1.0 on visible berry tiles, 0.0 elsewhere.
-    # Uses the same `valid = vis_masks & in_bounds` gate as the RGB gather,
-    # so the agent only sees berries it could actually see in the scene.
-    berry_patches = berry_mask[mi_b, rows_c, cols_c]                   # [B, D, D] bool
-    result[:, 5] = np.where(valid, berry_patches, False).astype(np.float32)
-
-    return result
+    return out
 
 
 @jax.jit
-def _compute_minimap_jax(
-    rgb_jax: jnp.ndarray,
+def _compute_tile_idx_jax(
+    terrain_idx_jax: jnp.ndarray,
     berry_mask_jax: jnp.ndarray,
     vis_lut_packed_jax: jnp.ndarray,
     disk_stack_jax: jnp.ndarray,
     vis_per_terrain_jax: jnp.ndarray,
-    terrain_idx_jax: jnp.ndarray,
     map_idx: jnp.ndarray,
     pos_r: jnp.ndarray,
     pos_c: jnp.ndarray,
@@ -285,71 +318,60 @@ def _compute_minimap_jax(
     no_r: jnp.ndarray,
     no_c: jnp.ndarray,
 ) -> jnp.ndarray:
-    """GPU port of ``_compute_minimap_batch`` (occlusion LUT path only).
-
-    All map arrays are expected to live on-device; per-env index arrays
-    (positions / map indices / target coords) are transferred per call.
-    Returns a [B, 6, 45, 45] float32 jnp array that stays on device.
-    """
+    """GPU port of ``_compute_tile_idx_batch`` (occlusion LUT fast path)."""
     B = pos_r.shape[0]
     R = MINIMAP_RADIUS
     D = MINIMAP_DIAMETER
-    H = rgb_jax.shape[1]
-    W = rgb_jax.shape[2]
+    H = terrain_idx_jax.shape[1]
+    W = terrain_idx_jax.shape[2]
 
     pos_r_c = jnp.clip(pos_r, 0, H - 1)
     pos_c_c = jnp.clip(pos_c, 0, W - 1)
-    t_idx = terrain_idx_jax[map_idx, pos_r_c, pos_c_c]
-    t_idx = jnp.clip(t_idx, 0, vis_per_terrain_jax.shape[0] - 1).astype(jnp.int32)
-    vis_r_b = vis_per_terrain_jax[t_idx]
+    t_idx_here = terrain_idx_jax[map_idx, pos_r_c, pos_c_c]
+    t_idx_here = jnp.clip(t_idx_here, 0, vis_per_terrain_jax.shape[0] - 1).astype(jnp.int32)
+    vis_r_b = vis_per_terrain_jax[t_idx_here]
 
-    # --- Visibility mask via bit-packed LUT (fast path only) ---
-    packed = vis_lut_packed_jax[map_idx, pos_r_c, pos_c_c]          # [B, 254] uint8
-    full = jnp.unpackbits(packed, axis=1, bitorder="little")        # [B, 2032] uint8
+    packed = vis_lut_packed_jax[map_idx, pos_r_c, pos_c_c]
+    full = jnp.unpackbits(packed, axis=1, bitorder="little")
     full = full[:, : D * D].reshape(B, D, D).astype(jnp.bool_)
-    vis_masks = full & disk_stack_jax[vis_r_b]                      # [B, D, D]
+    vis_masks = full & disk_stack_jax[vis_r_b]
 
-    # --- RGB patch extraction ---
     di = jnp.arange(-R, R + 1, dtype=pos_r.dtype)
-    rows = pos_r[:, None, None] + di[None, :, None]                 # [B, D, 1]
-    cols = pos_c[:, None, None] + di[None, None, :]                 # [B, 1, D]
+    rows = pos_r[:, None, None] + di[None, :, None]
+    cols = pos_c[:, None, None] + di[None, None, :]
     rows_b = jnp.broadcast_to(rows, (B, D, D))
     cols_b = jnp.broadcast_to(cols, (B, D, D))
     in_bounds = (rows_b >= 0) & (rows_b < H) & (cols_b >= 0) & (cols_b < W)
-    rows_c = jnp.clip(rows_b, 0, H - 1)
-    cols_c = jnp.clip(cols_b, 0, W - 1)
+    rows_cl = jnp.clip(rows_b, 0, H - 1)
+    cols_cl = jnp.clip(cols_b, 0, W - 1)
     mi_b = jnp.broadcast_to(map_idx[:, None, None], (B, D, D))
-    patches = rgb_jax[mi_b, rows_c, cols_c]                         # [B, D, D, 3]
+
+    t_raw = terrain_idx_jax[mi_b, rows_cl, cols_cl]
+    b_raw = berry_mask_jax[mi_b, rows_cl, cols_cl]
     valid = vis_masks & in_bounds
-    patches = jnp.where(valid[..., None], patches, jnp.zeros_like(patches))
 
-    # --- Assemble [B, 6, D, D] ---
-    rgb_chw = patches.transpose(0, 3, 1, 2).astype(jnp.float32) / 255.0
-    vis_chan = vis_masks.astype(jnp.float32)[:, None]
+    base = (t_raw.astype(jnp.int16) + 1)
+    base = jnp.where(valid, base, 0)
+    deadly = valid & (t_raw == -1)
+    base = jnp.where(deadly, TILE_DEADLY, base)
+    berry = valid & b_raw & ~deadly
+    base = jnp.where(berry, TILE_BERRY, base)
+    out = base.astype(jnp.int8)
 
-    # --- Target indicator (NO=0.5, YES=1.0; YES wins on overlap) ---
+    # Targets: last write wins; YES after NO so YES overwrites on overlap.
     b_idx = jnp.arange(B)
-    target = jnp.zeros((B, D, D), dtype=jnp.float32)
-    for tr, tc, val in ((no_r, no_c, 0.5), (yes_r, yes_c, 1.0)):
+    for tr, tc, cls in ((no_r, no_c, TILE_TARGET_NO), (yes_r, yes_c, TILE_TARGET_YES)):
         ty = tr - pos_r + R
         tx = tc - pos_c + R
         ty_c = jnp.clip(ty, 0, D - 1)
         tx_c = jnp.clip(tx, 0, D - 1)
         in_patch = (ty >= 0) & (ty < D) & (tx >= 0) & (tx < D)
         visible = in_patch & vis_masks[b_idx, ty_c, tx_c]
-        prev = target[b_idx, ty_c, tx_c]
-        new_vals = jnp.where(visible, jnp.asarray(val, dtype=jnp.float32), prev)
-        target = target.at[b_idx, ty_c, tx_c].set(new_vals)
-    target_chan = target[:, None]
+        prev = out[b_idx, ty_c, tx_c]
+        new_vals = jnp.where(visible, jnp.asarray(cls, dtype=jnp.int8), prev)
+        out = out.at[b_idx, ty_c, tx_c].set(new_vals)
 
-    # --- Berry mask — same visibility gate as RGB so the agent only sees
-    # berries it could actually perceive. Binary channel; survives pooling
-    # cleanly and gives Dreamer/STORM a crisp reconstruction target. ---
-    berry_patches = berry_mask_jax[mi_b, rows_c, cols_c]
-    berry_patches = jnp.where(valid, berry_patches, jnp.zeros_like(berry_patches))
-    berry_chan = berry_patches.astype(jnp.float32)[:, None]
-
-    return jnp.concatenate([rgb_chw, vis_chan, target_chan, berry_chan], axis=1)
+    return out
 
 
 def _compute_occlusion_mask(
@@ -500,16 +522,24 @@ class CognilandEnv:
         self._config = config
         self._num_envs = num_envs
 
-        # Load maps
-        maps = _load_maps(maps_path)
-        self._rgb = maps["rgb"]           # [N, 128, 128, 3]
-        self._heightmap = maps["heightmap"]  # [N, 128, 128]
-        self._terrain_idx = maps["terrain_idx"]  # [N, 128, 128]
-        self._berry_mask = maps["berry_mask"]  # [N, 128, 128]
+        env_cfg_for_filter = config.env if hasattr(config, "env") else config.get("env", {})
+        biome_filter = None
+        if hasattr(env_cfg_for_filter, "biome_filter"):
+            bf = env_cfg_for_filter.biome_filter
+            biome_filter = list(bf) if bf is not None else None
+        elif isinstance(env_cfg_for_filter, dict):
+            biome_filter = env_cfg_for_filter.get("biome_filter", None)
+
+        maps = _load_maps(maps_path, biome_filter=biome_filter)
+        # Keep rgb (if present) only for trajectory viz; env obs is tile-idx.
+        self._rgb = maps.get("rgb", None)
+        self._heightmap = maps["heightmap"]            # [N, 128, 128]
+        self._terrain_idx = maps["terrain_idx"]        # [N, 128, 128]
+        self._berry_mask = maps["berry_mask"]          # [N, 128, 128]
         self._vis_lut_packed = maps["visibility_lut"]  # [N, 128, 128, 254] uint8
-        self._biomes = maps["biomes"]      # object array [N] of biome name strings
-        self._num_maps = self._rgb.shape[0]
-        self._map_size = self._rgb.shape[1]
+        self._biomes = maps["biomes"]                  # object array [N] of biome names
+        self._num_maps = self._terrain_idx.shape[0]
+        self._map_size = self._terrain_idx.shape[1]
 
         # Precomputed circular disks, keyed by vis_radius. Used to AND with
         # the unpacked occlusion mask to restrict to the agent's current
@@ -535,6 +565,59 @@ class CognilandEnv:
         else:
             self._min_manhattan = 60
 
+        # Optional curriculum on the spawn-target distance.
+        #
+        # Two forms are supported, in precedence order:
+        #
+        # 1. ``spawn_distance_schedule: {start: [lo, hi], end: [lo, hi],
+        #    anneal_frames: N}`` — the trainer calls
+        #    ``set_spawn_distance_range(lo, hi)`` every segment, interpolating
+        #    linearly between ``start`` and ``end`` over ``anneal_frames``
+        #    total training frames, then clamping at ``end`` thereafter. Use
+        #    this to train on easy spawns first and widen to the full range
+        #    over time.
+        #
+        # 2. ``spawn_distance_range: [lo, hi]`` — static band, per-episode
+        #    uniform sampling of the minimum spawn-target Manhattan distance
+        #    from ``[lo, hi]``. Overrides ``min_spawn_target_manhattan``.
+        #
+        # With neither set, a scalar ``min_spawn_target_manhattan`` is used
+        # (no band — spawn is ``>= min_manhattan``, no upper cap).
+        raw_range = None
+        if hasattr(env_cfg, "spawn_distance_range"):
+            raw_range = env_cfg.spawn_distance_range
+        elif isinstance(env_cfg, dict):
+            raw_range = env_cfg.get("spawn_distance_range", None)
+        if raw_range is None:
+            self._distance_range = None
+        else:
+            lo, hi = int(raw_range[0]), int(raw_range[1])
+            if hi < lo:
+                raise ValueError(f"spawn_distance_range hi({hi}) < lo({lo})")
+            self._distance_range = (lo, hi)
+
+        # Schedule parse. ``start``/``end`` are [lo, hi] pairs; when present
+        # the trainer calls ``set_spawn_distance_range`` before each segment
+        # and the schedule overrides any static ``spawn_distance_range``.
+        raw_sched = None
+        if hasattr(env_cfg, "spawn_distance_schedule"):
+            raw_sched = env_cfg.spawn_distance_schedule
+        elif isinstance(env_cfg, dict):
+            raw_sched = env_cfg.get("spawn_distance_schedule", None)
+        if raw_sched is None:
+            self._distance_schedule = None
+        else:
+            start = tuple(int(x) for x in raw_sched["start"])
+            end = tuple(int(x) for x in raw_sched["end"])
+            anneal = int(raw_sched["anneal_frames"])
+            if anneal <= 0:
+                raise ValueError("spawn_distance_schedule.anneal_frames must be positive")
+            self._distance_schedule = {"start": start, "end": end, "anneal_frames": anneal}
+            # Initialise the live band at the schedule's start so any reset
+            # before the trainer calls ``set_spawn_distance_range`` uses the
+            # easy curriculum setting rather than a stale prior.
+            self._distance_range = start
+
         # Terrain vis radius
         if hasattr(env_cfg, "terrain_vis_radius"):
             tvr = env_cfg.terrain_vis_radius
@@ -556,7 +639,7 @@ class CognilandEnv:
         else:
             self._occlude = True
 
-        # Vectorised minimap helpers — precomputed once so _compute_minimap_batch
+        # Vectorised minimap helpers — precomputed once so _compute_tile_idx_batch
         # is a single-shot fancy-indexing call per step.
         self._vis_per_terrain = np.array(
             [self._terrain_vis_radius.get(name, 7) for name in TERRAIN_NAMES],
@@ -603,9 +686,6 @@ class CognilandEnv:
         # Which tool (1=raft, 2=rope, 3=shoes) was newly crafted on the current
         # step, 0 otherwise. Consumed by tasks.py for craft-bonus dispatch.
         self.crafted_this_step: np.ndarray | None = None
-        # Per-step flag: True if a movement action (0-3) landed on a berry tile
-        # this step. Consumed by tasks.py for the berry-step curriculum bonus.
-        self.stepped_on_berry: np.ndarray | None = None
         self.done: np.ndarray | None = None
 
         # Per-episode cost-to-go map (Dijkstra from target), one per env
@@ -652,19 +732,15 @@ class CognilandEnv:
 
         # GPU-resident copies of the map arrays used by the jitted minimap
         # kernel. Uploaded once here so every call reuses them (closure over
-        # these device arrays inside the jit cache). Total GPU bytes for 256
-        # train maps is ~1.1 GB, dominated by ``vis_lut_packed``.
-        # The non-occlusion fallback is kept on CPU — only the LUT fast path
-        # runs on GPU. Tests that set ``occlude=False`` keep the numpy path.
+        # device arrays inside the jit cache). The non-occlusion path stays
+        # on CPU.
         if self._occlude:
-            self._rgb_jax = jnp.asarray(self._rgb)
             self._berry_mask_jax = jnp.asarray(self._berry_mask)
             self._vis_lut_packed_jax = jnp.asarray(self._vis_lut_packed)
             self._disk_stack_jax = jnp.asarray(self._disk_stack)
             self._vis_per_terrain_jax = jnp.asarray(self._vis_per_terrain)
             self._terrain_idx_jax = jnp.asarray(self._terrain_idx)
         else:
-            self._rgb_jax = None
             self._berry_mask_jax = None
             self._vis_lut_packed_jax = None
             self._disk_stack_jax = None
@@ -680,7 +756,7 @@ class CognilandEnv:
 
     def observation_space(self) -> dict:
         return {
-            "minimap": (6, MINIMAP_DIAMETER, MINIMAP_DIAMETER),
+            "minimap": (MINIMAP_DIAMETER, MINIMAP_DIAMETER),  # int8, class enum 0..13
             "scalars": (6,),
         }
 
@@ -689,6 +765,39 @@ class CognilandEnv:
         indices = np.arange(count) + self._map_counter
         self._map_counter += count
         return (indices % self._num_maps).astype(np.int32)
+
+    def _sample_distance_constraint(self, count: int):
+        """Return (min_m, max_m) per-env distance constraints for a new batch.
+
+        With ``spawn_distance_range: [lo, hi]`` set, each env samples a
+        uniform integer ``d ∈ [lo, hi]`` and uses it as BOTH min and max
+        (with ±5 tolerance), giving a roughly uniform distribution of spawn
+        distances across the curriculum. Otherwise returns the scalar
+        ``min_spawn_target_manhattan`` and no max.
+        """
+        if self._distance_range is None:
+            return int(self._min_manhattan), None
+        lo, hi = self._distance_range
+        d = self._rng.integers(lo, hi + 1, size=count, dtype=np.int32)
+        tol = 5
+        return (
+            np.maximum(d - tol, 0).astype(np.int32),
+            (d + tol).astype(np.int32),
+        )
+
+    def set_spawn_distance_range(self, lo: int, hi: int) -> None:
+        """Update the live spawn-distance band. Used by the trainer's
+        curriculum schedule (see Trainer._apply_spawn_distance_schedule)."""
+        lo, hi = int(lo), int(hi)
+        if hi < lo:
+            raise ValueError(f"spawn_distance_range hi({hi}) < lo({lo})")
+        self._distance_range = (lo, hi)
+
+    @property
+    def spawn_distance_schedule(self):
+        """Read-only accessor used by the trainer to decide whether to drive
+        a curriculum. Returns ``None`` if no schedule was configured."""
+        return self._distance_schedule
 
     def _tool_name(self, tool_id: int) -> str | None:
         return {0: None, 1: "raft", 2: "rope", 3: "shoes"}.get(tool_id, None)
@@ -746,13 +855,14 @@ class CognilandEnv:
             self.map_idx = mi
         else:
             self.map_idx = self._assign_maps(B)
+        min_m, max_m = self._sample_distance_constraint(B)
         (
             self.spawn_r, self.spawn_c,
             self.yes_r, self.yes_c,
             self.no_r, self.no_c,
         ) = _sample_spawn_target_batch(
             self._terrain_idx, self.map_idx, self._rng,
-            min_manhattan=self._min_manhattan,
+            min_manhattan=min_m, max_manhattan=max_m,
         )
         self.mid_r = self.yes_r.copy()
         self.mid_c = self.yes_c + (TARGET_GAP // 2)
@@ -765,7 +875,6 @@ class CognilandEnv:
         self.steps = np.zeros(B, dtype=np.int32)
         self.done = np.zeros(B, dtype=bool)
         self.crafted_this_step = np.zeros(B, dtype=np.int32)
-        self.stepped_on_berry = np.zeros(B, dtype=bool)
 
         # Precompute Dijkstra cost-to-go maps per env (one per episode),
         # measured from the midpoint between YES and NO targets.
@@ -791,9 +900,10 @@ class CognilandEnv:
         new_map_idx = self._assign_maps(count)
         self.map_idx[indices] = new_map_idx
 
+        min_m, max_m = self._sample_distance_constraint(count)
         sr, sc, yr, yc, nr, nc = _sample_spawn_target_batch(
             self._terrain_idx, new_map_idx, self._rng,
-            min_manhattan=self._min_manhattan,
+            min_manhattan=min_m, max_manhattan=max_m,
         )
         self.spawn_r[indices] = sr
         self.spawn_c[indices] = sc
@@ -813,7 +923,6 @@ class CognilandEnv:
         self.steps[indices] = 0
         self.done[indices] = False
         self.crafted_this_step[indices] = 0
-        self.stepped_on_berry[indices] = False
 
         # Recompute cost-to-go (from midpoint) for envs that just reset.
         for j, b in enumerate(indices):
@@ -847,8 +956,10 @@ class CognilandEnv:
 
         # Reset per-step craft flag (set below when a craft action succeeds).
         self.crafted_this_step.fill(0)
-        # Reset per-step berry-arrival flag (set below when movement lands on berry).
-        self.stepped_on_berry.fill(False)
+        # Per-step flag: True if the agent successfully foraged a berry this
+        # step (action=4 on a berry tile). Consumed by tasks.py for a Markovian
+        # berry-forage bonus; no HP dependency and no anneal.
+        foraged_berry = np.zeros(B, dtype=bool)
 
         # Track which envs just finished (for episode return reporting)
         returned_episode = np.zeros(B, dtype=bool)
@@ -896,7 +1007,6 @@ class CognilandEnv:
             t_idx_safe = np.where(valid_move, t_idx, 0).astype(np.int32)
 
             is_berry = valid_move & self._berry_mask[mi, new_r_safe, new_c_safe]
-            self.stepped_on_berry[idx] = is_berry
             terrain_is_grass = valid_move & (t_idx_safe == grass_idx) & ~is_berry
 
             prev_consec = self.consec_grass[idx]
@@ -946,6 +1056,7 @@ class CognilandEnv:
             is_berry = valid & self._berry_mask[mi, cur_r, cur_c]
             is_forest = valid & ~is_berry & (t_idx_safe == forest_idx)
             terrain_is_grass = valid & ~is_berry & (t_idx_safe == grass_idx)
+            foraged_berry[idx] = is_berry
 
             # Berry: heal & reset consec_grass; no drain.
             heal = np.where(is_berry, berry_heal, 0.0)
@@ -1055,7 +1166,6 @@ class CognilandEnv:
             "reached_yes": reached_yes,
             "reached_no": reached_no,
             "alive": self.hp > 0,
-            "hp": self.hp.copy(),
             "dist_to_target": np.sqrt(
                 (self.pos_r.astype(np.float32) - self.mid_r.astype(np.float32)) ** 2 +
                 (self.pos_c.astype(np.float32) - self.mid_c.astype(np.float32)) ** 2
@@ -1076,9 +1186,9 @@ class CognilandEnv:
             # Tool id crafted on this step (0=none, 1=raft, 2=rope, 3=shoes) —
             # used by tasks 4-6 to fire the craft bonus once per episode.
             "crafted": self.crafted_this_step.copy(),
-            # Whether a movement action (0-3) landed on a berry tile this step —
-            # used by the berry-step curriculum bonus in tasks.py.
-            "stepped_on_berry": self.stepped_on_berry.copy(),
+            # True on the step the agent successfully foraged a berry
+            # (action=4 on a berry tile). Markovian; no HP dependency.
+            "foraged_berry": foraged_berry,
         }
 
         dones = self.done.copy()
@@ -1094,22 +1204,19 @@ class CognilandEnv:
     def _get_obs(self) -> dict:
         """Build observation dict for all envs.
 
-        When ``self._occlude`` is True (training default) the minimap is
-        computed on GPU via ``_compute_minimap_jax`` and returned as a jnp
-        array; ``scalars`` stays as a numpy array. When ``occlude=False``
-        (test-only fast path) we use the pure-numpy fallback.
+        When ``self._occlude`` is True the minimap is computed on GPU via
+        ``_compute_tile_idx_jax`` and returned as a jnp array; ``scalars``
+        stays as a numpy array. When ``occlude=False`` the numpy fallback runs.
         """
         B = self._num_envs
 
-        # Compute minimap
         if self._occlude:
-            minimap = _compute_minimap_jax(
-                self._rgb_jax,
+            minimap = _compute_tile_idx_jax(
+                self._terrain_idx_jax,
                 self._berry_mask_jax,
                 self._vis_lut_packed_jax,
                 self._disk_stack_jax,
                 self._vis_per_terrain_jax,
-                self._terrain_idx_jax,
                 jnp.asarray(self.map_idx),
                 jnp.asarray(self.pos_r),
                 jnp.asarray(self.pos_c),
@@ -1119,8 +1226,8 @@ class CognilandEnv:
                 jnp.asarray(self.no_c),
             )
         else:
-            minimap = _compute_minimap_batch(
-                self._rgb, self._heightmap, self._terrain_idx, self._berry_mask,
+            minimap = _compute_tile_idx_batch(
+                self._terrain_idx, self._berry_mask,
                 self.map_idx, self.pos_r, self.pos_c,
                 self.yes_r, self.yes_c,
                 self.no_r, self.no_c,

@@ -4,7 +4,29 @@
 
 Cogniland is a multi-task RL framework where agents learn to navigate procedurally generated 128x128 maps. The agent starts at a random spawn point and must reach a target position while managing **HP** (health points) and **wood** (gathered from forests). Different terrain types impose HP drains, and the agent can **forage** (berries heal HP, forests yield wood) and **craft tools** (raft, rope, shoes) that reduce terrain costs. Maps are pre-generated in pools of 256 (train) / 16 (val/test) across 4 biomes.
 
-The framework supports three agents: **PPO-RNN** (JAX/Flax), **DreamerV3**, and **STORM**. New agents plug in via a `@register_agent` decorator — all training orchestration, evaluation, and logging are agent-agnostic.
+The agent's observation is a **45x45 int8 tile-class minimap** (14 classes: unseen, 9 terrain types, berry, target-YES/NO, deadly border) plus 6 normalised scalars (compass x/y, terrain id, hp, wood, tool). See `NUM_TILE_CLASSES` and `TILE_*` constants in `src/cogniland/envs/env.py`.
+
+The framework supports three agents: **PPO-RNN** (JAX/Flax, default, ~222k params), **DreamerV3**, and **STORM**. New agents plug in via a `@register_agent` decorator — all training orchestration, evaluation, and logging are agent-agnostic.
+
+### Training-dynamics notes (April 2026)
+
+The reward defaults were re-tuned after a deep-dive on the "success climbs to 30% at 400k
+then collapses" failure mode. Keep these in mind before tweaking:
+
+- `reward.death_penalty=0` — a non-zero sparse death penalty creates a cliff in the
+  value function that traps PPO in a "die quickly" local optimum (ma_r ≈ -5.8, 0% success)
+  regardless of entropy / lr / clip_grad tuning. Confirmed across 8 parallel sweeps.
+- `reward.shaping_coef=0.3` (up from 0.1) — stronger PBRS gives a per-step gradient
+  that survives GAE discount and minibatch advantage normalisation.
+- `agent.entropy_coef=3e-2` (up from 1.5e-3) — lower coefs let entropy collapse before
+  the agent has stumbled on enough reach-target trajectories to learn from.
+- `num_tasks=1` in `configs/env/cogniland.yaml` — multi-task round-robin across 7 tasks
+  dilutes the task-0 signal 7× with stub tasks 1-6, swamping the shared trunk gradient.
+- `env.biome_filter=[balanced]` restricts training to the 64 balanced-biome maps for fast
+  iteration. `null` uses all 256 maps.
+
+The current PPO-RNN baseline at 3M frames converges to ma_r ≈ +13, success ≈ 20-24% on
+balanced-biome task 0. Further gains (berry-detour skill for long episodes) are pending.
 
 ---
 
@@ -205,7 +227,7 @@ Trainer(config, agent).run()
 | 3 | beach | 1 | 7 | — | — |
 | 4 | sandy | 1 | 7 | — | — |
 | 5 | grassland | 1 | 7 | — | — |
-| 6 | forest | 3 | 5 | — | — |
+| 6 | forest | 2 | 5 | — | — |
 | 7 | rocky | 6 | 10 | — | 1 |
 | 8 | mountains | 12 | 22 | — | 3 |
 | 9 | **berry** (overlay) | **0** | — | — | — |

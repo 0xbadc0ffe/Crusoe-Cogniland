@@ -65,22 +65,6 @@ class Trainer:
         self.train_env = make_env(config.env_id, config, train=True)
         self.eval_env = make_env(config.env_id, config, train=False)
 
-        # Curriculum (forage bonus). Eval is pinned to frac=1.0 for the whole
-        # run so reported eval/* metrics always reflect the unshaped task
-        # reward, making curves comparable across the anneal.
-        fb = None
-        cur_cfg = config.get("curriculum", None) if hasattr(config, "get") else getattr(config, "curriculum", None)
-        if cur_cfg is not None:
-            fb = cur_cfg.get("forage_bonus", None) if hasattr(cur_cfg, "get") else getattr(cur_cfg, "forage_bonus", None)
-        if fb is not None:
-            self._forage_initial_coef = float(fb.get("initial_coef", 0.0) if hasattr(fb, "get") else getattr(fb, "initial_coef", 0.0))
-            self._forage_anneal_frames = float(fb.get("anneal_frames", 0) if hasattr(fb, "get") else getattr(fb, "anneal_frames", 0))
-        else:
-            self._forage_initial_coef = 0.0
-            self._forage_anneal_frames = 0.0
-        if hasattr(self.eval_env, "set_curriculum_progress"):
-            self.eval_env.set_curriculum_progress(1.0)
-
         # Task sampler
         self.task_sampler = TaskSampler(
             num_tasks=self.num_tasks,
@@ -133,17 +117,25 @@ class Trainer:
             self.checkpoint_callback = None
 
     # ------------------------------------------------------------------ #
-    # Curriculum helpers
+    # Spawn-distance curriculum
     # ------------------------------------------------------------------ #
-    def _curriculum_frac(self, total_trained: int) -> float:
-        """Linear anneal: 0 at start, 1 at ``anneal_frames``, clamped."""
-        if self._forage_anneal_frames <= 0.0:
-            return 1.0
-        return float(min(1.0, max(0.0, total_trained / self._forage_anneal_frames)))
+    def _apply_spawn_distance_schedule(self, total_trained: int) -> None:
+        """Interpolate the env's spawn-distance band at this training point.
 
-    def _curriculum_forage_coef(self, total_trained: int) -> float:
-        """Current scalar value of the annealed forage coefficient."""
-        return self._forage_initial_coef * max(0.0, 1.0 - self._curriculum_frac(total_trained))
+        Reads ``env.spawn_distance_schedule`` from the train env; the eval
+        env is intentionally NOT advanced, so eval stays on whatever
+        distribution the user configured (typically the full band).
+        """
+        sched = getattr(self.train_env, "spawn_distance_schedule", None)
+        if not sched:
+            return
+        start = sched["start"]
+        end = sched["end"]
+        anneal = sched["anneal_frames"]
+        frac = min(1.0, max(0.0, total_trained / float(anneal)))
+        lo = int(round(start[0] + frac * (end[0] - start[0])))
+        hi = int(round(start[1] + frac * (end[1] - start[1])))
+        self.train_env.set_spawn_distance_range(lo, hi)
 
     # ------------------------------------------------------------------ #
     # Main loop
@@ -167,10 +159,10 @@ class Trainer:
             self.train_env.set_tasks(task_ids)
             self._train_task_ids = np.asarray(task_ids, dtype=np.int32)
 
-            # Advance the curriculum schedule for this segment.
-            frac = self._curriculum_frac(total_trained)
-            if hasattr(self.train_env, "set_curriculum_progress"):
-                self.train_env.set_curriculum_progress(frac)
+            # Advance spawn-distance curriculum if the env exposes one. Eval
+            # env is left pinned at its configured range (typically the full
+            # evaluation distribution).
+            self._apply_spawn_distance_schedule(total_trained)
 
             t0 = time.time()
             self.agent_state, metrics = self.agent.train(
@@ -318,14 +310,26 @@ class Trainer:
 
             self.run_logger.wandb_run.log(log_dict)
 
+        # Compact ma_success alongside ma_r in the tqdm postfix.
         pbar.set_postfix(ep=self.train_metrics.env_total_episodes,
-                         ma_r=f"{ma_r:.2f}", fps=f"{fps:.0f}")
+                         ma_r=f"{ma_r:.2f}",
+                         ma_s=f"{ma_s:.2f}",
+                         fps=f"{fps:.0f}")
+        # Also print loss dynamics to stdout every segment so offline runs have
+        # a human-readable trace of entropy / value_loss / policy_loss.
+        loss_bits = []
+        for k in ("policy_loss", "value_loss", "entropy", "approx_kl", "clipfrac"):
+            v = metrics.get(k)
+            if isinstance(v, (int, float)):
+                loss_bits.append(f"{k}={v:+.3f}")
+        if loss_bits:
+            logger.info("[frame %d] ma_r=%+.2f ma_s=%+.2f  %s",
+                        total_trained, ma_r, ma_s, "  ".join(loss_bits))
         self._log_agent_metrics(metrics, total_trained)
 
     def _log_agent_metrics(self, metrics: dict, train_steps: int):
         extras = {f"train/{k}": v for k, v in metrics.items()
                   if k != "episode_info" and isinstance(v, (int, float))}
-        extras["train/curriculum/forage_coef"] = self._curriculum_forage_coef(train_steps)
         extras["train_steps"] = train_steps
         self.run_logger.wandb_run.log(extras)
 

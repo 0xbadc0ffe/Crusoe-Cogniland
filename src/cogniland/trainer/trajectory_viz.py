@@ -74,9 +74,18 @@ class TrajectoryLogger:
 
         # Build dedicated env with one slot per biome map, auto-reset disabled
         # so pos_r/pos_c retains the final position after termination.
-        # Use a throwaway config with num_parallel_envs = n so the base env
-        # allocates exactly n slots.
-        self.env = CognilandEnv(config, val_path, num_envs=self.n)
+        # Force biome_filter=None here so we see every biome regardless of the
+        # training config's filter. Use a shallow copy + override so we don't
+        # mutate the caller's config.
+        import copy as _copy
+        traj_config = _copy.copy(config)
+        try:
+            from omegaconf import OmegaConf
+            traj_config = OmegaConf.create(OmegaConf.to_container(config, resolve=True))
+            traj_config.env.biome_filter = None
+        except Exception:
+            pass
+        self.env = CognilandEnv(traj_config, val_path, num_envs=self.n)
         self.env._auto_reset_enabled = False
         self.env._min_manhattan = 120
 

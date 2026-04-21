@@ -16,7 +16,7 @@ class TileEffects:
             "beach": 1,
             "sandy": 1,
             "grassland": 1,
-            "forest": 3,
+            "forest": 2,
             "rocky": 6,
             "mountains": 12,
         }
