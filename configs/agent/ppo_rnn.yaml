@@ -26,8 +26,7 @@ agent:
 
   checkpoint:
     enabled: true
-    save_best: true
-    save_last: true
-    save_only_best: true
+    save_best: false       #from validation set
+    save_last: true #from training set
     upload_to_wandb: false
     checkpoint_dir: checkpoints

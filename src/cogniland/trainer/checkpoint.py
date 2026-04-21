@@ -98,7 +98,7 @@ class CheckpointManager:
         config: DictConfig,
         metrics: Optional[Dict[str, float]] = None,
         is_best: bool = False,
-        best_only: bool = False,
+        save_step: bool = True,
         save_last: bool = False,
     ) -> Optional[Path]:
         """Save agent checkpoint.
@@ -111,12 +111,12 @@ class CheckpointManager:
             step: Training step number
             config: Agent configuration (OmegaConf)
             metrics: Optional metrics to save with checkpoint
-            is_best: Whether this is the best checkpoint so far
-            best_only: If True, only save to 'best/' if this is the best checkpoint,
-                      skip creating intermediate step_* checkpoints
+            is_best: Force this checkpoint to be treated as best
+            save_step: Write the periodic ``step_{step:08d}/`` snapshot
+            save_last: Refresh ``last/`` with this state
 
         Returns:
-            Path to saved checkpoint directory, or None if best_only and not best
+            Path to the step_* snapshot when ``save_step`` is True, else None.
         """
         # Extract trainable state (only JAX PyTree - orbax compatible)
         # All agents now use unified AgentState with train_state + runtime
@@ -136,14 +136,10 @@ class CheckpointManager:
         # Check if this is the best checkpoint
         is_new_best = is_best or (self.save_best and self._is_best(metrics))
 
-        # If best_only mode and not the best, skip saving entirely
-        if best_only and not is_new_best:
-            return None
-
         checkpoint_path = None
 
-        # Save regular step checkpoint (skip if best_only mode)
-        if not best_only:
+        # Periodic step_* snapshot
+        if save_step:
             checkpoint_path = self.checkpoint_dir / f"step_{step:08d}"
 
             # Check if checkpoint already exists (can happen during cross-task evaluation)
@@ -172,7 +168,6 @@ class CheckpointManager:
 
             # Remove existing best checkpoint if it exists (orbax doesn't allow overwrite)
             if best_path.exists():
-                import shutil
                 shutil.rmtree(best_path)
 
             self.checkpointer.save(
@@ -210,11 +205,8 @@ class CheckpointManager:
                 json.dump(custom_metadata, f, indent=2)
             logger.debug(f"Saved last checkpoint at step {step} to {last_path}")
 
-        if best_only and is_new_best:
-            return self.checkpoint_dir / "best"
-
-        # Cleanup old checkpoints (only relevant if not best_only mode)
-        if not best_only and self.keep_last > 0:
+        # Cleanup old step_* checkpoints
+        if save_step and self.keep_last > 0:
             self._cleanup_old_checkpoints()
 
         return checkpoint_path
@@ -371,10 +363,10 @@ class CheckpointCallback:
 
     Config options (in model.checkpoint):
         - enabled: Whether to enable checkpointing (default: True)
-        - interval: Save checkpoint every N steps (default: 1000)
-        - keep_last: Number of checkpoints to keep (default: 3)
+        - interval: Save step_* checkpoint every N steps (default: 1000)
+        - keep_last: Number of step_* checkpoints to keep (default: 3)
         - save_best: Whether to track and save best checkpoint (default: True)
-        - save_only_best: Only save best checkpoint, skip intermediate step_* checkpoints (default: False)
+        - save_last: Whether to refresh last/ on every validation (default: True)
         - upload_to_wandb: Whether to upload best checkpoint to WandB (default: False)
 
     Usage:
@@ -417,7 +409,6 @@ class CheckpointCallback:
         self.keep_last = self.checkpoint_config.get('keep_last', 3)
         self.save_best = self.checkpoint_config.get('save_best', True)
         self.save_last = self.checkpoint_config.get('save_last', True)
-        self.save_only_best = self.checkpoint_config.get('save_only_best', False)
         self.upload_to_wandb = self.checkpoint_config.get('upload_to_wandb', False)
 
         # Create checkpoint manager (will be initialized per environment)
@@ -459,17 +450,15 @@ class CheckpointCallback:
         if not self.enabled or self.manager is None:
             return
 
-        # Skip periodic saves if save_only_best is enabled
-        if self.save_only_best:
-            return
-
-        # Save checkpoint at interval
+        # Save step_* snapshot at interval. Validation-driven best/last are
+        # handled separately in ``on_validation_end``.
         if self.interval > 0 and step % self.interval == 0:
             self.manager.save(
                 agent_state=agent_state,
                 step=step,
                 config=self.full_config,
                 metrics=metrics,
+                save_step=True,
             )
 
     def on_validation_end(
@@ -490,21 +479,22 @@ class CheckpointCallback:
         if not (self.save_best or self.save_last):
             return
 
-        # Save checkpoint with metrics (manager will determine if it's best).
-        # If save_only_best is enabled, only save to 'best/' when this is actually the best.
-        # If save_last is enabled, always refresh 'last/'.
-        checkpoint_path = self.manager.save(
+        # Validation snapshots only: manager decides whether to write 'best/'
+        # (when metrics improve) and 'last/' (every call, when save_last is set).
+        # step_* snapshots live on the training-step path (see on_train_step_end).
+        self.manager.save(
             agent_state=agent_state,
             step=step,
             config=self.full_config,
             metrics=metrics,
-            best_only=self.save_only_best,
+            save_step=False,
             save_last=self.save_last,
         )
 
         # Upload best checkpoint to WandB if this was a new best (and upload is enabled)
         if self.upload_to_wandb and self.wandb_run is not None and self.manager.best_step == step:
-            self._upload_to_wandb(checkpoint_path)
+            best_path = self.manager.checkpoint_dir / "best"
+            self._upload_to_wandb(best_path)
 
     def restore_best_from(
         self,

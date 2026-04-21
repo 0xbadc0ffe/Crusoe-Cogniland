@@ -366,13 +366,15 @@ agent:
   checkpoint:
     enabled: true
     save_best: true         # Track + save best-by-eval checkpoint
-    save_last: true         # Always refresh 'last/'
-    save_only_best: true    # Skip periodic step_* snapshots; only write 'best/' and 'last/'
+    save_last: true         # Always refresh 'last/' on every validation
     upload_to_wandb: false  # Upload best checkpoint as a W&B artifact
     checkpoint_dir: checkpoints
     # Advanced (not set in ppo_rnn.yaml, but respected by CheckpointCallback):
-    # interval: 1000        # Periodic step_* save cadence (ignored when save_only_best=true)
+    # interval: 1000        # Periodic step_* save cadence (driven by on_train_step_end)
     # keep_last: 3          # Rotation window for step_* checkpoints
 ```
+
+`step_*` snapshots are only written from `CheckpointCallback.on_train_step_end`
+at the configured `interval`. Validation only writes to `best/` and `last/`.
 
 Checkpoints are saved to `results/{wandb_run_id}/{checkpoint_dir}/`.

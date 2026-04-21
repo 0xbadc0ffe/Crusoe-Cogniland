@@ -224,6 +224,10 @@ def sample_berry_mask(hm: np.ndarray, biome: str, target_frac: float,
     Only forest pixels are eligible. Probability per forest pixel is
     proportional to its local height within the forest class, scaled so the
     expected berry count equals ``target_frac`` of forest pixels.
+
+    Each sampled seed is then dilated into a 2x2 patch (``(r,c)``,
+    ``(r+1,c)``, ``(r,c+1)``, ``(r+1,c+1)``), clipped to eligible terrain
+    (forest + beach) so berries never bleed onto water / rocks.
     """
     idx = _terrain_idx(hm, biome)
     forest_mask = idx == FOREST_CLASS_IDX
@@ -247,7 +251,19 @@ def sample_berry_mask(hm: np.ndarray, biome: str, target_frac: float,
     if beach_count > 0:
         berry_mask[beach_mask] = rng.random(beach_count) < BEACH_BERRY_PROB
 
-    return berry_mask
+    # Dilate each berry seed into a 2x2 patch, clipped to forest+beach so
+    # berries never leak onto ineligible terrain. Paints down-right from each
+    # seed; seeds on the bottom/right edge simply paint fewer neighbours.
+    eligible = forest_mask | beach_mask
+    down = np.zeros_like(berry_mask)
+    down[1:, :] = berry_mask[:-1, :]
+    right = np.zeros_like(berry_mask)
+    right[:, 1:] = berry_mask[:, :-1]
+    diag = np.zeros_like(berry_mask)
+    diag[1:, 1:] = berry_mask[:-1, :-1]
+    dilated = berry_mask | (down & eligible) | (right & eligible) | (diag & eligible)
+
+    return dilated
 
 
 def paint_deadly_border(hm: np.ndarray, value: float = DEADLY_VALUE) -> np.ndarray:
