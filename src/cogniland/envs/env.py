@@ -7,7 +7,11 @@ Runs B parallel games simultaneously. Each game has:
   - 8 actions: 4 cardinal moves, forage, craft_raft, craft_rope, craft_shoes
 
 Observations:
-  - minimap: int8 [B, 45, 45] — per-cell tile-class id in TILE_CLASS_* (see below)
+  - minimap: int8 [B, 45, 45] — per-cell tile-class id (0 unseen, 1..9 terrain,
+      13 deadly). Berry/target overlays are now emitted as separate planes.
+  - berry_mask: float32 [B, 45, 45] — 1.0 on visible berry tiles, 0.0 elsewhere.
+  - target_mask: float32 [B, 45, 45] — 1.0 on visible YES target, 0.5 on visible
+      NO target, 0.0 elsewhere.
   - scalars: float32 [B, 6] — compass, terrain, hp, wood, tool
 """
 
@@ -225,19 +229,20 @@ def _compute_tile_idx_batch(
     vis_lut_packed: np.ndarray | None,
     disk_stack: np.ndarray | None,
     occlude: bool = True,
-) -> np.ndarray:
-    """Compute per-cell tile-class minimap (int8 [B, 45, 45]).
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Compute the per-cell minimap plus berry/target overlay planes.
 
-    Class enum:
-        0              TILE_UNSEEN (occluded or OOB)
-        1..9           base terrain (TERRAIN_NAMES[i] -> i + 1)
-        10             TILE_BERRY
-        11/12          TILE_TARGET_YES / NO
-        13             TILE_DEADLY (terrain_idx == -1)
-
-    Priority on visible cells: deadly > berry > target > base terrain.
-    (Target overrides base so the agent can always locate the goal when in
-    sight; berry overlays forest/beach; deadly is absolute.)
+    Returns
+    -------
+    tile_idx : int8 [B, 45, 45]
+        Per-cell terrain class.  0 = UNSEEN/OOB, 1..9 = base terrain,
+        13 = TILE_DEADLY.  Berry/target overlays are no longer written here —
+        they occupy their own planes so the CNN keeps access to the base
+        terrain underneath them.
+    berry_plane : float32 [B, 45, 45]
+        1.0 on visible berry tiles, 0.0 elsewhere.
+    target_plane : float32 [B, 45, 45]
+        1.0 on visible YES target, 0.5 on visible NO target, 0.0 elsewhere.
     """
     B = len(pos_r)
     R = MINIMAP_RADIUS
@@ -274,22 +279,20 @@ def _compute_tile_idx_batch(
     b_raw = berry_mask[mi_b, rows_cl, cols_cl]              # [B, D, D] bool
     valid = vis_masks & in_bounds                           # [B, D, D]
 
-    # Start from TILE_UNSEEN; fill in visible cells.
-    out = np.zeros((B, D, D), dtype=np.int8)
-    # Base terrain: 1..9 for non-deadly, keep 0 (unseen) on invalid cells.
+    # Tile index channel: unseen -> 0, terrain -> 1..9, deadly -> 13.
     base = (t_raw.astype(np.int16) + 1)                     # -1 -> 0, others shifted
     base = np.where(valid, base, 0).astype(np.int16)
-    # Deadly border (terrain_idx == -1) gets explicit class 13.
     deadly = valid & (t_raw == -1)
     base = np.where(deadly, TILE_DEADLY, base)
-    # Berry overlay on valid non-deadly cells.
-    berry = valid & b_raw & ~deadly
-    base = np.where(berry, TILE_BERRY, base)
-    out = base.astype(np.int8)
+    tile_idx = base.astype(np.int8)
 
-    # Targets — splat at their (local_ty, local_tx) if visible and in patch.
+    # Berry plane: visible berry tiles (excluding deadly).
+    berry_plane = (valid & b_raw & ~deadly).astype(np.float32)
+
+    # Target plane: 1.0 for YES target, 0.5 for NO target.
+    target_plane = np.zeros((B, D, D), dtype=np.float32)
     b_idx = np.arange(B)
-    for tr, tc, cls in ((no_r, no_c, TILE_TARGET_NO), (yes_r, yes_c, TILE_TARGET_YES)):
+    for tr, tc, val in ((no_r, no_c, 0.5), (yes_r, yes_c, 1.0)):
         ty = tr - pos_r + R
         tx = tc - pos_c + R
         ty_c = np.clip(ty, 0, D - 1)
@@ -298,9 +301,9 @@ def _compute_tile_idx_batch(
         visible = in_patch & vis_masks[b_idx, ty_c, tx_c]
         if visible.any():
             env_idx = np.where(visible)[0]
-            out[env_idx, ty[env_idx], tx[env_idx]] = cls
+            target_plane[env_idx, ty[env_idx], tx[env_idx]] = val
 
-    return out
+    return tile_idx, berry_plane, target_plane
 
 
 @jax.jit
@@ -317,8 +320,12 @@ def _compute_tile_idx_jax(
     yes_c: jnp.ndarray,
     no_r: jnp.ndarray,
     no_c: jnp.ndarray,
-) -> jnp.ndarray:
-    """GPU port of ``_compute_tile_idx_batch`` (occlusion LUT fast path)."""
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """GPU port of ``_compute_tile_idx_batch`` (occlusion LUT fast path).
+
+    Returns (tile_idx, berry_plane, target_plane) — see the numpy version for
+    semantics.
+    """
     B = pos_r.shape[0]
     R = MINIMAP_RADIUS
     D = MINIMAP_DIAMETER
@@ -354,24 +361,24 @@ def _compute_tile_idx_jax(
     base = jnp.where(valid, base, 0)
     deadly = valid & (t_raw == -1)
     base = jnp.where(deadly, TILE_DEADLY, base)
-    berry = valid & b_raw & ~deadly
-    base = jnp.where(berry, TILE_BERRY, base)
-    out = base.astype(jnp.int8)
+    tile_idx = base.astype(jnp.int8)
 
-    # Targets: last write wins; YES after NO so YES overwrites on overlap.
+    berry_plane = (valid & b_raw & ~deadly).astype(jnp.float32)
+
+    target_plane = jnp.zeros((B, D, D), dtype=jnp.float32)
     b_idx = jnp.arange(B)
-    for tr, tc, cls in ((no_r, no_c, TILE_TARGET_NO), (yes_r, yes_c, TILE_TARGET_YES)):
+    for tr, tc, val in ((no_r, no_c, 0.5), (yes_r, yes_c, 1.0)):
         ty = tr - pos_r + R
         tx = tc - pos_c + R
         ty_c = jnp.clip(ty, 0, D - 1)
         tx_c = jnp.clip(tx, 0, D - 1)
         in_patch = (ty >= 0) & (ty < D) & (tx >= 0) & (tx < D)
         visible = in_patch & vis_masks[b_idx, ty_c, tx_c]
-        prev = out[b_idx, ty_c, tx_c]
-        new_vals = jnp.where(visible, jnp.asarray(cls, dtype=jnp.int8), prev)
-        out = out.at[b_idx, ty_c, tx_c].set(new_vals)
+        prev = target_plane[b_idx, ty_c, tx_c]
+        new_vals = jnp.where(visible, jnp.asarray(val, dtype=jnp.float32), prev)
+        target_plane = target_plane.at[b_idx, ty_c, tx_c].set(new_vals)
 
-    return out
+    return tile_idx, berry_plane, target_plane
 
 
 def _compute_occlusion_mask(
@@ -756,7 +763,9 @@ class CognilandEnv:
 
     def observation_space(self) -> dict:
         return {
-            "minimap": (MINIMAP_DIAMETER, MINIMAP_DIAMETER),  # int8, class enum 0..13
+            "minimap": (MINIMAP_DIAMETER, MINIMAP_DIAMETER),  # int8, 0/1..9/13
+            "berry_mask": (MINIMAP_DIAMETER, MINIMAP_DIAMETER),   # float32 {0,1}
+            "target_mask": (MINIMAP_DIAMETER, MINIMAP_DIAMETER),  # float32 {0, .5, 1}
             "scalars": (6,),
         }
 
@@ -1211,7 +1220,7 @@ class CognilandEnv:
         B = self._num_envs
 
         if self._occlude:
-            minimap = _compute_tile_idx_jax(
+            minimap, berry_plane, target_plane = _compute_tile_idx_jax(
                 self._terrain_idx_jax,
                 self._berry_mask_jax,
                 self._vis_lut_packed_jax,
@@ -1226,7 +1235,7 @@ class CognilandEnv:
                 jnp.asarray(self.no_c),
             )
         else:
-            minimap = _compute_tile_idx_batch(
+            minimap, berry_plane, target_plane = _compute_tile_idx_batch(
                 self._terrain_idx, self._berry_mask,
                 self.map_idx, self.pos_r, self.pos_c,
                 self.yes_r, self.yes_c,
@@ -1264,5 +1273,7 @@ class CognilandEnv:
 
         return {
             "minimap": minimap,
+            "berry_mask": berry_plane,
+            "target_mask": target_plane,
             "scalars": scalars,
         }

@@ -6,7 +6,8 @@ metric:
   # Reported every training tick. With spawn_distance_range=[10, 100] the
   # rolling avg is a ~50/50 blend of easy and berry-detour-required episodes,
   # so a >= 0.40 here means the policy is meaningfully solving hard spawns.
-  # full_eval_enabled: false (env default), so no eval/* metrics exist.
+  # Evaluation is fully disabled in this sweep (see parameters below); all
+  # monitoring runs off train/* metrics.
   name: train/moving_avg_success_rate
   goal: maximize
 
@@ -54,8 +55,13 @@ parameters:
   # --- Fixed ---
   seed:                               {value: 42}
   trainer.num_train_frames:           {value: 20_000_000}
-  trainer.eval_interval_frames:       {value: 500_000}
-  trainer.trajectory_viz_interval_frames: {value: 5_000_000}
+  # Evaluation is disabled to save wall-clock: ``eval_interval_frames=null``
+  # short-circuits the full dispatcher in trainer.py (both _run_full_eval and
+  # trajectory viz). train/moving_avg_* are emitted on every tick and are
+  # what this sweep optimizes against.
+  trainer.eval_interval_frames:       {value: null}
+  trainer.full_eval_enabled:          {value: false}
+  trainer.trajectory_viz_interval_frames: {value: null}
   env.num_parallel_envs:              {value: 64}
   env.num_parallel_envs_eval:         {value: 8}
   # Curriculum: start easy ([0, 20]), widen to full ([0, 100]) over first

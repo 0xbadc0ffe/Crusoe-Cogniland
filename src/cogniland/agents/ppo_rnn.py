@@ -1,18 +1,25 @@
 """PPO-RNN agent — recurrent PPO with LSTM in JAX/Flax.
 
-Architecture (~222k params total):
-    Minimap [B, 45, 45] int8
-      -> nn.Embed(NUM_TILE_CLASSES=14, embed_dim=8)
-      -> CoordConv: append (rel_row, rel_col) normalised in [-1, 1]
-      -> Conv(10->24, 3x3 VALID) -> ReLU -> MaxPool(2,2)  (43 -> 21)
-      -> Conv(24->48, 3x3 VALID) -> ReLU                  (21 -> 19)
-      -> AvgPool(3,3) -> AvgPool(2,2)                     (19 -> 6 -> 3)
-      -> flatten (432)
-    Scalars [B, 6] -> Dense(32) -> ReLU                   (224)
-    Concat (432 + 32 + 7 task_emb = 471)
-      -> Dense(128) -> ReLU -> Dense(128) -> ReLU          (60416 + 16512)
-      -> OptimizedLSTMCell(128)                           (131584)
+Architecture:
+    Minimap      [B, 45, 45] int8      -> nn.Embed(14, 8)     [B, 45, 45, 8]
+    Berry mask   [B, 45, 45] float32   (visible berries)       1 channel
+    Target mask  [B, 45, 45] float32   (1.0 YES / 0.5 NO)      1 channel
+    CoordConv    rel (row, col) in [-1, 1]                     2 channels
+      concat   -> [B, 45, 45, 12]
+      -> Conv(12->24, 3x3 VALID) -> ReLU -> MaxPool(2,2)   (45 -> 43 -> 21)
+      -> Conv(24->32, 3x3 VALID) -> ReLU -> MaxPool(2,2)   (21 -> 19 -> 9)
+      -> Conv(32->48, 3x3 VALID) -> ReLU                   (9  -> 7)
+      -> Conv(48->24, 1x1) -> ReLU  (channel bottleneck)
+      -> flatten (7*7*24 = 1176)
+    Scalars [B, 6] -> Dense(32) -> ReLU
+    Concat (1176 + 32 + 7 task_emb)
+      -> Dense(128) -> ReLU -> Dense(128) -> ReLU
+      -> OptimizedLSTMCell(128)
       -> actor Dense(128->8)  critic Dense(128->1)
+
+Compared with the previous stack (19->6->3 avg-pool chain), the new CNN keeps
+a 7x7 spatial output so per-tile positions of targets and berries are no
+longer averaged away inside the convolutional trunk.
 """
 
 from __future__ import annotations
@@ -38,21 +45,28 @@ from cogniland.envs.env import NUM_TILE_CLASSES
 # ---------------------------------------------------------------------------
 
 class ActorCriticRNN(nn.Module):
-    """CNN + MLP + LSTM actor-critic consuming tile-index minimap.
+    """CNN + MLP + LSTM actor-critic consuming a tile-index minimap plus
+    dedicated berry / target overlay planes.
 
     Input:
-        minimap:  [B, 45, 45] int8 — per-cell tile class (0..NUM_TILE_CLASSES-1)
-        scalars:  [B, 6]
-        task_emb: [B, task_embedding_dim]
-        carry:    (h, c) each [B, lstm_size]
+        minimap:     [B, 45, 45] int8   — per-cell tile class (0..NUM_TILE_CLASSES-1)
+        berry_mask:  [B, 45, 45] float  — 1 where a berry is visible
+        target_mask: [B, 45, 45] float  — 1.0 YES target, 0.5 NO target, 0 elsewhere
+        scalars:     [B, 6]
+        task_emb:    [B, task_embedding_dim]
+        carry:       (h, c) each [B, lstm_size]
 
-    The minimap is embedded via ``nn.Embed(NUM_TILE_CLASSES, embed_dim)`` so
-    the network learns a dense vector per tile class rather than re-learning
-    a discrete class mapping from RGB pixels.
+    The minimap is embedded via ``nn.Embed`` so the network learns a dense
+    vector per tile class.  The two overlay planes are appended as extra
+    channels so berry / target positions are preserved per tile (they no
+    longer clobber the underlying terrain).
+
+    The CNN keeps a 7x7 spatial output (vs the old 3x3) so fine-grained
+    positions of salient entities are retained up to the flatten step.
 
     Output:
-        logits:  [B, num_actions]
-        value:   [B]
+        logits:    [B, num_actions]
+        value:     [B]
         new_carry: (h, c)
     """
     num_actions: int = 8
@@ -64,7 +78,7 @@ class ActorCriticRNN(nn.Module):
     use_rnn: bool = True
 
     @nn.compact
-    def __call__(self, minimap, scalars, task_emb, carry):
+    def __call__(self, minimap, berry_mask, target_mask, scalars, task_emb, carry):
         # -- Tile embedding: [B, 45, 45] int -> [B, 45, 45, embed_dim] float --
         mm = minimap.astype(jnp.int32)
         x = nn.Embed(
@@ -72,6 +86,11 @@ class ActorCriticRNN(nn.Module):
             features=self.embed_dim,
             embedding_init=nn.initializers.normal(stddev=0.5),
         )(mm)
+
+        # -- Overlay planes: berry and target -> 2 extra channels --
+        berry = berry_mask.astype(x.dtype)[..., None]
+        target = target_mask.astype(x.dtype)[..., None]
+        x = jnp.concatenate([x, berry, target], axis=-1)
 
         # -- CoordConv: append normalized (rel_row, rel_col) in [-1, 1] --
         # Agent sits at the patch center. Two extra channels let the CNN see
@@ -82,19 +101,29 @@ class ActorCriticRNN(nn.Module):
         cc = jnp.linspace(-1.0, 1.0, W, dtype=x.dtype)
         rr = jnp.broadcast_to(rr[None, :, None, None], (B, H, W, 1))
         cc = jnp.broadcast_to(cc[None, None, :, None], (B, H, W, 1))
-        x = jnp.concatenate([x, rr, cc], axis=-1)   # [B, 45, 45, embed_dim+2]
+        x = jnp.concatenate([x, rr, cc], axis=-1)
+        # x: [B, 45, 45, embed_dim + 2 overlays + 2 coords]
 
         x = nn.Conv(features=24, kernel_size=(3, 3), padding="VALID",
                     kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(x)
         x = nn.relu(x)
-        x = nn.max_pool(x, window_shape=(2, 2), strides=(2, 2))  # 43 -> 21
+        x = nn.max_pool(x, window_shape=(2, 2), strides=(2, 2))   # 43 -> 21
+
+        x = nn.Conv(features=32, kernel_size=(3, 3), padding="VALID",
+                    kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(x)
+        x = nn.relu(x)                                             # 21 -> 19
+        x = nn.max_pool(x, window_shape=(2, 2), strides=(2, 2))    # 19 -> 9
 
         x = nn.Conv(features=48, kernel_size=(3, 3), padding="VALID",
                     kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(x)
-        x = nn.relu(x)                                            # 21 -> 19
-        x = nn.avg_pool(x, window_shape=(3, 3), strides=(3, 3))   # 19 -> 6
-        x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))   # 6 -> 3
-        x = x.reshape((x.shape[0], -1))                           # [B, 432]
+        x = nn.relu(x)                                             # 9  -> 7
+
+        # 1x1 bottleneck to keep the flatten dimension tame while preserving
+        # the 7x7 spatial resolution.
+        x = nn.Conv(features=24, kernel_size=(1, 1), padding="VALID",
+                    kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(x)
+        x = nn.relu(x)
+        x = x.reshape((x.shape[0], -1))                            # [B, 1176]
 
         s = nn.Dense(32, kernel_init=nn.initializers.orthogonal(jnp.sqrt(2)))(scalars)
         s = nn.relu(s)
@@ -136,6 +165,8 @@ class ActorCriticRNN(nn.Module):
 
 class Transition(NamedTuple):
     obs_minimap: jnp.ndarray    # [B, 45, 45] int8
+    obs_berry: jnp.ndarray      # [B, 45, 45] float32 — visible-berry plane
+    obs_target: jnp.ndarray     # [B, 45, 45] float32 — YES/NO target plane
     obs_scalars: jnp.ndarray    # [B, 6] float32
     action: jnp.ndarray         # [B]
     log_prob: jnp.ndarray       # [B]
@@ -198,22 +229,26 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
     # JIT-compiled forward pass
     # ------------------------------------------------------------------
     @jax.jit
-    def _forward(params, minimap, scalars, task_emb, carry):
+    def _forward(params, minimap, berry_mask, target_mask, scalars, task_emb, carry):
         """Run network forward pass. Returns (logits, value, new_carry)."""
-        return network.apply(params, minimap, scalars, task_emb, carry)
+        return network.apply(params, minimap, berry_mask, target_mask, scalars, task_emb, carry)
 
     @jax.jit
-    def _sample_action(params, minimap, scalars, task_emb, carry, rng):
+    def _sample_action(params, minimap, berry_mask, target_mask, scalars, task_emb, carry, rng):
         """Sample action from policy, return (action, log_prob, value, new_carry)."""
-        logits, value, new_carry = network.apply(params, minimap, scalars, task_emb, carry)
+        logits, value, new_carry = network.apply(
+            params, minimap, berry_mask, target_mask, scalars, task_emb, carry
+        )
         dist = jax.random.categorical(rng, logits)
         log_prob = jax.nn.log_softmax(logits)[jnp.arange(logits.shape[0]), dist]
         return dist, log_prob, value, new_carry
 
     @jax.jit
-    def _deterministic_action(params, minimap, scalars, task_emb, carry):
+    def _deterministic_action(params, minimap, berry_mask, target_mask, scalars, task_emb, carry):
         """Greedy action from policy."""
-        logits, value, new_carry = network.apply(params, minimap, scalars, task_emb, carry)
+        logits, value, new_carry = network.apply(
+            params, minimap, berry_mask, target_mask, scalars, task_emb, carry
+        )
         return jnp.argmax(logits, axis=-1), value, new_carry
 
     # ------------------------------------------------------------------
@@ -281,6 +316,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             logits, value, _ = network.apply(
                 params,
                 batch["obs_minimap"],
+                batch["obs_berry"],
+                batch["obs_target"],
                 batch["obs_scalars"],
                 batch["task_emb"],
                 (batch["carry_h"], batch["carry_c"]),
@@ -344,6 +381,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
                 logits, value, _ = network.apply(
                     params,
                     mb["obs_minimap"],
+                    mb["obs_berry"],
+                    mb["obs_target"],
                     mb["obs_scalars"],
                     mb["task_emb"],
                     (mb["carry_h"], mb["carry_c"]),
@@ -396,11 +435,17 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
         rng, init_rng = jax.random.split(rng)
         mm_shape = obs_space["minimap"] if isinstance(obs_space, dict) else (45, 45)
         dummy_minimap = jnp.zeros((1,) + tuple(mm_shape), dtype=jnp.int32)
+        dummy_berry = jnp.zeros((1,) + tuple(mm_shape), dtype=jnp.float32)
+        dummy_target = jnp.zeros((1,) + tuple(mm_shape), dtype=jnp.float32)
         dummy_scalars = jnp.zeros((1, 6))
         dummy_task_emb = jnp.zeros((1, task_embedding_dim))
         dummy_carry = (jnp.zeros((1, lstm_size)), jnp.zeros((1, lstm_size)))
 
-        params = network.init(init_rng, dummy_minimap, dummy_scalars, dummy_task_emb, dummy_carry)
+        params = network.init(
+            init_rng,
+            dummy_minimap, dummy_berry, dummy_target,
+            dummy_scalars, dummy_task_emb, dummy_carry,
+        )
 
         # Optimizer: Adam with gradient clipping. Use ``inject_hyperparams``
         # so the learning rate is a mutable field on opt_state — lets the
@@ -435,6 +480,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
         Returns (actions_np, updated_state).
         """
         minimap = jnp.asarray(obs["minimap"])
+        berry_mask = jnp.asarray(obs["berry_mask"])
+        target_mask = jnp.asarray(obs["target_mask"])
         scalars = jnp.asarray(obs["scalars"])
 
         # Task embedding from runtime (default: zeros if not set)
@@ -454,11 +501,11 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
         if training:
             rng, act_rng = jax.random.split(rng)
             actions, log_prob, value, new_carry = _sample_action(
-                params, minimap, scalars, task_emb, carry, act_rng
+                params, minimap, berry_mask, target_mask, scalars, task_emb, carry, act_rng
             )
         else:
             actions, value, new_carry = _deterministic_action(
-                params, minimap, scalars, task_emb, carry
+                params, minimap, berry_mask, target_mask, scalars, task_emb, carry
             )
 
         # Cache carry for next step
@@ -540,11 +587,15 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             storage = []
             for step_i in range(num_steps):
                 minimap_jax = jnp.asarray(obs["minimap"])
+                berry_jax = jnp.asarray(obs["berry_mask"])
+                target_jax = jnp.asarray(obs["target_mask"])
                 scalars_jax = jnp.asarray(obs["scalars"])
 
                 rng, act_rng = jax.random.split(rng)
                 actions_jax, log_probs, values, new_carry = _sample_action(
-                    train_state.params, minimap_jax, scalars_jax, task_emb_jax, carry, act_rng
+                    train_state.params,
+                    minimap_jax, berry_jax, target_jax,
+                    scalars_jax, task_emb_jax, carry, act_rng,
                 )
 
                 actions_np = np.asarray(actions_jax)
@@ -552,6 +603,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
 
                 storage.append(Transition(
                     obs_minimap=minimap_jax,
+                    obs_berry=berry_jax,
+                    obs_target=target_jax,
                     obs_scalars=scalars_jax,
                     action=actions_jax,
                     log_prob=log_probs,
@@ -601,9 +654,13 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
 
             # -- Bootstrap value for last obs --
             minimap_jax = jnp.asarray(obs["minimap"])
+            berry_jax = jnp.asarray(obs["berry_mask"])
+            target_jax = jnp.asarray(obs["target_mask"])
             scalars_jax = jnp.asarray(obs["scalars"])
             _, last_value, _ = _deterministic_action(
-                train_state.params, minimap_jax, scalars_jax, task_emb_jax, carry
+                train_state.params,
+                minimap_jax, berry_jax, target_jax,
+                scalars_jax, task_emb_jax, carry,
             )
 
             # -- Stack transitions: [T, B, ...] --
@@ -619,7 +676,9 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             flat_size = T * B
 
             flat_data = {
-                "obs_minimap": jnp.concatenate([t.obs_minimap for t in storage], axis=0),   # [T*B, 6, 45, 45]
+                "obs_minimap": jnp.concatenate([t.obs_minimap for t in storage], axis=0),   # [T*B, 45, 45]
+                "obs_berry":   jnp.concatenate([t.obs_berry   for t in storage], axis=0),   # [T*B, 45, 45]
+                "obs_target":  jnp.concatenate([t.obs_target  for t in storage], axis=0),   # [T*B, 45, 45]
                 "obs_scalars": jnp.concatenate([t.obs_scalars for t in storage], axis=0),   # [T*B, 6]
                 "task_emb": jnp.tile(task_emb_jax, (T, 1)),                                 # [T*B, task_emb_dim]
                 "action": jnp.concatenate([t.action for t in storage], axis=0),              # [T*B]
@@ -750,10 +809,14 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
 
         while frames < num_eval_frames:
             minimap_jax = jnp.asarray(obs["minimap"])
+            berry_jax = jnp.asarray(obs["berry_mask"])
+            target_jax = jnp.asarray(obs["target_mask"])
             scalars_jax = jnp.asarray(obs["scalars"])
 
             actions_jax, _, new_carry = _deterministic_action(
-                params, minimap_jax, scalars_jax, task_emb_jax, carry
+                params,
+                minimap_jax, berry_jax, target_jax,
+                scalars_jax, task_emb_jax, carry,
             )
 
             actions_np = np.asarray(actions_jax)
