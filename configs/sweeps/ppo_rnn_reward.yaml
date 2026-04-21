@@ -1,9 +1,9 @@
-name: ppo_rnn_step_on_berry_bonus_sweep
+name: ppo_rnn_forage_berry_bonus_sweep
 entity: crusoe
 project: crusoe_in_cogniland
 method: grid
 metric:
-  name: eval/aggregate/avg_success
+  name: eval/aggregate/success
   goal: maximize
 
 command:
@@ -18,22 +18,22 @@ command:
 
 program: scripts/train.py
 
-# Characterise reward + curriculum shaping on the navigation task.
+# Characterise reward.forage_berry_bonus on the full multi-task / multi-biome
+# setup. full_eval_enabled=true so each run gets per-task eval/* metrics that
+# feed the sweep objective (eval/aggregate/success).
 #
-# Pinned to tasks=[0] so the ~1.4M-frames-per-task dilution of the 7-task
-# production setup doesn't mask the reward signal. A follow-up multi-task
-# sweep can re-open the task list around the winning reward point.
-#
-# Grid: 4 x 3 x 2 = 24 runs, 10M frames each.
+# Grid: 3 runs (one per forage_berry_bonus), 50M frames each.
 # Launch with e.g.
-#     ./scripts/launch_sweep.sh configs/sweeps/ppo_rnn_reward.yaml -n 24 -r 1
+#     ./scripts/launch_sweep.sh configs/sweeps/ppo_rnn_reward.yaml -n 3 -r 1
 parameters:
   seed:                         {value: 42}
-  tasks:                        {value: [0]}
-  trainer.num_train_frames:     {value: 10_000_000}
-  trainer.full_eval_enabled:    {value: false}
+  tasks:                        {value: [0, 1, 2, 3, 4, 5, 6]}
+  env.biome_filter:             {value: null}
+  trainer.num_train_frames:     {value: 50_000_000}
+  trainer.full_eval_enabled:    {value: true}
 
-  # New knob: flat bonus per movement-arrival on a berry tile (annealed).
-  # 0.0 is the ablation control — verifies the bonus is doing work.
-  curriculum.berry_step_bonus.initial_coef:
-    values: [0.0, 0.5, 1.0, 2.0]
+  # Markovian bonus when the agent forages on a berry tile. The knob we're
+  # characterising: 0.0 is the ablation control; 3.0 / 6.0 scale up the
+  # berry-detour incentive.
+  reward.forage_berry_bonus:
+    values: [0.0, 3.0, 6.0]
