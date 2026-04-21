@@ -30,7 +30,7 @@ program: scripts/train.py
 parameters:
   seed:                         {value: 42}
   tasks:                        {value: [0]}
-  trainer.num_train_frames:     {value: 50_000_000}
+  trainer.num_train_frames:     {value: 10_000_000}
   trainer.full_eval_enabled:    {value: false}
 
   # New knob: flat bonus per movement-arrival on a berry tile (annealed).

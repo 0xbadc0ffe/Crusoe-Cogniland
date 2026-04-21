@@ -34,9 +34,10 @@ import torch
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import generate_maps as gt
-from tune_tile_effects import TileEffects, drain_for
+from cogniland.envs.tile_effects import TileEffects, drain_for
 
 
 # ── Config ──────────────────────────────────────────────────────────────────

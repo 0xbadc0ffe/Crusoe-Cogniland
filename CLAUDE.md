@@ -229,16 +229,19 @@ Trainer(config, agent).run()
 
 | Index | Name | HP drain | Visibility | With raft | With rope |
 |-------|------|----------|------------|-----------|-----------|
-| 0 | ocean | 16 | 22 | 8 | — |
-| 1 | deep_water | 10 | 18 | 3 | — |
-| 2 | water | 6 | 14 | 1 | — |
+| 0 | ocean | 8 | 22 | 4 | — |
+| 1 | deep_water | 5 | 18 | 2 | — |
+| 2 | water | 3 | 14 | 1 | — |
 | 3 | beach | 1 | 12 | — | — |
 | 4 | sandy | 1 | 12 | — | — |
 | 5 | grassland | 1 | 12 | — | — |
 | 6 | forest | 2 | 10 | — | — |
 | 7 | rocky | 6 | 18 | — | 1 |
-| 8 | mountains | 12 | 22 | — | 3 |
+| 8 | mountains | 8 | 22 | — | 2 |
 | 9 | **berry** (overlay) | **0** | — | — | — |
+
+Drain values are defined in `src/cogniland/envs/tile_effects.py` — edit that
+single source of truth rather than the table above if you retune.
 
 **Shoes**: After 10 consecutive grassland steps, grassland drain drops to 0.5. **Berry**: an overlay on forest/beach — stepping onto it is free (0 drain) and `forage` on a berry tile heals +10 HP.
 

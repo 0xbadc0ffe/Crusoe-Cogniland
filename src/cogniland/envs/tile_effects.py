@@ -10,9 +10,9 @@ from dataclasses import dataclass, field
 class TileEffects:
     hp_drain: dict[str, int] = field(
         default_factory=lambda: {
-            "ocean": 10,
-            "deep_water": 6,
-            "water": 4,
+            "ocean": 8,
+            "deep_water": 5,
+            "water": 3,
             "beach": 1,
             "sandy": 1,
             "grassland": 1,
@@ -25,7 +25,7 @@ class TileEffects:
         default_factory=lambda: {
             "water": 1,
             "deep_water": 2,
-            "ocean": 5,
+            "ocean": 4,
         }
     )
     rope_drain: dict[str, int] = field(
