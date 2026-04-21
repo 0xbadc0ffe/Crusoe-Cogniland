@@ -54,7 +54,7 @@ The HP cost of stepping onto each tile, and how tools modify it:
 | beach | 1 | - | - | - |
 | sandy | 1 | - | - | - |
 | grassland | 1 | - | - | 0.5 |
-| forest | 3 | - | - | - |
+| forest | 2 | - | - | - |
 | rocky | 6 | - | 1 | - |
 | mountains | 12 | - | 3 | - |
 | **berry** | **0** | - | - | - |
@@ -65,15 +65,44 @@ Source of truth: `src/cogniland/envs/tile_effects.py` + the berry branch in `src
 
 ### Observations
 
-The agent sees:
+The agent sees a dict of three arrays (returned from both `reset()` and `step()`):
 
-- **minimap** `[B, 6, 45, 45]` — patch of the map centered on the agent, with Bresenham raycasting for line-of-sight occlusion. Vision radius depends on current terrain (mountains: 22, forest: 5). Channels:
-  - `0..2` — RGB of the map (unseen cells are 0).
-  - `3` — visibility mask (1 visible, 0 occluded).
-  - `4` — target indicator (YES=1.0, NO=0.5 if within the visibility region, 0 elsewhere).
-  - `5` — berry mask (1 where a visible berry tile sits, 0 elsewhere).
-- **scalars** `[B, 6]` — compass direction to target (unit vector x, y), tile class / 9, hp / 100, wood / 100, tool_id / 3. There are 10 tile classes (9 base terrains + berry), so the tile index is normalized by 9.
-- **task_embedding** `[B, 7]` — fixed one-hot vector identifying the current task (task i -> row i of `np.eye(7)`).
+- **minimap** `int8 [B, 45, 45]` — egocentric 45×45 patch (radius 22) of **tile-class
+  IDs**, not RGB. Exactly one label per cell; berry / target / deadly overlays override
+  the base terrain. Vision radius depends on the agent's current terrain (mountains/ocean:
+  22, forest: 10; full table in `configs/env/cogniland.yaml::env.terrain_vis_radius`),
+  and line-of-sight occlusion is applied via a precomputed Bresenham
+  visibility LUT. The 14 classes (from `NUM_TILE_CLASSES` in `src/cogniland/envs/env.py`):
+
+  | ID | Class | Notes |
+  |----|-------|-------|
+  | 0  | `TILE_UNSEEN` | Occluded, outside visibility disk, or OOB |
+  | 1  | ocean | |
+  | 2  | deep_water | |
+  | 3  | water | |
+  | 4  | beach | |
+  | 5  | sandy | |
+  | 6  | grassland | |
+  | 7  | forest | |
+  | 8  | rocky | |
+  | 9  | mountains | |
+  | 10 | `TILE_BERRY` | Overlay on forest/beach |
+  | 11 | `TILE_TARGET_YES` | Real target, if visible |
+  | 12 | `TILE_TARGET_NO` | Decoy target, if visible |
+  | 13 | `TILE_DEADLY` | 1-px deadly border |
+
+  Agents are expected to embed this via a learned lookup table
+  (`nn.Embed(14, embed_dim)` in the PPO-RNN trunk), not to treat it as pixels.
+- **scalars** `float32 [B, 6]` — `[compass_x, compass_y, tile_class/9, hp/hp_max,
+  wood/wood_max, tool_id/3]`. Compass is a unit vector from the agent toward the
+  YES/NO target midpoint. `tile_class` of the current cell is 0..8 for base terrain and
+  9 when the agent stands on a berry overlay.
+- **task_embedding** `float32 [B, 7]` — one-hot of the current task id
+  (`np.eye(7)[task_ids]`), injected by `MultiTaskEnvWrapper`.
+
+RGB is **not** part of the agent obs; the env keeps the `rgb` key from the map dataset
+only for trajectory visualisation. See the `# env obs is tile-idx` comment in
+`CognilandEnv._get_obs`.
 
 ### Maps
 
@@ -81,38 +110,61 @@ Maps are pre-generated and stored as `.pt` files in `data/maps/`. Each file cont
 
 ```python
 {
-    "rgb": uint8 [N, 128, 128, 3],       # Rendered RGB map
-    "heightmap": float32 [N, 128, 128],   # For occlusion computation
-    "terrain_idx": int8 [N, 128, 128],    # Terrain class per cell (-1 = deadly border)
-    "berry_mask": bool [N, 128, 128],     # Berry locations
-    "biomes": list[str],                  # Biome name per map
-    "seeds": list[int],                   # RNG seed per map
+    "rgb":            uint8   [N, 128, 128, 3],     # Trajectory-viz only, not fed to agent
+    "heightmap":      float32 [N, 128, 128],        # For occlusion (also used offline)
+    "terrain_idx":    int8    [N, 128, 128],        # 0..8 terrain class, -1 = deadly border
+    "berry_mask":     bool    [N, 128, 128],        # Berry overlay locations
+    "visibility_lut": uint8   [N, 128, 128, 254],   # Packed 45x45 Bresenham occlusion mask
+                                                    # per cell. REQUIRED — _load_maps
+                                                    # raises if missing.
+    "biomes":         list[str],                    # Biome name per map
+    "seeds":          list[int],                    # RNG seed per map
 }
 ```
 
-Train: 256 maps (64 per biome). Val/Test: 16 maps (4 per biome). Biomes: balanced, archipelago, grassland, highland.
+Train: 256 maps (64 per biome). Val/Test: 16 maps (4 per biome). Biomes: `balanced`,
+`archipelago`, `grassland`, `highland`. `env.biome_filter` in
+`configs/env/cogniland.yaml` subsets these (e.g. `[balanced]` → 64 training maps).
 
-To regenerate: `python scripts/generate_dataset.py`
+To regenerate: `python scripts/generate_dataset.py` (this also runs
+`precompute_visibility.compute_visibility_luts` — required, since the env will refuse
+to load a dataset without `visibility_lut`).
 
 ### Adding a new task
 
-Tasks are defined in `src/cogniland/envs/tasks.py`. A task is just a reward function:
+All tasks share one reward function: `compute_task_reward()` in
+`src/cogniland/envs/tasks.py`. The shared base reward is:
 
-```python
-def _task_N_reward(mask, dones, info, config):
-    """Return float array of rewards for envs where task_ids == N."""
-    ...
+```
+r = -step_penalty
+  + reach_bonus   * [reached YES or NO]
+  + shaping_coef  * (ctg_prev - ctg_curr)      # PBRS on Dijkstra cost-to-go
+  - death_penalty * [died]                     # sparse, terminal (default 0)
+  + forage_berry_bonus * [action==4 on a berry tile]   # optional Markovian shaping
 ```
 
-Then add a dispatch line in `compute_task_reward()`:
+On top of that, task-specific bonuses are added via `task_ids` masks:
+
+- **Tasks 1–3 (biome classification)**: `+correct_answer_bonus` when the reached target
+  matches the biome question — see `_TASK_BIOME_QUESTION` (task 1 ↔ archipelago,
+  2 ↔ grassland, 3 ↔ highland).
+- **Tasks 4–6 (craft)**: `+craft_bonus` on the step the required tool is crafted — see
+  `_TASK_CRAFT_TOOL` (task 4 ↔ raft, 5 ↔ rope, 6 ↔ shoes).
+- **Task 0**: reach-target only (no extra bonus on top of the shared base).
+
+To add a new task `N`, edit `compute_task_reward()` and add your mask-based bonus:
 
 ```python
 mask_N = task_ids == N
 if mask_N.any():
-    rewards[mask_N] = _task_N_reward(mask_N, dones, info, config)
+    # Read per-env signals from info (e.g. info["reached_yes"], info["crafted"])
+    # and add a scalar bonus to rewards[mask_N].
+    rewards[mask_N] += my_bonus * my_condition[mask_N]
 ```
 
-Update `num_tasks` in `configs/env/cogniland.yaml`.
+Then bump `num_tasks` (and if needed `task_embedding_dim ≥ num_tasks`) in
+`configs/env/cogniland.yaml`, and — if the task needs a success criterion visible in
+eval metrics — extend `MultiTaskEnvWrapper._compute_task_success` to recognise it.
 
 ## Agent layer
 
@@ -126,8 +178,10 @@ An agent is a `@dataclass` containing closures over the network and optimizer. I
 @dataclass
 class Agent:
     init: Callable[[PRNGKey], AgentState]
-    train: Callable   # (state, env, rng, num_frames, task_ids=...) -> (state, metrics)
-    evaluate: Callable # (state, env, rng, num_frames, task_ids=...) -> metrics
+    train: Callable   # (state, env, rng, num_train_frames, progress_bar=None,
+                      #  checkpoint_callback=None, task_ids=None) -> (state, metrics)
+    evaluate: Callable # (state, env, rng, num_eval_frames, progress_bar=None,
+                       #  task_ids=None) -> metrics
     select_action: Callable
     state_from_checkpoint: Callable
 ```
@@ -291,20 +345,27 @@ parameters:
 pytest tests/
 ```
 
-The env layer has 24 tests covering task sampling, env step/reset, foraging, crafting, auto-reset, timeout, and reward computation.
+The env layer has 25 tests in `tests/test_env_layer.py` covering task sampling, env
+step/reset, foraging, crafting, auto-reset, timeout, cost-to-go / PBRS shaping, and
+reward computation.
 
 ## Checkpointing
 
 Uses orbax. Only `train_state` (params + optimizer) is saved — runtime state (replay buffer, counters) is ephemeral.
 
 ```yaml
-# In agent config
+# In agent config (defaults from configs/agent/ppo_rnn.yaml)
 agent:
   checkpoint:
     enabled: true
-    interval: 1000      # Save every N training steps
-    keep_last: 3        # Keep last 3 checkpoints
-    save_best: true     # Track best by eval return
+    save_best: true         # Track + save best-by-eval checkpoint
+    save_last: true         # Always refresh 'last/'
+    save_only_best: true    # Skip periodic step_* snapshots; only write 'best/' and 'last/'
+    upload_to_wandb: false  # Upload best checkpoint as a W&B artifact
+    checkpoint_dir: checkpoints
+    # Advanced (not set in ppo_rnn.yaml, but respected by CheckpointCallback):
+    # interval: 1000        # Periodic step_* save cadence (ignored when save_only_best=true)
+    # keep_last: 3          # Rotation window for step_* checkpoints
 ```
 
-Checkpoints are saved to `results/{wandb_run_id}/checkpoints/`.
+Checkpoints are saved to `results/{wandb_run_id}/{checkpoint_dir}/`.

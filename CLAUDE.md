@@ -4,9 +4,15 @@
 
 Cogniland is a multi-task RL framework where agents learn to navigate procedurally generated 128x128 maps. The agent starts at a random spawn point and must reach a target position while managing **HP** (health points) and **wood** (gathered from forests). Different terrain types impose HP drains, and the agent can **forage** (berries heal HP, forests yield wood) and **craft tools** (raft, rope, shoes) that reduce terrain costs. Maps are pre-generated in pools of 256 (train) / 16 (val/test) across 4 biomes.
 
-The agent's observation is a **45x45 int8 tile-class minimap** (14 classes: unseen, 9 terrain types, berry, target-YES/NO, deadly border) plus 6 normalised scalars (compass x/y, terrain id, hp, wood, tool). See `NUM_TILE_CLASSES` and `TILE_*` constants in `src/cogniland/envs/env.py`.
+The agent's observation at every step is a dict of five arrays:
 
-The framework supports three agents: **PPO-RNN** (JAX/Flax, default, ~222k params), **DreamerV3**, and **STORM**. New agents plug in via a `@register_agent` decorator — all training orchestration, evaluation, and logging are agent-agnostic.
+1. `minimap`: `int8 [B, 45, 45]` — per-cell **tile-class id**. The enum has 14 slots (`NUM_TILE_CLASSES=14`) but only `0 UNSEEN`, `1..9 terrain`, and `13 DEADLY` are actually written today — **berry and target are no longer baked into the minimap** (they live in their own planes; see 2–3). Slots `10..12` (`TILE_BERRY`, `TILE_TARGET_YES`, `TILE_TARGET_NO`) remain defined in `src/cogniland/envs/env.py` for back-compat and are kept in the `nn.Embed` table so the agent checkpoint shape is stable. The agent is centred on the patch; unseen cells are occluded via heightmap raycasting or lie outside the visibility disk. **RGB is not fed to the agent** — it's loaded from the map `.pt` files purely for trajectory viz.
+2. `berry_mask`: `float32 [B, 45, 45]` — `1.0` on visible berry tiles, `0.0` elsewhere. Fed as a dedicated CNN channel so berries don't clobber the underlying terrain embedding.
+3. `target_mask`: `float32 [B, 45, 45]` — `1.0` on the visible YES target, `0.5` on a visible NO decoy, `0.0` elsewhere. Same rationale — keeps base terrain visible beneath the target.
+4. `scalars`: `float32 [B, 6]` — `compass_x, compass_y` (unit vector toward target midpoint), `tile_class/9` (0..8 base terrain, 9 berry), `hp/100`, `wood/100`, `tool/3`.
+5. `task_embedding`: `float32 [B, 7]` — one-hot task id (from `MultiTaskEnvWrapper`).
+
+The framework supports three agents: **PPO-RNN** (JAX/Flax, default; ~330k params — CNN trunk ≈25k, post-concat Dense ≈156k, LSTM ≈132k, heads ≈1k), **DreamerV3**, and **STORM**. New agents plug in via a `@register_agent` decorator — all training orchestration, evaluation, and logging are agent-agnostic.
 
 ### Training-dynamics notes (April 2026)
 
@@ -221,14 +227,14 @@ Trainer(config, agent).run()
 
 | Index | Name | HP drain | Visibility | With raft | With rope |
 |-------|------|----------|------------|-----------|-----------|
-| 0 | ocean | 16 | 16 | 8 | — |
-| 1 | deep_water | 10 | 12 | 3 | — |
-| 2 | water | 6 | 10 | 1 | — |
-| 3 | beach | 1 | 7 | — | — |
-| 4 | sandy | 1 | 7 | — | — |
-| 5 | grassland | 1 | 7 | — | — |
-| 6 | forest | 2 | 5 | — | — |
-| 7 | rocky | 6 | 10 | — | 1 |
+| 0 | ocean | 16 | 22 | 8 | — |
+| 1 | deep_water | 10 | 18 | 3 | — |
+| 2 | water | 6 | 14 | 1 | — |
+| 3 | beach | 1 | 12 | — | — |
+| 4 | sandy | 1 | 12 | — | — |
+| 5 | grassland | 1 | 12 | — | — |
+| 6 | forest | 2 | 10 | — | — |
+| 7 | rocky | 6 | 18 | — | 1 |
 | 8 | mountains | 12 | 22 | — | 3 |
 | 9 | **berry** (overlay) | **0** | — | — | — |
 
@@ -244,24 +250,52 @@ Trainer(config, agent).run()
 | 6 | craft_rope | Costs 100 wood. Reduces rocky/mountain drain. One tool only. |
 | 7 | craft_shoes | Costs 100 wood. Reduces grassland drain after 10 consecutive steps. One tool only. |
 
-### Observation dict
+### Observation dict (returned every step and on reset)
 
 ```
-obs["minimap"]:  float32 [B, 5, 45, 45]   (2*22+1 = 45)
-    channels 0-2 — RGB patch of the map, centered on agent (unseen cells = 0)
-    channel 3    — visibility mask (1 visible, 0 occluded via heightmap raycasting)
-    channel 4    — target indicator (YES target: 1.0, NO target: 0.5, 0.0 if not visible or out of patch)
+obs["minimap"]:  int8 [B, 45, 45]         (patch radius 22 → diameter 45)
+    Per-cell tile-class id. Agents embed this via nn.Embed(14, embed_dim).
+    Computed on GPU via _compute_tile_idx_jax when occlude=True (default).
+    Only slots 0, 1..9, and 13 are emitted today; berry/target moved to their
+    own planes so the base terrain under them stays visible to the CNN.
+       0  TILE_UNSEEN       (occluded by heightmap or outside visibility disk / OOB)
+       1  ocean
+       2  deep_water
+       3  water
+       4  beach
+       5  sandy
+       6  grassland
+       7  forest
+       8  rocky
+       9  mountains
+      10  TILE_BERRY        (defined, NO LONGER WRITTEN — see obs["berry_mask"])
+      11  TILE_TARGET_YES   (defined, NO LONGER WRITTEN — see obs["target_mask"])
+      12  TILE_TARGET_NO    (defined, NO LONGER WRITTEN — see obs["target_mask"])
+      13  TILE_DEADLY       (1-px deadly border)
+
+obs["berry_mask"]:  float32 [B, 45, 45]
+    1.0 on visible berry tiles (excluding deadly cells), 0.0 elsewhere.
+    Fed to the CNN as its own channel.
+
+obs["target_mask"]: float32 [B, 45, 45]
+    1.0 on the visible YES target, 0.5 on a visible NO decoy, 0.0 elsewhere.
+    Fed to the CNN as its own channel.
 
 obs["scalars"]:  float32 [B, 6]
-    compass_x, compass_y    — unit vector toward target
-    tile_class / 9          — 0..8 = base terrain, 9 = berry overlay
-    hp / 100                — normalized HP
-    wood / 100              — normalized wood
-    tool_id / 3             — normalized tool (0=none, 1=raft, 2=rope, 3=shoes)
+    [0] compass_x           — dc/|d|, column direction to YES/NO midpoint
+    [1] compass_y           — dr/|d|, row direction to YES/NO midpoint
+    [2] tile_class / 9      — current cell; 0..8 terrain, 9 = berry overlay
+    [3] hp / hp_max         — normalized HP (hp_max=100)
+    [4] wood / wood_max     — normalized wood (wood_max=100)
+    [5] tool_id / 3         — 0=none, 1=raft, 2=rope, 3=shoes
 
 obs["task_embedding"]:  float32 [B, 7]
-    Orthogonal task embedding vector (from MultiTaskEnvWrapper)
+    One-hot of task_id (eye(7)[task_ids]), injected by MultiTaskEnvWrapper.
 ```
+
+RGB is **not** part of the agent obs. The map dataset `.pt` still carries an
+`rgb` key, but the env keeps it only for trajectory visualisation — see the
+`# env obs is tile-idx` comment in `CognilandEnv.__init__` and `_get_obs`.
 
 ### Task 0 reward (reach target)
 
@@ -286,29 +320,50 @@ Tasks 1-6 are stubs (return 0) — to be defined for multi-task experiments.
 
 ## Neural Network Architecture (PPO-RNN)
 
+The minimap is consumed as tile-class indices (int8 in `{0..13}`) and embedded
+via a learned lookup table — no RGB. The berry and target planes are appended
+as dedicated channels (instead of being baked into the minimap) so the CNN
+sees both the overlay *and* the base terrain underneath. Two CoordConv
+channels (normalised row/col in `[-1, 1]`) are appended last so the CNN can
+reason about direction to each pixel in the egocentric patch without
+re-learning translation from scratch.
+
+Compared with the previous 19→6→3 avg-pool trunk, the current stack keeps a
+7×7 spatial output all the way to the flatten step, so fine-grained positions
+of targets and berries aren't averaged away before the MLP.
+
 ```
-Minimap [B, 5, 45, 45]
-  → Conv2d(5→16, 3×3) → ReLU → MaxPool2d(2)
-  → Conv2d(16→32, 3×3) → ReLU → AdaptiveMaxPool2d(4×4)
-  → Flatten → [B, 512]
+Minimap      [B, 45, 45] (int8)    → nn.Embed(14, 8)     → [B, 45, 45, 8]
+Berry mask   [B, 45, 45] (float32)                         1 channel
+Target mask  [B, 45, 45] (float32, {0, 0.5, 1})            1 channel
+CoordConv (rr, cc) in [-1, 1]                              2 channels
+  → concat → [B, 45, 45, 12]
+  → Conv(12→24, 3×3 VALID) → ReLU → MaxPool(2,2)   # 45 → 43 → 21
+  → Conv(24→32, 3×3 VALID) → ReLU → MaxPool(2,2)   # 21 → 19 →  9
+  → Conv(32→48, 3×3 VALID) → ReLU                  #  9 →  7
+  → Conv(48→24, 1×1)        → ReLU                 # channel bottleneck, spatial 7×7
+  → Flatten → [B, 7·7·24 = 1176]
 
 Scalars [B, 6]
-  → Dense(6→64) → ReLU → [B, 64]
+  → Dense(6→32) → ReLU
 
 Task embedding [B, 7]
   → concatenated directly
 
-Concat → [B, 583]
-  → Dense(583→256) → ReLU
-  → Dense(256→256) → ReLU
+Concat [B, 1176 + 32 + 7 = 1215]
+  → Dense(→128) → ReLU
+  → Dense(→128) → ReLU
 
-LSTM → [B, 256]
+LSTM (OptimizedLSTMCell, features=lstm_size=128) → [B, 128]
+  (skipped if agent.use_rnn=false; carry is threaded through unchanged.)
 
-Actor head:  Dense(256→8) → Categorical (init std=0.01)
-Critic head: Dense(256→1) → scalar (init std=1.0)
+Actor head:  Dense(128→8) → Categorical (init std=0.01)
+Critic head: Dense(128→1) → scalar          (init std=1.0)
 ```
 
-Orthogonal weight initialization throughout.
+Orthogonal weight initialisation throughout (embedding init: normal, std=0.5).
+Defaults from `configs/agent/ppo_rnn.yaml`: `embed_dim=8`, `hidden_size=128`,
+`lstm_size=128`, `num_tile_classes=14` (kept in sync with `NUM_TILE_CLASSES`).
 
 ---
 

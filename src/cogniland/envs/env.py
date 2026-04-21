@@ -44,11 +44,15 @@ NUM_ACTIONS = 8
 MOVE_DELTAS = np.array([(-1, 0), (1, 0), (0, -1), (0, 1)], dtype=np.int32)
 CRAFT_TOOLS = {5: "raft", 6: "rope", 7: "shoes"}
 
-# Default terrain visibility radii
+# Default terrain visibility radii — kept in sync with
+# configs/env/cogniland.yaml::env.terrain_vis_radius. All values must be
+# <= MINIMAP_RADIUS (22); precomputed LUTs raycast at 22 and the runtime
+# ANDs with a per-terrain disk, so raising a radius up to 22 does NOT
+# require dataset regeneration.
 DEFAULT_TERRAIN_VIS = {
-    "ocean": 16, "deep_water": 12, "water": 10,
-    "beach": 7, "sandy": 7, "grassland": 7,
-    "forest": 5, "rocky": 10, "mountains": 22,
+    "ocean": 22, "deep_water": 18, "water": 14,
+    "beach": 12, "sandy": 12, "grassland": 12,
+    "forest": 10, "rocky": 18, "mountains": 22,
 }
 
 # Minimap config

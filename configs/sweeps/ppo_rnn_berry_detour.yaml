@@ -55,11 +55,15 @@ parameters:
   # --- Fixed ---
   seed:                               {value: 42}
   trainer.num_train_frames:           {value: 20_000_000}
-  # Evaluation is disabled to save wall-clock: ``eval_interval_frames=null``
-  # short-circuits the full dispatcher in trainer.py (both _run_full_eval and
-  # trajectory viz). train/moving_avg_* are emitted on every tick and are
-  # what this sweep optimizes against.
-  trainer.eval_interval_frames:       {value: null}
+  # Evaluation is disabled to save wall-clock, but we still need the outer
+  # trainer loop to tick periodically so train/* metrics get flushed to W&B.
+  # Setting ``eval_interval_frames=null`` collapses the loop into a single
+  # 20M-frame ``agent.train(...)`` call, which means NOTHING is logged until
+  # the run finishes (~55 min) and W&B shows only system panels in between.
+  # Keep a finite interval; ``full_eval_enabled=false`` + trajectory_viz=null
+  # make the dispatcher a no-op, so the only cost of each tick is flushing
+  # metrics -- which is exactly what we want.
+  trainer.eval_interval_frames:       {value: 200_000}
   trainer.full_eval_enabled:          {value: false}
   trainer.trajectory_viz_interval_frames: {value: null}
   env.num_parallel_envs:              {value: 64}
@@ -78,14 +82,12 @@ parameters:
   # a significantly stronger alternative. Each axis is a hypothesis about
   # what's missing to unlock detour learning.
 
-  # Is the terminal reach signal too weak vs the per-step berry bonus?
-  reward.reach_bonus:                 {values: [20.0, 100.0]}
 
   # How attractive must berries be to justify a detour?
   reward.forage_berry_bonus:          {values: [1.0, 3.0]}
 
   # Does survival pressure matter, and how much is too much?
-  reward.death_penalty:               {values: [0.5, 2.0]}
+  reward.death_penalty:               {values: [0.0, 1.0]}
 
   # Is the dense PBRS gradient strong enough to credit full detour arcs?
   reward.shaping_coef:                {values: [0.3, 1.0]}

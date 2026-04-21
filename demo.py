@@ -57,16 +57,17 @@ MAP_DISPLAY = 512
 PANEL_X = MAP_DISPLAY + 60
 PANEL_W = WINDOW_W - PANEL_X - 20
 
-# Terrain-dependent visibility radii (in tiles) — from configs/env/default.yaml
+# Terrain-dependent visibility radii (in tiles) — kept in sync with
+# configs/env/cogniland.yaml::env.terrain_vis_radius.
 TERRAIN_VIS_RADIUS: dict[str, int] = {
-    "ocean":      16,
-    "deep_water": 12,
-    "water":      10,
-    "beach":       7,
-    "sandy":       7,
-    "grassland":   7,
-    "forest":      5,
-    "rocky":      10,
+    "ocean":      22,
+    "deep_water": 18,
+    "water":      14,
+    "beach":      12,
+    "sandy":      12,
+    "grassland":  12,
+    "forest":     10,
+    "rocky":      18,
     "mountains":  22,
 }
 DEFAULT_VIS_RADIUS = 7

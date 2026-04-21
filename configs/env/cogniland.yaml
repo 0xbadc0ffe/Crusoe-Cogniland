@@ -13,7 +13,7 @@ task_embedding_dim: 7         # keep 7-d one-hot so obs shape is stable
 task_sampling: round_robin
 
 env:
-  num_parallel_envs: 64       # small for fast local iteration; raise for sweeps
+  num_parallel_envs: 128       # small for fast local iteration; raise for sweeps
   num_parallel_envs_eval: 8
   max_steps: 1000
 
@@ -32,14 +32,14 @@ env:
   craft_cost: 100
 
   terrain_vis_radius:
-    ocean: 16
-    deep_water: 12
-    water: 10
-    beach: 7
-    sandy: 7
-    grassland: 7
-    forest: 5
-    rocky: 10
+    ocean: 22
+    deep_water: 20
+    water: 16
+    beach: 14
+    sandy: 14
+    grassland: 14
+    forest: 12
+    rocky: 18
     mountains: 22
 
   min_spawn_target_manhattan: 0

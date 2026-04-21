@@ -31,9 +31,9 @@ def _make_config(**overrides):
         max_steps=200,
         min_spawn_target_manhattan=60,
         terrain_vis_radius={
-            "ocean": 16, "deep_water": 12, "water": 10,
-            "beach": 7, "sandy": 7, "grassland": 7,
-            "forest": 5, "rocky": 10, "mountains": 22,
+            "ocean": 22, "deep_water": 18, "water": 14,
+            "beach": 12, "sandy": 12, "grassland": 12,
+            "forest": 10, "rocky": 18, "mountains": 22,
         },
         occlude=False,  # Disable raycasting for fast tests
         train_maps=VAL_MAPS,
