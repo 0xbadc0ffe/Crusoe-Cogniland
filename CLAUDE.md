@@ -4,13 +4,11 @@
 
 Cogniland is a multi-task RL framework where agents learn to navigate procedurally generated 128x128 maps. The agent starts at a random spawn point and must reach a target position while managing **HP** (health points) and **wood** (gathered from forests). Different terrain types impose HP drains, and the agent can **forage** (berries heal HP, forests yield wood) and **craft tools** (raft, rope, shoes) that reduce terrain costs. Maps are pre-generated in pools of 256 (train) / 16 (val/test) across 4 biomes.
 
-The agent's observation at every step is a dict of five arrays:
+The agent's observation at every step is a dict of three arrays:
 
-1. `minimap`: `int8 [B, 45, 45]` — per-cell **tile-class id**. The enum has 14 slots (`NUM_TILE_CLASSES=14`) but only `0 UNSEEN`, `1..9 terrain`, and `13 DEADLY` are actually written today — **berry and target are no longer baked into the minimap** (they live in their own planes; see 2–3). Slots `10..12` (`TILE_BERRY`, `TILE_TARGET_YES`, `TILE_TARGET_NO`) remain defined in `src/cogniland/envs/env.py` for back-compat and are kept in the `nn.Embed` table so the agent checkpoint shape is stable. The agent is centred on the patch; unseen cells are occluded via heightmap raycasting or lie outside the visibility disk. **RGB is not fed to the agent** — it's loaded from the map `.pt` files purely for trajectory viz.
-2. `berry_mask`: `float32 [B, 45, 45]` — `1.0` on visible berry tiles, `0.0` elsewhere. Fed as a dedicated CNN channel so berries don't clobber the underlying terrain embedding.
-3. `target_mask`: `float32 [B, 45, 45]` — `1.0` on the visible YES target, `0.5` on a visible NO decoy, `0.0` elsewhere. Same rationale — keeps base terrain visible beneath the target.
-4. `scalars`: `float32 [B, 6]` — `compass_x, compass_y` (unit vector toward target midpoint), `tile_class/9` (0..8 base terrain, 9 berry), `hp/100`, `wood/100`, `tool/3`.
-5. `task_embedding`: `float32 [B, 7]` — one-hot task id (from `MultiTaskEnvWrapper`).
+1. `minimap`: `int8 [B, 45, 45]` — per-cell **tile-class id**. All salient entities live in this single channel and each class id gets its own row in the learned `nn.Embed(14, 8)` table (priority on collision: `TARGET_YES > TARGET_NO > BERRY > DEADLY > terrain > UNSEEN`). The agent is centred on the patch; unseen cells are occluded via heightmap raycasting or lie outside the visibility disk. **RGB is not fed to the agent** — it's loaded from the map `.pt` files purely for trajectory viz.
+2. `scalars`: `float32 [B, 6]` — `compass_x, compass_y` (unit vector toward target midpoint), `tile_class/9` (0..8 base terrain, 9 berry), `hp/100`, `wood/100`, `tool/3`.
+3. `task_embedding`: `float32 [B, 7]` — one-hot task id (from `MultiTaskEnvWrapper`).
 
 The framework supports three agents: **PPO-RNN** (JAX/Flax, default; ~330k params — CNN trunk ≈25k, post-concat Dense ≈156k, LSTM ≈132k, heads ≈1k), **DreamerV3**, and **STORM**. New agents plug in via a `@register_agent` decorator — all training orchestration, evaluation, and logging are agent-agnostic.
 
@@ -259,10 +257,10 @@ single source of truth rather than the table above if you retune.
 
 ```
 obs["minimap"]:  int8 [B, 45, 45]         (patch radius 22 → diameter 45)
-    Per-cell tile-class id. Agents embed this via nn.Embed(14, embed_dim).
-    Computed on GPU via _compute_tile_idx_jax when occlude=True (default).
-    Only slots 0, 1..9, and 13 are emitted today; berry/target moved to their
-    own planes so the base terrain under them stays visible to the CNN.
+    Single-channel tile-class id for every visible cell. Agents embed this
+    via nn.Embed(14, embed_dim). Computed on GPU via _compute_tile_idx_jax
+    when occlude=True (default). Overlay priority on collision:
+    TARGET_YES > TARGET_NO > BERRY > DEADLY > terrain > UNSEEN.
        0  TILE_UNSEEN       (occluded by heightmap or outside visibility disk / OOB)
        1  ocean
        2  deep_water
@@ -273,18 +271,10 @@ obs["minimap"]:  int8 [B, 45, 45]         (patch radius 22 → diameter 45)
        7  forest
        8  rocky
        9  mountains
-      10  TILE_BERRY        (defined, NO LONGER WRITTEN — see obs["berry_mask"])
-      11  TILE_TARGET_YES   (defined, NO LONGER WRITTEN — see obs["target_mask"])
-      12  TILE_TARGET_NO    (defined, NO LONGER WRITTEN — see obs["target_mask"])
+      10  TILE_BERRY        (visible berry tile)
+      11  TILE_TARGET_YES   (visible YES target)
+      12  TILE_TARGET_NO    (visible NO decoy)
       13  TILE_DEADLY       (1-px deadly border)
-
-obs["berry_mask"]:  float32 [B, 45, 45]
-    1.0 on visible berry tiles (excluding deadly cells), 0.0 elsewhere.
-    Fed to the CNN as its own channel.
-
-obs["target_mask"]: float32 [B, 45, 45]
-    1.0 on the visible YES target, 0.5 on a visible NO decoy, 0.0 elsewhere.
-    Fed to the CNN as its own channel.
 
 obs["scalars"]:  float32 [B, 6]
     [0] compass_x           — dc/|d|, column direction to YES/NO midpoint
@@ -305,19 +295,22 @@ RGB is **not** part of the agent obs. The map dataset `.pt` still carries an
 ### Task 0 reward (reach target)
 
 ```
-r_step  = -step_penalty                                   # per-step cost (0.01)
-r_reach = +reach_bonus                                    # on reaching target (10.0)
-r_shape = shaping_coef * (ctg_prev - ctg_curr)            # PBRS, every step (0.05)
+r_step  = -step_penalty                                   # per-step cost (0.02)
+r_reach = +reach_bonus                                    # on reaching target (150.0)
+r_shape = shaping_coef * (ctg_prev - ctg_curr)            # target PBRS (0.3)
+r_hp    = hp_coef      * (hp_curr - hp_prev)              # HP PBRS (0.06)
 ```
 
 `ctg` is the Dijkstra cost-to-go from the current cell to the target on the HP-drain
 graph (edge cost = `hp_drain[dest]`, berries cost 0, deadly cells disconnected).
-It is computed once per episode at reset and reused every step, so the extra
-per-step cost is a single array lookup. Summed along a successful trajectory the
-shaping telescopes to `+shaping_coef * ctg_spawn` — a bounded bonus proportional
-to the episode's difficulty. Per-episode return therefore lies in roughly
-`[-10, +25]` (step penalty budget ≤10, reach bonus +10, cumulative PBRS ~2.5–10
-depending on the map).
+It is computed once per episode at reset and reused every step. The HP-delta
+term rewards the forage gesture on berries (+heal) and the natural per-step
+drain — together they define the PBRS potential
+`Φ(s, hp) = -ctg_direct(s) + (hp_coef/shaping_coef)·hp`. Because HP is part
+of the state, the potential is well-defined and optimality is preserved.
+Summed along a successful trajectory the target-shaping telescopes to
+`shaping_coef·ctg_spawn` and the HP-shaping to `hp_coef·(hp_end - hp_start)` —
+both bounded.
 
 Tasks 1-6 are stubs (return 0) — to be defined for multi-task experiments.
 
@@ -326,24 +319,21 @@ Tasks 1-6 are stubs (return 0) — to be defined for multi-task experiments.
 ## Neural Network Architecture (PPO-RNN)
 
 The minimap is consumed as tile-class indices (int8 in `{0..13}`) and embedded
-via a learned lookup table — no RGB. The berry and target planes are appended
-as dedicated channels (instead of being baked into the minimap) so the CNN
-sees both the overlay *and* the base terrain underneath. Two CoordConv
-channels (normalised row/col in `[-1, 1]`) are appended last so the CNN can
-reason about direction to each pixel in the egocentric patch without
-re-learning translation from scratch.
+via a learned lookup table — no RGB. Berries and targets live in this single
+channel as class ids 10, 11, 12; the `nn.Embed` table learns a distinct 8-dim
+vector per class. Two CoordConv channels (normalised row/col in `[-1, 1]`)
+are appended so the CNN can reason about direction to each pixel in the
+egocentric patch without re-learning translation from scratch.
 
-Compared with the previous 19→6→3 avg-pool trunk, the current stack keeps a
-7×7 spatial output all the way to the flatten step, so fine-grained positions
-of targets and berries aren't averaged away before the MLP.
+The CNN keeps a 7×7 spatial output all the way to the flatten step, so
+fine-grained positions of targets and berries aren't averaged away before
+the MLP.
 
 ```
 Minimap      [B, 45, 45] (int8)    → nn.Embed(14, 8)     → [B, 45, 45, 8]
-Berry mask   [B, 45, 45] (float32)                         1 channel
-Target mask  [B, 45, 45] (float32, {0, 0.5, 1})            1 channel
 CoordConv (rr, cc) in [-1, 1]                              2 channels
-  → concat → [B, 45, 45, 12]
-  → Conv(12→24, 3×3 VALID) → ReLU → MaxPool(2,2)   # 45 → 43 → 21
+  → concat → [B, 45, 45, 10]
+  → Conv(10→24, 3×3 VALID) → ReLU → MaxPool(2,2)   # 45 → 43 → 21
   → Conv(24→32, 3×3 VALID) → ReLU → MaxPool(2,2)   # 21 → 19 →  9
   → Conv(32→48, 3×3 VALID) → ReLU                  #  9 →  7
   → Conv(48→24, 1×1)        → ReLU                 # channel bottleneck, spatial 7×7

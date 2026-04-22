@@ -81,8 +81,9 @@ parameters:
   # what's missing to unlock detour learning.
 
 
-  # How attractive must berries be to justify a detour?
-  reward.forage_berry_bonus:          {values: [1.0, 3.0]}
+  # How attractive must Δhp be? Controls the per-step HP-delta shaping
+  # (berry forage heals → +hp_coef·heal; drain → -hp_coef·drain).
+  reward.hp_coef:                     {values: [0.03, 0.12]}
 
   # Does survival pressure matter, and how much is too much?
   reward.death_penalty:               {values: [0.0, 1.0]}

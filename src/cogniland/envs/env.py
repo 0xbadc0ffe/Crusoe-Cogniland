@@ -7,11 +7,10 @@ Runs B parallel games simultaneously. Each game has:
   - 8 actions: 4 cardinal moves, forage, craft_raft, craft_rope, craft_shoes
 
 Observations:
-  - minimap: int8 [B, 45, 45] — per-cell tile-class id (0 unseen, 1..9 terrain,
-      13 deadly). Berry/target overlays are now emitted as separate planes.
-  - berry_mask: float32 [B, 45, 45] — 1.0 on visible berry tiles, 0.0 elsewhere.
-  - target_mask: float32 [B, 45, 45] — 1.0 on visible YES target, 0.5 on visible
-      NO target, 0.0 elsewhere.
+  - minimap: int8 [B, 45, 45] — per-cell tile-class id. All salient entities
+      live in this single channel: 0=unseen, 1..9=base terrain, 10=berry,
+      11=target_yes, 12=target_no, 13=deadly border. Overlays (berry / target)
+      override the base terrain at that cell.
   - scalars: float32 [B, 6] — compass, terrain, hp, wood, tool
 """
 
@@ -233,20 +232,17 @@ def _compute_tile_idx_batch(
     vis_lut_packed: np.ndarray | None,
     disk_stack: np.ndarray | None,
     occlude: bool = True,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Compute the per-cell minimap plus berry/target overlay planes.
+) -> np.ndarray:
+    """Compute the per-cell single-channel minimap.
+
+    Priority when multiple entities occupy one cell:
+        TARGET_YES > TARGET_NO > BERRY > DEADLY > terrain > UNSEEN.
 
     Returns
     -------
     tile_idx : int8 [B, 45, 45]
-        Per-cell terrain class.  0 = UNSEEN/OOB, 1..9 = base terrain,
-        13 = TILE_DEADLY.  Berry/target overlays are no longer written here —
-        they occupy their own planes so the CNN keeps access to the base
-        terrain underneath them.
-    berry_plane : float32 [B, 45, 45]
-        1.0 on visible berry tiles, 0.0 elsewhere.
-    target_plane : float32 [B, 45, 45]
-        1.0 on visible YES target, 0.5 on visible NO target, 0.0 elsewhere.
+        0 = UNSEEN/OOB, 1..9 = base terrain, 10 = TILE_BERRY,
+        11 = TILE_TARGET_YES, 12 = TILE_TARGET_NO, 13 = TILE_DEADLY.
     """
     B = len(pos_r)
     R = MINIMAP_RADIUS
@@ -283,20 +279,23 @@ def _compute_tile_idx_batch(
     b_raw = berry_mask[mi_b, rows_cl, cols_cl]              # [B, D, D] bool
     valid = vis_masks & in_bounds                           # [B, D, D]
 
-    # Tile index channel: unseen -> 0, terrain -> 1..9, deadly -> 13.
+    # Base: unseen -> 0, terrain -> 1..9, deadly -> 13.
     base = (t_raw.astype(np.int16) + 1)                     # -1 -> 0, others shifted
     base = np.where(valid, base, 0).astype(np.int16)
     deadly = valid & (t_raw == -1)
     base = np.where(deadly, TILE_DEADLY, base)
-    tile_idx = base.astype(np.int8)
 
-    # Berry plane: visible berry tiles (excluding deadly).
-    berry_plane = (valid & b_raw & ~deadly).astype(np.float32)
+    # Berry override: visible berry tiles (excluding deadly).
+    is_berry_cell = valid & b_raw & ~deadly
+    base = np.where(is_berry_cell, TILE_BERRY, base)
 
-    # Target plane: 1.0 for YES target, 0.5 for NO target.
-    target_plane = np.zeros((B, D, D), dtype=np.float32)
+    # Target override: write NO first, YES overrides if they collide
+    # (shouldn't in practice — targets sit TARGET_GAP apart on land).
     b_idx = np.arange(B)
-    for tr, tc, val in ((no_r, no_c, 0.5), (yes_r, yes_c, 1.0)):
+    for tr, tc, tile_val in (
+        (no_r, no_c, TILE_TARGET_NO),
+        (yes_r, yes_c, TILE_TARGET_YES),
+    ):
         ty = tr - pos_r + R
         tx = tc - pos_c + R
         ty_c = np.clip(ty, 0, D - 1)
@@ -305,9 +304,9 @@ def _compute_tile_idx_batch(
         visible = in_patch & vis_masks[b_idx, ty_c, tx_c]
         if visible.any():
             env_idx = np.where(visible)[0]
-            target_plane[env_idx, ty[env_idx], tx[env_idx]] = val
+            base[env_idx, ty[env_idx], tx[env_idx]] = tile_val
 
-    return tile_idx, berry_plane, target_plane
+    return base.astype(np.int8)
 
 
 @jax.jit
@@ -324,11 +323,10 @@ def _compute_tile_idx_jax(
     yes_c: jnp.ndarray,
     no_r: jnp.ndarray,
     no_c: jnp.ndarray,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+) -> jnp.ndarray:
     """GPU port of ``_compute_tile_idx_batch`` (occlusion LUT fast path).
 
-    Returns (tile_idx, berry_plane, target_plane) — see the numpy version for
-    semantics.
+    Returns ``tile_idx`` — see the numpy version for semantics.
     """
     B = pos_r.shape[0]
     R = MINIMAP_RADIUS
@@ -361,28 +359,33 @@ def _compute_tile_idx_jax(
     b_raw = berry_mask_jax[mi_b, rows_cl, cols_cl]
     valid = vis_masks & in_bounds
 
+    # Base: unseen -> 0, terrain -> 1..9, deadly -> 13.
     base = (t_raw.astype(jnp.int16) + 1)
     base = jnp.where(valid, base, 0)
     deadly = valid & (t_raw == -1)
-    base = jnp.where(deadly, TILE_DEADLY, base)
-    tile_idx = base.astype(jnp.int8)
+    base = jnp.where(deadly, jnp.int16(TILE_DEADLY), base)
 
-    berry_plane = (valid & b_raw & ~deadly).astype(jnp.float32)
+    # Berry override (excluding deadly).
+    is_berry_cell = valid & b_raw & ~deadly
+    base = jnp.where(is_berry_cell, jnp.int16(TILE_BERRY), base)
 
-    target_plane = jnp.zeros((B, D, D), dtype=jnp.float32)
+    # Target override: NO first, YES overrides on collision.
     b_idx = jnp.arange(B)
-    for tr, tc, val in ((no_r, no_c, 0.5), (yes_r, yes_c, 1.0)):
+    for tr, tc, tile_val in (
+        (no_r, no_c, TILE_TARGET_NO),
+        (yes_r, yes_c, TILE_TARGET_YES),
+    ):
         ty = tr - pos_r + R
         tx = tc - pos_c + R
         ty_c = jnp.clip(ty, 0, D - 1)
         tx_c = jnp.clip(tx, 0, D - 1)
         in_patch = (ty >= 0) & (ty < D) & (tx >= 0) & (tx < D)
         visible = in_patch & vis_masks[b_idx, ty_c, tx_c]
-        prev = target_plane[b_idx, ty_c, tx_c]
-        new_vals = jnp.where(visible, jnp.asarray(val, dtype=jnp.float32), prev)
-        target_plane = target_plane.at[b_idx, ty_c, tx_c].set(new_vals)
+        prev = base[b_idx, ty_c, tx_c]
+        new_vals = jnp.where(visible, jnp.int16(tile_val), prev)
+        base = base.at[b_idx, ty_c, tx_c].set(new_vals)
 
-    return tile_idx, berry_plane, target_plane
+    return base.astype(jnp.int8)
 
 
 def _compute_occlusion_mask(
@@ -767,9 +770,7 @@ class CognilandEnv:
 
     def observation_space(self) -> dict:
         return {
-            "minimap": (MINIMAP_DIAMETER, MINIMAP_DIAMETER),  # int8, 0/1..9/13
-            "berry_mask": (MINIMAP_DIAMETER, MINIMAP_DIAMETER),   # float32 {0,1}
-            "target_mask": (MINIMAP_DIAMETER, MINIMAP_DIAMETER),  # float32 {0, .5, 1}
+            "minimap": (MINIMAP_DIAMETER, MINIMAP_DIAMETER),  # int8, 0..13
             "scalars": (6,),
         }
 
@@ -963,16 +964,14 @@ class CognilandEnv:
 
         rewards = np.zeros(B, dtype=np.float32)
 
-        # Snapshot cost-to-go at current position BEFORE the step is applied,
-        # so the reward function can compute PBRS progress = ctg_prev - ctg_curr.
+        # Snapshot cost-to-go and HP at current position BEFORE the step is
+        # applied, so the reward function can compute PBRS progress
+        # = ctg_prev - ctg_curr and the HP-delta shaping term (hp_curr - hp_prev).
         ctg_prev = self.ctg[np.arange(B), self.pos_r, self.pos_c].copy()
+        hp_prev = self.hp.copy()
 
         # Reset per-step craft flag (set below when a craft action succeeds).
         self.crafted_this_step.fill(0)
-        # Per-step flag: True if the agent successfully foraged a berry this
-        # step (action=4 on a berry tile). Consumed by tasks.py for a Markovian
-        # berry-forage bonus; no HP dependency and no anneal.
-        foraged_berry = np.zeros(B, dtype=bool)
 
         # Track which envs just finished (for episode return reporting)
         returned_episode = np.zeros(B, dtype=bool)
@@ -1069,7 +1068,6 @@ class CognilandEnv:
             is_berry = valid & self._berry_mask[mi, cur_r, cur_c]
             is_forest = valid & ~is_berry & (t_idx_safe == forest_idx)
             terrain_is_grass = valid & ~is_berry & (t_idx_safe == grass_idx)
-            foraged_berry[idx] = is_berry
 
             # Berry: heal & reset consec_grass; no drain.
             heal = np.where(is_berry, berry_heal, 0.0)
@@ -1193,15 +1191,15 @@ class CognilandEnv:
             "ctg_prev": ctg_prev,
             "ctg_curr": ctg_curr,
             "ctg_spawn": self.ctg_spawn.copy(),
+            # HP snapshots for the hp-delta shaping term (hp_coef * Δhp).
+            "hp_prev": hp_prev,
+            "hp_curr": self.hp.copy(),
             # Biome label per env (string) — used by tasks 1-3 to score
             # classification questions. Not exposed in the obs.
             "biome": self._biomes[self.map_idx].copy(),
             # Tool id crafted on this step (0=none, 1=raft, 2=rope, 3=shoes) —
             # used by tasks 4-6 to fire the craft bonus once per episode.
             "crafted": self.crafted_this_step.copy(),
-            # True on the step the agent successfully foraged a berry
-            # (action=4 on a berry tile). Markovian; no HP dependency.
-            "foraged_berry": foraged_berry,
         }
 
         dones = self.done.copy()
@@ -1224,7 +1222,7 @@ class CognilandEnv:
         B = self._num_envs
 
         if self._occlude:
-            minimap, berry_plane, target_plane = _compute_tile_idx_jax(
+            minimap = _compute_tile_idx_jax(
                 self._terrain_idx_jax,
                 self._berry_mask_jax,
                 self._vis_lut_packed_jax,
@@ -1239,7 +1237,7 @@ class CognilandEnv:
                 jnp.asarray(self.no_c),
             )
         else:
-            minimap, berry_plane, target_plane = _compute_tile_idx_batch(
+            minimap = _compute_tile_idx_batch(
                 self._terrain_idx, self._berry_mask,
                 self.map_idx, self.pos_r, self.pos_c,
                 self.yes_r, self.yes_c,
@@ -1277,7 +1275,5 @@ class CognilandEnv:
 
         return {
             "minimap": minimap,
-            "berry_mask": berry_plane,
-            "target_mask": target_plane,
             "scalars": scalars,
         }

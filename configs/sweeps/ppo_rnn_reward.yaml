@@ -1,4 +1,4 @@
-name: ppo_rnn_forage_berry_bonus_sweep
+name: ppo_rnn_hp_coef_sweep
 entity: crusoe
 project: crusoe_in_cogniland
 method: grid
@@ -18,13 +18,16 @@ command:
 
 program: scripts/train.py
 
-# Characterise reward.forage_berry_bonus on the full multi-task / multi-biome
-# setup. full_eval_enabled=true so each run gets per-task eval/* metrics that
-# feed the sweep objective (eval/aggregate/success).
+# Characterise reward.hp_coef on the full multi-task / multi-biome setup.
+# hp_coef scales the per-step Δhp shaping term: the agent earns +hp_coef
+# per HP gained (berry forage) and -hp_coef per HP drained. Combined with
+# the existing ctg PBRS term this is the full HP-aware reward. 0.0 is the
+# no-HP-shaping ablation; 0.03 / 0.06 / 0.12 bracket the design note's
+# default of 0.06.
 #
-# Grid: 3 runs (one per forage_berry_bonus), 50M frames each.
-# Launch with e.g.
-#     ./scripts/launch_sweep.sh configs/sweeps/ppo_rnn_reward.yaml -n 3 -r 1
+# Grid: 4 runs (one per hp_coef), 50M frames each, full multi-task eval.
+# Launch:
+#     ./scripts/launch_sweep.sh configs/sweeps/ppo_rnn_reward.yaml -n 4 -r 1
 parameters:
   seed:                         {value: 42}
   tasks:                        {value: [0, 1, 2, 3, 4, 5, 6]}
@@ -32,8 +35,5 @@ parameters:
   trainer.num_train_frames:     {value: 50_000_000}
   trainer.full_eval_enabled:    {value: true}
 
-  # Markovian bonus when the agent forages on a berry tile. The knob we're
-  # characterising: 0.0 is the ablation control; 3.0 / 6.0 scale up the
-  # berry-detour incentive.
-  reward.forage_berry_bonus:
-    values: [0.0, 3.0, 6.0]
+  reward.hp_coef:
+    values: [0.0, 0.03, 0.06, 0.12]

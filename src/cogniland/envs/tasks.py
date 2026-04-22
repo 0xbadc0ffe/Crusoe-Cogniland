@@ -2,9 +2,16 @@
 
 All tasks share a common base reward:
     r = -step_penalty
-      + reach_bonus * [reached YES or NO]
-      + shaping_coef * (ctg_prev - ctg_curr)       # PBRS, Dijkstra cost-to-go
-      - death_penalty * [died]                     # sparse, terminal
+      + reach_bonus  * [reached YES or NO]
+      + shaping_coef * (ctg_prev - ctg_curr)       # PBRS on Dijkstra cost-to-go
+      + hp_coef      * (hp_curr - hp_prev)         # PBRS on HP (berries/drain)
+      - death_penalty * [died]                     # sparse, terminal (default 0)
+
+The combined potential is
+    Φ(s, hp) = -ctg_direct(s) + (hp_coef / shaping_coef) * hp
+so PBRS stays valid — HP is part of the state. The hp-delta term rewards the
+forage gesture on berries (+heal) and penalises drain directly, replacing the
+older `forage_berry_bonus` knob which only fired on the forage action.
 
 Tasks 1-3 (classification): +correct_answer_bonus when the reached target
 matches the biome question.
@@ -52,10 +59,10 @@ def compute_task_reward(
     reach_bonus = float(reward_cfg.reach_bonus)
     step_penalty = float(reward_cfg.step_penalty)
     shaping_coef = float(reward_cfg.shaping_coef)
+    hp_coef = float(getattr(reward_cfg, "hp_coef", 0.0))
     death_penalty = float(getattr(reward_cfg, "death_penalty", 0.0))
     correct_bonus = float(getattr(reward_cfg, "correct_answer_bonus", 10.0))
     craft_bonus = float(getattr(reward_cfg, "craft_bonus", 10.0))
-    forage_berry_bonus = float(getattr(reward_cfg, "forage_berry_bonus", 0.0))
 
     rewards = np.full(B, -step_penalty, dtype=np.float32)
     rewards[info["reached"]] += reach_bonus
@@ -67,18 +74,20 @@ def compute_task_reward(
     progress[finite] = ctg_prev[finite] - ctg_curr[finite]
     rewards += shaping_coef * progress
 
+    # HP-delta term. Rewards foraging on berries (+heal) and the natural
+    # drain penalty for dangerous terrain; combined with the ctg PBRS it
+    # gives the agent dense, HP-aware shaping without a separate forage bonus.
+    if hp_coef != 0.0:
+        hp_prev = info.get("hp_prev")
+        hp_curr = info.get("hp_curr")
+        if hp_prev is not None and hp_curr is not None:
+            rewards += hp_coef * (np.asarray(hp_curr, dtype=np.float32)
+                                  - np.asarray(hp_prev, dtype=np.float32))
+
     alive = info.get("alive")
     if alive is not None and death_penalty != 0.0:
         died = dones & ~alive
         rewards[died] -= death_penalty
-
-    # Markovian berry-forage bonus. Fires on the step the agent does action=4
-    # on a berry tile. Gives a direct "berries are valuable" signal without
-    # HP-dependent scaling or curriculum annealing.
-    if forage_berry_bonus != 0.0:
-        foraged = info.get("foraged_berry")
-        if foraged is not None:
-            rewards += forage_berry_bonus * np.asarray(foraged, dtype=np.float32)
 
     # Tasks 1-3: classification bonus
     reached_yes = info.get("reached_yes")

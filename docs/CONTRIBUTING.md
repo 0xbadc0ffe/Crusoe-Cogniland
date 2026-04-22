@@ -139,9 +139,13 @@ All tasks share one reward function: `compute_task_reward()` in
 r = -step_penalty
   + reach_bonus   * [reached YES or NO]
   + shaping_coef  * (ctg_prev - ctg_curr)      # PBRS on Dijkstra cost-to-go
+  + hp_coef       * (hp_curr - hp_prev)        # PBRS on HP (berries/drain)
   - death_penalty * [died]                     # sparse, terminal (default 0)
-  + forage_berry_bonus * [action==4 on a berry tile]   # optional Markovian shaping
 ```
+
+The combined potential is `Φ(s, hp) = -ctg_direct(s) + (hp_coef/shaping_coef)·hp`
+— HP is part of the state, so PBRS optimality is preserved. The hp-delta term
+rewards the forage gesture on berries and penalises drain directly.
 
 On top of that, task-specific bonuses are added via `task_ids` masks:
 
