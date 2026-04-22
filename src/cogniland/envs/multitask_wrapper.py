@@ -32,6 +32,13 @@ class MultiTaskEnvWrapper:
 
         # Running per-episode sum over task-computed rewards. Base env reports 0.
         self._episode_returns = np.zeros(env.num_envs, dtype=np.float32)
+        # Discounted running sum: Σ_t γ^t r_t. Uses agent.gamma from config so
+        # the value logged matches the objective the agent is optimising.
+        self._gamma: float = float(
+            getattr(getattr(config, "agent", object()), "gamma", 0.99)
+        )
+        self._episode_returns_discounted = np.zeros(env.num_envs, dtype=np.float32)
+        self._episode_step_count = np.zeros(env.num_envs, dtype=np.int32)
 
         # Tool crafted at any point during the current episode (for tasks 4-6).
         self._episode_crafted_tool = np.zeros(env.num_envs, dtype=np.int32)
@@ -67,6 +74,8 @@ class MultiTaskEnvWrapper:
     ) -> dict[str, np.ndarray]:
         obs = self.env.reset(seed=seed, map_indices=map_indices)
         self._episode_returns.fill(0.0)
+        self._episode_returns_discounted.fill(0.0)
+        self._episode_step_count.fill(0)
         self._episode_crafted_tool.fill(0)
         obs["task_embedding"] = self.get_task_embeddings(self.task_ids)
         return obs
@@ -89,13 +98,25 @@ class MultiTaskEnvWrapper:
         info["task_success"] = self._compute_task_success(info)
 
         self._episode_returns += rewards
+        gamma_t = np.power(
+            self._gamma, self._episode_step_count.astype(np.float32),
+            dtype=np.float32,
+        )
+        self._episode_returns_discounted += gamma_t * rewards.astype(np.float32)
+        self._episode_step_count += 1
+
         returned = info.get("returned_episode")
         if returned is not None and returned.any():
             info["returned_episode_returns"] = np.where(
                 returned, self._episode_returns, 0.0
             ).astype(np.float32)
+            info["returned_episode_returns_discounted"] = np.where(
+                returned, self._episode_returns_discounted, 0.0
+            ).astype(np.float32)
         if dones.any():
             self._episode_returns[dones] = 0.0
+            self._episode_returns_discounted[dones] = 0.0
+            self._episode_step_count[dones] = 0
             self._episode_crafted_tool[dones] = 0
 
         obs["task_embedding"] = self.get_task_embeddings(self.task_ids)

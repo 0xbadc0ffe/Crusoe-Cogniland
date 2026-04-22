@@ -198,12 +198,16 @@ class Trainer:
     # Training metrics (aggregate across tasks)
     # ------------------------------------------------------------------ #
     def _log_training_metrics(self, metrics: dict, total_trained: int, pbar, fps: float):
-        """Log raw per-episode training metrics.
+        """Log per-episode training metrics.
 
-        One W&B log call per finished episode. We emit raw values only (no
-        rolling averages) — W&B's UI smoothing covers that. Per-task keys
-        (``train/task_{t}/...``) fire only on episodes that ran that task;
-        per-biome keys (``train/biome_{b}/...``) likewise.
+        One W&B log call per finished episode. Raw {0,1} success is too noisy
+        to read in the UI, so ``train/success`` is a moving average over the
+        last ``TRAIN_SUCCESS_MA_WINDOW`` finished episodes (global, across
+        tasks and biomes); per-task and per-biome success remain raw.
+
+        ``train/frame`` / ``train/episode`` are intentionally not logged to
+        W&B as user-visible metrics — the ``train_steps`` / ``train_episode``
+        step-metric anchors are kept so ``define_metric`` can align the x-axis.
 
         Per-task identity is recovered from ``self._train_task_ids`` (the task
         assignment fixed for this segment) by mapping each flat episode index
@@ -229,6 +233,11 @@ class Trainer:
         biome_flat = episode_info.get("biome")
         if biome_flat is not None:
             biome_flat = np.asarray(biome_flat).reshape(-1)
+        discounted_flat = episode_info.get("returned_episode_returns_discounted")
+        if discounted_flat is not None:
+            discounted_flat = np.asarray(
+                jnp.array(discounted_flat).reshape(-1)
+            )
 
         if not bool(done_flat.any()):
             self._log_agent_metrics(metrics, total_trained)
@@ -246,41 +255,52 @@ class Trainer:
         lengths_np = lengths_flat[done_flat]
         successes_np = success_flat[done_flat]
         biomes_np = biome_flat[done_flat] if biome_flat is not None else None
+        discounted_np = (
+            discounted_flat[done_flat] if discounted_flat is not None else None
+        )
 
-        last_r = last_s = 0.0
+        success_window = self.train_metrics.train_success_window
+
+        last_r = last_s_ma = 0.0
         for i in range(len(returns_np)):
             r = float(returns_np[i])
             l = int(lengths_np[i])
             s = int(successes_np[i])
+            r_disc = float(discounted_np[i]) if discounted_np is not None else None
             t_id = int(task_of_ep[i])
             biome = str(biomes_np[i]) if biomes_np is not None else None
 
             self.train_metrics.env_total_episodes += 1
-            last_r, last_s = r, s
+            success_window.append(s)
+            success_ma = float(np.mean(success_window))
+            last_r, last_s_ma = r, success_ma
 
             log_dict = {
                 "train/reward": r,
-                "train/success": s,
+                "train/success": success_ma,
                 "train/length": l,
                 "train/fps":     fps,
-                "train/frame":   total_trained,
-                "train/episode": self.train_metrics.env_total_episodes,
                 "train_steps":   total_trained,
                 "train_episode": self.train_metrics.env_total_episodes,
                 f"train/task_{t_id}/reward": r,
                 f"train/task_{t_id}/success": s,
                 f"train/task_{t_id}/length": l,
             }
+            if r_disc is not None:
+                log_dict["train/reward_discounted"] = r_disc
+                log_dict[f"train/task_{t_id}/reward_discounted"] = r_disc
             if biome is not None:
                 log_dict[f"train/biome_{biome}/reward"] = r
                 log_dict[f"train/biome_{biome}/success"] = s
                 log_dict[f"train/biome_{biome}/length"] = l
+                if r_disc is not None:
+                    log_dict[f"train/biome_{biome}/reward_discounted"] = r_disc
 
             self.run_logger.wandb_run.log(log_dict)
 
         pbar.set_postfix(ep=self.train_metrics.env_total_episodes,
                          r=f"{last_r:.2f}",
-                         s=f"{last_s:.2f}",
+                         s=f"{last_s_ma:.2f}",
                          fps=f"{fps:.0f}")
         # Print loss dynamics to stdout every segment so offline runs have a
         # human-readable trace of entropy / value_loss / policy_loss.
@@ -290,8 +310,8 @@ class Trainer:
             if isinstance(v, (int, float)):
                 loss_bits.append(f"{k}={v:+.3f}")
         if loss_bits:
-            logger.info("[frame %d] r=%+.2f s=%+.2f  %s",
-                        total_trained, last_r, last_s, "  ".join(loss_bits))
+            logger.info("[frame %d] r=%+.2f s_ma=%+.2f  %s",
+                        total_trained, last_r, last_s_ma, "  ".join(loss_bits))
         self._log_agent_metrics(metrics, total_trained)
 
     def _log_agent_metrics(self, metrics: dict, train_steps: int):

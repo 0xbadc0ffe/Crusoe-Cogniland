@@ -540,6 +540,7 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
 
         # Episode tracking
         all_episode_returns = []
+        all_episode_returns_discounted = []
         all_episode_lengths = []
         all_episode_flags = []
         all_episode_success = []
@@ -598,6 +599,10 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
                     all_episode_flags.append(ep_mask.copy())
                     if "returned_episode_returns" in info:
                         all_episode_returns.append(info["returned_episode_returns"].copy())
+                    if "returned_episode_returns_discounted" in info:
+                        all_episode_returns_discounted.append(
+                            info["returned_episode_returns_discounted"].copy()
+                        )
                     if "returned_episode_lengths" in info:
                         all_episode_lengths.append(info["returned_episode_lengths"].copy())
                     if "task_success" in info:
@@ -721,6 +726,10 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             episode_info["returned_episode"] = np.concatenate(all_episode_flags, axis=0)
         if all_episode_returns:
             episode_info["returned_episode_returns"] = np.concatenate(all_episode_returns, axis=0)
+        if all_episode_returns_discounted:
+            episode_info["returned_episode_returns_discounted"] = np.concatenate(
+                all_episode_returns_discounted, axis=0
+            )
         if all_episode_lengths:
             episode_info["returned_episode_lengths"] = np.concatenate(all_episode_lengths, axis=0)
         if all_episode_success:
@@ -768,6 +777,7 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             task_emb_jax = jnp.zeros((n_eval_envs, task_embedding_dim))
 
         all_episode_returns = []
+        all_episode_returns_discounted = []
         all_episode_lengths = []
         all_episode_flags = []
         all_episode_success = []
@@ -796,6 +806,10 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
                 all_episode_flags.append(ep_mask.copy())
                 if "returned_episode_returns" in info:
                     all_episode_returns.append(info["returned_episode_returns"].copy())
+                if "returned_episode_returns_discounted" in info:
+                    all_episode_returns_discounted.append(
+                        info["returned_episode_returns_discounted"].copy()
+                    )
                 if "returned_episode_lengths" in info:
                     all_episode_lengths.append(info["returned_episode_lengths"].copy())
                 if "task_success" in info:
@@ -814,6 +828,10 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             episode_info["returned_episode"] = np.concatenate(all_episode_flags, axis=0)
         if all_episode_returns:
             episode_info["returned_episode_returns"] = np.concatenate(all_episode_returns, axis=0)
+        if all_episode_returns_discounted:
+            episode_info["returned_episode_returns_discounted"] = np.concatenate(
+                all_episode_returns_discounted, axis=0
+            )
         if all_episode_lengths:
             episode_info["returned_episode_lengths"] = np.concatenate(all_episode_lengths, axis=0)
         if all_episode_success:
