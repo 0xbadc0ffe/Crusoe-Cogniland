@@ -106,13 +106,14 @@ class MultiTaskEnvWrapper:
         self._episode_step_count += 1
 
         returned = info.get("returned_episode")
-        if returned is not None and returned.any():
-            info["returned_episode_returns"] = np.where(
-                returned, self._episode_returns, 0.0
-            ).astype(np.float32)
-            info["returned_episode_returns_discounted"] = np.where(
-                returned, self._episode_returns_discounted, 0.0
-            ).astype(np.float32)
+        if returned is None:
+            returned = np.zeros(self.num_envs, dtype=bool)
+        info["returned_episode_returns"] = np.where(
+            returned, self._episode_returns, 0.0
+        ).astype(np.float32)
+        info["returned_episode_returns_discounted"] = np.where(
+            returned, self._episode_returns_discounted, 0.0
+        ).astype(np.float32)
         if dones.any():
             self._episode_returns[dones] = 0.0
             self._episode_returns_discounted[dones] = 0.0
