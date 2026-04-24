@@ -24,8 +24,6 @@ import numpy as np
 import torch
 import jax
 import jax.numpy as jnp
-from scipy.sparse import csr_matrix
-from scipy.sparse.csgraph import dijkstra as scipy_dijkstra
 
 from cogniland.envs.tile_effects import TileEffects, drain_for
 
@@ -490,45 +488,6 @@ def _build_circular_masks(max_radius: int) -> dict[int, np.ndarray]:
     return out
 
 
-def _build_cost_graph(
-    terrain_idx: np.ndarray,
-    berry_mask: np.ndarray,
-    hp_drain_arr: np.ndarray,
-) -> csr_matrix:
-    """4-connected HP-drain graph for a single 128x128 map.
-
-    Edge cost entering a cell = hp_drain[terrain], or 0 for berry tiles.
-    Deadly cells (terrain_idx == -1) are disconnected.
-    The returned CSR is asymmetric — edge (u -> v) has cost = cost of entering v.
-    """
-    H, W = terrain_idx.shape
-    cell_cost = np.full((H, W), np.inf, dtype=np.float64)
-    valid = terrain_idx >= 0
-    cell_cost[valid] = hp_drain_arr[terrain_idx[valid]]
-    cell_cost[berry_mask & valid] = 0.0
-
-    r_h, c_h = np.mgrid[0:H, 0:W - 1]
-    src_h = (r_h * W + c_h).ravel()
-    dst_h = (r_h * W + c_h + 1).ravel()
-    r_v, c_v = np.mgrid[0:H - 1, 0:W]
-    src_v = (r_v * W + c_v).ravel()
-    dst_v = ((r_v + 1) * W + c_v).ravel()
-
-    all_src = np.concatenate([src_h, dst_h, src_v, dst_v])
-    all_dst = np.concatenate([dst_h, src_h, dst_v, src_v])
-    all_cost = np.concatenate([
-        cell_cost[r_h, c_h + 1].ravel(),
-        cell_cost[r_h, c_h].ravel(),
-        cell_cost[r_v + 1, c_v].ravel(),
-        cell_cost[r_v, c_v].ravel(),
-    ])
-    finite = np.isfinite(all_cost)
-    return csr_matrix(
-        (all_cost[finite], (all_src[finite], all_dst[finite])),
-        shape=(H * W, H * W),
-    )
-
-
 class CognilandEnv:
     """Batched Cogniland environment using pure numpy arrays."""
 
@@ -702,9 +661,10 @@ class CognilandEnv:
         self.crafted_this_step: np.ndarray | None = None
         self.done: np.ndarray | None = None
 
-        # Per-episode cost-to-go map (Dijkstra from target), one per env
-        self.ctg: np.ndarray | None = None  # [B, H, W] float32
-        self.ctg_spawn: np.ndarray | None = None  # [B] float32 — ctg at spawn
+        # Per-episode Euclidean distance at spawn (to YES/NO midpoint); the
+        # step-to-step potential Φ = -‖pos - midpoint‖₂ is recomputed on the
+        # fly from ``pos_r/pos_c`` and ``mid_r/mid_c`` — no Dijkstra needed.
+        self.ctg_spawn: np.ndarray | None = None  # [B] float32
 
         # Episode tracking
         self._episode_returns: np.ndarray | None = None
@@ -740,9 +700,6 @@ class CognilandEnv:
         self._drain_lut = lut
         self._grass_idx = TERRAIN_NAMES.index("grassland")
         self._forest_idx = TERRAIN_NAMES.index("forest")
-
-        # Cache of per-map HP-drain graphs (built lazily on first use)
-        self._graph_cache: dict[int, csr_matrix] = {}
 
         # GPU-resident copies of the map arrays used by the jitted minimap
         # kernel. Uploaded once here so every call reuses them (closure over
@@ -822,26 +779,13 @@ class CognilandEnv:
             return frozenset()
         return frozenset({name})
 
-    def _map_graph(self, mi: int) -> csr_matrix:
-        """Return the cached HP-drain graph for map ``mi`` (build on first access)."""
-        g = self._graph_cache.get(int(mi))
-        if g is None:
-            g = _build_cost_graph(
-                self._terrain_idx[mi], self._berry_mask[mi], self._hp_drain_arr,
-            )
-            self._graph_cache[int(mi)] = g
-        return g
-
-    def _compute_ctg(self, mi: int, tr: int, tc: int) -> np.ndarray:
-        """Dijkstra cost-to-go from every cell to (tr, tc) on map ``mi``.
-
-        Uses the no-tool HP drain table (ignores raft/rope/shoes). Returns a
-        float32 [H, W] array; unreachable cells are +inf.
-        """
-        graph = self._map_graph(mi)
-        target_flat = int(tr) * self._map_size + int(tc)
-        dist = scipy_dijkstra(graph.T, directed=True, indices=target_flat)
-        return dist.reshape(self._map_size, self._map_size).astype(np.float32)
+    def _euclid_to_mid(
+        self, pos_r: np.ndarray, pos_c: np.ndarray,
+    ) -> np.ndarray:
+        """Euclidean distance ‖pos − midpoint‖₂ for the PBRS potential."""
+        dr = pos_r.astype(np.float32) - self.mid_r.astype(np.float32)
+        dc = pos_c.astype(np.float32) - self.mid_c.astype(np.float32)
+        return np.sqrt(dr * dr + dc * dc).astype(np.float32)
 
     def reset(
         self,
@@ -896,14 +840,10 @@ class CognilandEnv:
             (B, self._map_size, self._map_size), dtype=bool
         )
 
-        # Precompute Dijkstra cost-to-go maps per env (one per episode),
-        # measured from the midpoint between YES and NO targets.
-        self.ctg = np.empty((B, self._map_size, self._map_size), dtype=np.float32)
-        for b in range(B):
-            self.ctg[b] = self._compute_ctg(
-                int(self.map_idx[b]), int(self.mid_r[b]), int(self.mid_c[b]),
-            )
-        self.ctg_spawn = self.ctg[np.arange(B), self.spawn_r, self.spawn_c].copy()
+        # PBRS potential is Euclidean distance to YES/NO midpoint; snapshot
+        # the spawn value for logging / bookkeeping (step-to-step values are
+        # recomputed from ``pos_r/pos_c`` in ``step``).
+        self.ctg_spawn = self._euclid_to_mid(self.spawn_r, self.spawn_c)
 
         self._episode_returns = np.zeros(B, dtype=np.float32)
         self._episode_lengths = np.zeros(B, dtype=np.int32)
@@ -946,12 +886,10 @@ class CognilandEnv:
         self.berry_forages[indices] = 0
         self.foraged_cells[indices] = False
 
-        # Recompute cost-to-go (from midpoint) for envs that just reset.
-        for j, b in enumerate(indices):
-            self.ctg[b] = self._compute_ctg(
-                int(new_map_idx[j]), int(yr[j]), int(yc[j] + TARGET_GAP // 2),
-            )
-            self.ctg_spawn[b] = self.ctg[b, sr[j], sc[j]]
+        # Refresh spawn-time Euclidean distance for the just-reset envs.
+        self.ctg_spawn[indices] = self._euclid_to_mid(
+            self.spawn_r[indices], self.spawn_c[indices],
+        )
 
         self._episode_returns[indices] = 0.0
         self._episode_lengths[indices] = 0
@@ -972,10 +910,10 @@ class CognilandEnv:
 
         rewards = np.zeros(B, dtype=np.float32)
 
-        # Snapshot cost-to-go and HP at current position BEFORE the step is
-        # applied, so the reward function can compute PBRS progress
-        # = ctg_prev - ctg_curr and the HP-delta shaping term (hp_curr - hp_prev).
-        ctg_prev = self.ctg[np.arange(B), self.pos_r, self.pos_c].copy()
+        # Snapshot Euclidean distance potential and HP at current position
+        # BEFORE the step is applied, so the reward function can compute
+        # PBRS progress = ctg_prev - ctg_curr and hp-delta if ever re-enabled.
+        ctg_prev = self._euclid_to_mid(self.pos_r, self.pos_c)
         hp_prev = self.hp.copy()
 
         # Reset per-step craft flag (set below when a craft action succeeds).
@@ -1179,10 +1117,9 @@ class CognilandEnv:
             returned_episode_lengths[just_done] = self.steps[just_done]
             returned_episode_berry_forages[just_done] = self.berry_forages[just_done]
 
-        # Cost-to-go at the new position (after the step, before any auto-reset).
-        # Agents that ended on a deadly cell or otherwise unreachable index will
-        # see +inf here; tasks.py filters these out.
-        ctg_curr = self.ctg[np.arange(B), self.pos_r, self.pos_c].copy()
+        # Euclidean distance to midpoint at the new position (after the step,
+        # before any auto-reset). Used as the PBRS potential in tasks.py.
+        ctg_curr = self._euclid_to_mid(self.pos_r, self.pos_c)
 
         reached_yes = (
             (self.pos_r == self.yes_r) & (self.pos_c == self.yes_c) & self.done
@@ -1208,9 +1145,9 @@ class CognilandEnv:
                 (self.spawn_r.astype(np.float32) - self.mid_r.astype(np.float32)) ** 2 +
                 (self.spawn_c.astype(np.float32) - self.mid_c.astype(np.float32)) ** 2
             ),
-            # Cost-to-go potentials for PBRS shaping (one-shot Dijkstra from the
-            # YES/NO midpoint, computed per episode). ``ctg_spawn`` is the
-            # initial potential.
+            # PBRS potential = Euclidean distance to the YES/NO midpoint;
+            # ``ctg_spawn`` is the initial potential. Naming kept for
+            # compatibility with tasks.py and diagnostic scripts.
             "ctg_prev": ctg_prev,
             "ctg_curr": ctg_curr,
             "ctg_spawn": self.ctg_spawn.copy(),

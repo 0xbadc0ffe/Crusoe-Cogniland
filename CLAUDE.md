@@ -295,22 +295,19 @@ RGB is **not** part of the agent obs. The map dataset `.pt` still carries an
 ### Task 0 reward (reach target)
 
 ```
-r_step  = -step_penalty                                   # per-step cost (0.02)
-r_reach = +reach_bonus                                    # on reaching target (150.0)
-r_shape = shaping_coef * (ctg_prev - ctg_curr)            # target PBRS (0.3)
-r_hp    = hp_coef      * (hp_curr - hp_prev)              # HP PBRS (0.06)
+r_reach = +reach_bonus                                    # sparse, on reaching target (150.0)
+r_shape = shaping_coef * (ctg_prev - ctg_curr)            # target PBRS (1.0)
 ```
 
-`ctg` is the Dijkstra cost-to-go from the current cell to the target on the HP-drain
-graph (edge cost = `hp_drain[dest]`, berries cost 0, deadly cells disconnected).
-It is computed once per episode at reset and reused every step. The HP-delta
-term rewards the forage gesture on berries (+heal) and the natural per-step
-drain — together they define the PBRS potential
-`Φ(s, hp) = -ctg_direct(s) + (hp_coef/shaping_coef)·hp`. Because HP is part
-of the state, the potential is well-defined and optimality is preserved.
-Summed along a successful trajectory the target-shaping telescopes to
-`shaping_coef·ctg_spawn` and the HP-shaping to `hp_coef·(hp_end - hp_start)` —
-both bounded.
+The PBRS potential is the **Euclidean distance** from the agent's cell to
+the YES/NO midpoint — no graph, no Dijkstra, just a sqrt evaluated at
+every step. The info keys `ctg_prev` / `ctg_curr` / `ctg_spawn` (kept for
+naming compatibility) all carry this distance. Along a successful
+trajectory the shaping telescopes to `shaping_coef · ctg_spawn` — bounded.
+
+`step_penalty`, `hp_coef`, and `death_penalty` default to 0 (the original
+HP-aware PBRS is kept in the code for ablations but disabled in the shipped
+config).
 
 Tasks 1-6 are stubs (return 0) — to be defined for multi-task experiments.
 

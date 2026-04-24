@@ -3,15 +3,15 @@
 All tasks share a common base reward:
     r = -step_penalty
       + reach_bonus  * [reached YES or NO]
-      + shaping_coef * (ctg_prev - ctg_curr)       # PBRS on Dijkstra cost-to-go
-      + hp_coef      * (hp_curr - hp_prev)         # PBRS on HP (berries/drain)
+      + shaping_coef * (ctg_prev - ctg_curr)       # PBRS on Euclidean distance
+      + hp_coef      * (hp_curr - hp_prev)         # PBRS on HP (default 0)
       - death_penalty * [died]                     # sparse, terminal (default 0)
 
-The combined potential is
-    Φ(s, hp) = -ctg_direct(s) + (hp_coef / shaping_coef) * hp
-so PBRS stays valid — HP is part of the state. The hp-delta term rewards the
-forage gesture on berries (+heal) and penalises drain directly, replacing the
-older `forage_berry_bonus` knob which only fired on the forage action.
+The PBRS potential is the Euclidean distance from the agent's cell to the
+YES/NO midpoint — fast (no Dijkstra, no graph), and the info dict keys
+``ctg_prev`` / ``ctg_curr`` / ``ctg_spawn`` now carry that distance.
+With ``step_penalty = hp_coef = death_penalty = 0`` this reduces to the
+"reach + Euclidean shaping" baseline.
 
 Tasks 1-3 (classification): +correct_answer_bonus when the reached target
 matches the biome question.

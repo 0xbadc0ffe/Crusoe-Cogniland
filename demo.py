@@ -82,6 +82,11 @@ CLASSIC_CTG_COST_CHEAP = 1.0        # beach, sandy
 CLASSIC_CTG_COST_STANDARD = math.pi / 2  # everything else
 CLASSIC_SHAPING_COEF = 0.1
 
+# Normal-mode reward (mirrors configs/env/cogniland.yaml defaults): sparse
+# reach bonus + Euclidean-PBRS shaping. Φ(pos) = -‖pos − target‖₂.
+COGNILAND_REACH_BONUS = 10.0
+COGNILAND_SHAPING_COEF = 0.05
+
 
 def _compute_classic_ctg(tidx: np.ndarray, target: tuple[int, int]) -> np.ndarray:
     """Dijkstra cost-to-go from every cell to ``target`` under the classic
@@ -379,6 +384,17 @@ class CognilandGame:
         self.craft_step: int | None = None  # step index where tool was crafted
         self.craft_tool_name: str | None = None  # which tool was crafted
 
+        # Reward tracking (matches env: reach_bonus + shaping_coef * PBRS on
+        # Euclidean distance to target). Forage / craft actions don't move
+        # the agent, so their shaping contribution is zero.
+        self.reward: float = 0.0
+        self.last_shaping: float = 0.0
+
+    def _euclid_to_target(self, pos: tuple[int, int]) -> float:
+        dr = float(pos[0] - self.target[0])
+        dc = float(pos[1] - self.target[1])
+        return math.sqrt(dr * dr + dc * dc)
+
     def _terrain_name(self, r: int, c: int) -> str:
         idx = int(self.tidx[r, c])
         if idx < 0:
@@ -427,6 +443,8 @@ class CognilandGame:
             self.steps += 1
             self.path.append(self.pos)  # same position = forage in place
             self.hp_history.append(self.hp)
+            # No movement → Euclidean PBRS shaping is zero for this transition.
+            self.last_shaping = 0.0
             if self.hp <= 0:
                 self.hp = 0.0
                 self.game_over = True
@@ -453,6 +471,8 @@ class CognilandGame:
         if not (0 <= nr < MAP_SIZE and 0 <= nc < MAP_SIZE):
             return
 
+        dist_prev = self._euclid_to_target(self.pos)
+
         idx = int(self.tidx[nr, nc])
         if idx < 0:
             self.pos = (nr, nc)
@@ -462,6 +482,9 @@ class CognilandGame:
             self.path.append(self.pos)
             self.hp_history.append(self.hp)
             self.steps += 1
+            shaping = COGNILAND_SHAPING_COEF * (dist_prev - self._euclid_to_target(self.pos))
+            self.reward += shaping
+            self.last_shaping = shaping
             self.game_over = True
             self.won = False
             return
@@ -478,11 +501,16 @@ class CognilandGame:
         self.last_drain = drain
         self.last_terrain = terrain
 
+        shaping = COGNILAND_SHAPING_COEF * (dist_prev - self._euclid_to_target(self.pos))
+        self.reward += shaping
+        self.last_shaping = shaping
+
         if self.hp <= 0:
             self.hp = 0.0
             self.game_over = True
             self.won = False
         elif self.pos == self.target:
+            self.reward += COGNILAND_REACH_BONUS
             self.game_over = True
             self.won = True
 
@@ -1232,12 +1260,21 @@ def draw_game(screen, game: CognilandGame, fs, fm, fl, ft):
         screen.blit(tool_txt, (PANEL_X + 120, y))
     y += 28
 
+    # Reward (sparse reach + Euclidean PBRS shaping)
+    rwd_col = COLORS["hp_full"] if game.reward >= 0 else COLORS["hp_low"]
+    screen.blit(fm.render(f"Reward: {game.reward:+.2f}", True, rwd_col),
+                (PANEL_X, y))
+    y += 28
+
     # Current step info
     cur = game.last_terrain
     drain_str = "-" if game.last_drain is None else f"-{game.last_drain}"
+    dist_here = game._euclid_to_target(game.pos)
     for lbl, val, col in [
         ("Terrain", cur, COLORS["fg"]),
         ("Drain", drain_str, COLORS["fg"]),
+        ("Shaping", f"{game.last_shaping:+.2f}", COLORS["dim"]),
+        ("Dist", f"{dist_here:.1f}", COLORS["fg"]),
         ("Steps", str(game.steps), COLORS["fg"]),
         ("Pos", f"({game.pos[0]}, {game.pos[1]})", COLORS["fg"]),
     ]:
@@ -1290,7 +1327,8 @@ def draw_game(screen, game: CognilandGame, fs, fm, fl, ft):
         mcol = COLORS["hp_full"] if game.won else COLORS["hp_low"]
         surf = ft.render(msg, True, mcol)
         screen.blit(surf, surf.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2 - 40)))
-        sub = fm.render(f"Steps: {game.steps}   HP: {int(game.hp)}   Wood: {game.wood}",
+        sub = fm.render(f"Steps: {game.steps}   HP: {int(game.hp)}   "
+                        f"Wood: {game.wood}   Reward: {game.reward:+.2f}",
                         True, COLORS["white"])
         screen.blit(sub, sub.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2 + 10)))
         tool_msg = f"Tool: {game.tool or 'none'}"
