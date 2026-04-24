@@ -17,11 +17,18 @@ class AgentRegistry:
         self.agents[name] = factory
 
     def discover(self, paths: list[tuple[str, str]]):
+        import warnings
         infrastructure = ("__init__", "registry", "agent", "state", "utils")
         for path, package in paths:
             for item in Path(path).glob("*.py"):
-                if item.stem not in infrastructure:
+                if item.stem in infrastructure:
+                    continue
+                try:
                     importlib.import_module(f"{package}.{item.stem}")
+                except Exception as e:
+                    warnings.warn(
+                        f"skipping agent {item.stem}: {type(e).__name__}: {e}"
+                    )
 
     def load(self, config: OmegaConf) -> Agent:
         from cogniland.envs.registry import make_env

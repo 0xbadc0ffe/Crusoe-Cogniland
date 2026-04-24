@@ -215,12 +215,17 @@ class CheckpointManager:
         self,
         step: Optional[int] = None,
         load_best: bool = False,
+        target: Optional[Dict[str, Any]] = None,
     ) -> tuple[Dict[str, Any], DictConfig, Dict[str, Any]]:
         """Load agent checkpoint.
 
         Args:
             step: Training step to load (None = latest)
             load_best: Load best checkpoint instead of step-based
+            target: Optional pytree with the desired shape/dtype/sharding.
+                Required when restoring a checkpoint saved on a different
+                device topology (e.g. GPU → CPU); orbax uses it to reshape
+                the sharding.
 
         Returns:
             Tuple of (state_dict, config, metadata)
@@ -243,7 +248,10 @@ class CheckpointManager:
 
         # Load checkpoint PyTree
         logger.info(f"Loading checkpoint from {checkpoint_path}")
-        state_dict = self.checkpointer.restore(checkpoint_path)
+        if target is not None:
+            state_dict = self.checkpointer.restore(checkpoint_path, target)
+        else:
+            state_dict = self.checkpointer.restore(checkpoint_path)
 
         # Load custom metadata from JSON file
         import json
@@ -302,11 +310,16 @@ class CheckpointManager:
         return current > self.best_metric
 
     def _get_latest_checkpoint(self) -> Optional[Path]:
-        """Get path to latest checkpoint."""
+        """Get path to latest checkpoint. Falls back to ``last/`` if no
+        ``step_*`` snapshots exist (e.g. artifact bundles where only the final
+        state is shipped)."""
         checkpoint_dirs = sorted(
             [p for p in self.checkpoint_dir.glob("step_*") if p.is_dir()]
         )
-        return checkpoint_dirs[-1] if checkpoint_dirs else None
+        if checkpoint_dirs:
+            return checkpoint_dirs[-1]
+        last_path = self.checkpoint_dir / "last"
+        return last_path if last_path.exists() else None
 
     def _cleanup_old_checkpoints(self):
         """Remove old checkpoints, keeping only the last N."""

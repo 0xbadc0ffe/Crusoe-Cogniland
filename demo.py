@@ -697,7 +697,7 @@ class AIAgentPlayer:
         from cogniland.trainer.checkpoint import CheckpointManager
         from cogniland.envs.env import (
             _build_circular_masks,
-            _compute_minimap_batch,
+            _compute_tile_idx_batch,
             MINIMAP_RADIUS,
             MINIMAP_DIAMETER,
             TERRAIN_NAMES,
@@ -706,7 +706,7 @@ class AIAgentPlayer:
 
         self._jax = jax
         self._jnp = jnp
-        self._compute_minimap_batch = _compute_minimap_batch
+        self._compute_tile_idx_batch = _compute_tile_idx_batch
         self._minimap_radius = MINIMAP_RADIUS
         self._minimap_diameter = MINIMAP_DIAMETER
         self._terrain_names = TERRAIN_NAMES
@@ -725,7 +725,7 @@ class AIAgentPlayer:
         # because it eagerly instantiates a full CognilandEnv (loading all map
         # datasets); for inference we can pass a hand-rolled obs_space.
         obs_space = {
-            "minimap": (6, MINIMAP_DIAMETER, MINIMAP_DIAMETER),
+            "minimap": (MINIMAP_DIAMETER, MINIMAP_DIAMETER),
             "scalars": (6,),
         }
         self.agent = make_ppo_rnn(self.config, obs_space, 8)
@@ -736,13 +736,25 @@ class AIAgentPlayer:
             keep_last=0,
             save_best=True,
         )
+
+        # Build an abstract target tree with the current device topology so
+        # orbax can re-shard a checkpoint saved on a different device (e.g.
+        # training on GPU, inference on CPU).
+        init_rng = jax.random.PRNGKey(0)
+        init_state = self.agent.init(init_rng)
+        target_pytree = {"train_state": init_state.train_state}
+
         load_best = (prefer == "best") and (env_ckpt_dir / "best").exists()
         try:
-            state_dict, _saved_cfg, self.metadata = manager.load(load_best=load_best)
+            state_dict, _saved_cfg, self.metadata = manager.load(
+                load_best=load_best, target=target_pytree
+            )
         except FileNotFoundError:
             # Fall back to whichever checkpoint exists.
             load_best = not load_best
-            state_dict, _saved_cfg, self.metadata = manager.load(load_best=load_best)
+            state_dict, _saved_cfg, self.metadata = manager.load(
+                load_best=load_best, target=target_pytree
+            )
         self._which = "best" if load_best else "latest"
 
         runtime = RuntimeState(
@@ -888,8 +900,6 @@ class AIAgentPlayer:
                    visibility_lut_map: np.ndarray) -> dict:
         """Build a single-env obs dict matching CognilandEnv._get_obs."""
         jnp = self._jnp
-        rgb = game.rgb[None]
-        heightmap = game.heightmap[None].astype(np.float32)
         tidx = game.tidx[None].astype(np.int8)
         berry_mask = game.berry_mask[None].astype(bool)
         vis_lut = visibility_lut_map[None]
@@ -905,8 +915,8 @@ class AIAgentPlayer:
         no_r = np.array([-10_000], dtype=np.int32)
         no_c = np.array([-10_000], dtype=np.int32)
 
-        minimap = self._compute_minimap_batch(
-            rgb, heightmap, tidx, berry_mask,
+        minimap = self._compute_tile_idx_batch(
+            tidx, berry_mask,
             map_idx, pos_r, pos_c, yes_r, yes_c, no_r, no_c,
             self._vis_per_terrain,
             vis_lut_packed=vis_lut,
