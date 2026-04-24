@@ -218,3 +218,4 @@ artifacts_sweep/
 logs/
 sweep_artifacts/.claude/worktrees/
 data/maps/*.pt
+data/maps_classic/*.pt

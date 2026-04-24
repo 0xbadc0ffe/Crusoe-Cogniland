@@ -1,0 +1,59 @@
+name: ppo_rnn_heal
+entity: crusoe
+project: crusoe_in_cogniland
+method: grid
+metric:
+  name: eval/aggregate/success
+  goal: maximize
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - --env-config
+  - configs/env/cogniland.yaml
+  - --agent-config
+  - configs/agent/ppo_rnn.yaml
+  - --sweep
+
+program: scripts/train.py
+
+# Sweep the new small healing bonus (heal_coef * max(Δhp, 0)) on top of the
+# reach + Euclidean-PBRS baseline (shaping_coef=0.2, berry_heal=20).
+#
+# Hypothesis: a dense, per-step positive signal for berry forage should
+# bootstrap the detour skill without the "die fast" failure mode that
+# signed hp_coef produced at small berry_heal. 20 HP per berry keeps a
+# successful forage worth ~2 HP (at heal_coef=0.1) — small relative to
+# shaping_coef·ctg_spawn (≈8-14) and reach_bonus (10), i.e. auxiliary.
+#
+# We cross heal_coef with a stronger exploration schedule: PPO collapses
+# entropy before it has observed enough reach trajectories, so larger
+# entropy_coef values keep the policy diffuse long enough for the heal
+# gradient to propagate.
+#
+# Grid: 4 heal_coef × 3 entropy_coef = 12 runs, single seed (42), 10M
+# frames each. Replay the best (heal_coef, entropy_coef) pair through
+# ppo_rnn_seeds.yaml to confirm variance.
+#
+# Launch:
+#   ./scripts/launch_sweep.sh configs/sweeps/ppo_rnn_heal.yaml
+
+parameters:
+  # --- Fixed ---
+  seed:                         {value: 42}
+  trainer.num_train_frames:     {value: 10_000_000}
+  reward.shaping_coef:          {value: 0.2}
+  reward.reach_bonus:           {value: 10.0}
+
+  # --- Axes ---
+  # Size of the healing bonus. 0.0 is the baseline ablation; 0.3 makes a
+  # full-berry forage worth +6 (comparable to reach_bonus·ε over the full
+  # episode). Keep berry_heal=20 (set in tile_effects.py) so one forage
+  # nets 20·heal_coef.
+  reward.heal_coef:             {values: [0.0, 0.05, 0.1, 0.2]}
+
+  # Stronger entropy → longer-lived policy diffusion. Current default is
+  # 3e-2; we push upward to see whether exploration is the bottleneck
+  # that keeps the agent from discovering berry detours.
+  agent.entropy_coef:           {values: [3e-2, 6e-2, 1e-1]}

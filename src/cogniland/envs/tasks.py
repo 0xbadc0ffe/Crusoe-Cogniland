@@ -4,6 +4,7 @@ All tasks share a common base reward:
     r = -step_penalty
       + reach_bonus  * [reached YES or NO]
       + shaping_coef * (ctg_prev - ctg_curr)       # PBRS on Euclidean distance
+      + heal_coef    * max(hp_curr - hp_prev, 0)   # small bonus per HP healed
       + hp_coef      * (hp_curr - hp_prev)         # PBRS on HP (default 0)
       - death_penalty * [died]                     # sparse, terminal (default 0)
 
@@ -59,6 +60,7 @@ def compute_task_reward(
     reach_bonus = float(reward_cfg.reach_bonus)
     step_penalty = float(reward_cfg.step_penalty)
     shaping_coef = float(reward_cfg.shaping_coef)
+    heal_coef = float(getattr(reward_cfg, "heal_coef", 0.0))
     hp_coef = float(getattr(reward_cfg, "hp_coef", 0.0))
     death_penalty = float(getattr(reward_cfg, "death_penalty", 0.0))
     correct_bonus = float(getattr(reward_cfg, "correct_answer_bonus", 10.0))
@@ -74,15 +76,18 @@ def compute_task_reward(
     progress[finite] = ctg_prev[finite] - ctg_curr[finite]
     rewards += shaping_coef * progress
 
-    # HP-delta term. Rewards foraging on berries (+heal) and the natural
-    # drain penalty for dangerous terrain; combined with the ctg PBRS it
-    # gives the agent dense, HP-aware shaping without a separate forage bonus.
-    if hp_coef != 0.0:
+    # HP-delta terms. `heal_coef` rewards positive Δhp only (berry forage);
+    # `hp_coef` is the signed PBRS variant that also penalises drain.
+    if heal_coef != 0.0 or hp_coef != 0.0:
         hp_prev = info.get("hp_prev")
         hp_curr = info.get("hp_curr")
         if hp_prev is not None and hp_curr is not None:
-            rewards += hp_coef * (np.asarray(hp_curr, dtype=np.float32)
-                                  - np.asarray(hp_prev, dtype=np.float32))
+            dhp = (np.asarray(hp_curr, dtype=np.float32)
+                   - np.asarray(hp_prev, dtype=np.float32))
+            if heal_coef != 0.0:
+                rewards += heal_coef * np.maximum(dhp, 0.0)
+            if hp_coef != 0.0:
+                rewards += hp_coef * dhp
 
     alive = info.get("alive")
     if alive is not None and death_penalty != 0.0:
