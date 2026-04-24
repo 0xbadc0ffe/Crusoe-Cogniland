@@ -37,7 +37,7 @@ class TileEffects:
     shoes_drain_grassland: float = 0.5
     shoes_k: int = 10
 
-    berry_heal: int = 10
+    berry_heal: int = 100
     forest_wood: int = 10
     wood_max: int = 100
     craft_cost: int = 100

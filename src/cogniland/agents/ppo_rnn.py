@@ -545,6 +545,7 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
         all_episode_flags = []
         all_episode_success = []
         all_episode_biomes = []
+        all_episode_berries = []
 
         # Aggregate loss metrics
         agg_metrics = {
@@ -609,6 +610,10 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
                         all_episode_success.append(info["task_success"].copy())
                     if "biome" in info:
                         all_episode_biomes.append(np.asarray(info["biome"]).copy())
+                    if "returned_episode_berry_forages" in info:
+                        all_episode_berries.append(
+                            info["returned_episode_berry_forages"].copy()
+                        )
                 elif np.any(dones):
                     # Fallback: use dones directly
                     all_episode_flags.append(dones.copy())
@@ -736,6 +741,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             episode_info["task_success"] = np.concatenate(all_episode_success, axis=0)
         if all_episode_biomes:
             episode_info["biome"] = np.concatenate(all_episode_biomes, axis=0)
+        if all_episode_berries:
+            episode_info["berry_forages"] = np.concatenate(all_episode_berries, axis=0)
         metrics["episode_info"] = episode_info
 
         new_state = AgentState(
@@ -782,6 +789,7 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
         all_episode_flags = []
         all_episode_success = []
         all_episode_biomes = []
+        all_episode_berries = []
         frames = 0
 
         while frames < num_eval_frames:
@@ -816,6 +824,10 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
                     all_episode_success.append(info["task_success"].copy())
                 if "biome" in info:
                     all_episode_biomes.append(np.asarray(info["biome"]).copy())
+                if "returned_episode_berry_forages" in info:
+                    all_episode_berries.append(
+                        info["returned_episode_berry_forages"].copy()
+                    )
 
             obs = next_obs
             frames += n_eval_envs
@@ -838,6 +850,8 @@ def make_ppo_rnn(config, obs_space, act_space) -> Agent:
             episode_info["task_success"] = np.concatenate(all_episode_success, axis=0)
         if all_episode_biomes:
             episode_info["biome"] = np.concatenate(all_episode_biomes, axis=0)
+        if all_episode_berries:
+            episode_info["berry_forages"] = np.concatenate(all_episode_berries, axis=0)
 
         return {"episode_info": episode_info}
 

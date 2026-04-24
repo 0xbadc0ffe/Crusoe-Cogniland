@@ -5,20 +5,27 @@ Uses the RGB dataset produced by scripts/generate_dataset.py.
 Each map is a 128x128x3 image; the game logic reads terrain classes from
 the accompanying terrain_idx grid and applies the tuned TileEffects drains.
 
-Controls:
+Controls (default mode):
     WASD / arrows — move
     F — forage (forest → wood, berry → HP)
     C — craft a tool (costs 100 wood, one tool only)
     R — reset map
     ESC — back to menu
 
+Controls (classic mode — data/maps_classic/val.pt):
+    WASD / arrows — move (only 4 actions)
+    R — reset map
+    ESC — back to menu
+
 Usage:
     python scripts/generate_dataset.py --preview
+    python scripts/generate_classic_maps.py --dataset
     python demo.py
 """
 
 from __future__ import annotations
 
+import heapq
 import json
 import math
 import random
@@ -43,7 +50,76 @@ from cogniland.envs.tile_effects import TileEffects, drain_for
 # ── Config ──────────────────────────────────────────────────────────────────
 
 VAL_PATH = Path("data/maps/val.pt")
+VAL_PATH_CLASSIC = Path("data/maps_classic/val.pt")
 MAP_SIZE = gt.CROP_SIZE  # 128
+
+# ── Classic mode rules ──────────────────────────────────────────────────────
+# Per-step HP delta by terrain (negative = drain, positive = heal). Applied
+# whenever the agent moves onto a cell. Berry tiles override these (+25).
+CLASSIC_HP_DELTA: dict[str, int] = {
+    "ocean":      -16,
+    "deep_water": -12,
+    "water":       -8,
+    "beach":        5,
+    "sandy":        5,
+    "grassland":   -2,
+    "forest":      -3,
+    "rocky":       -8,
+    "mountains":  -12,
+}
+CLASSIC_BERRY_HEAL = 25
+CLASSIC_HP_MAX = 100
+CLASSIC_HP_INIT = 100
+# Reward on reaching the target (+ the telescoped PBRS term along the way).
+CLASSIC_REACH_BONUS = 10.0
+# PBRS potential Φ(s) = -ctg(s) where ctg is Dijkstra geodesic distance with
+# per-step weights: beach/sandy = 1, everything else = π/2. On a round island
+# of radius R, the diameter (2R "other" tiles) costs 2R·π/2 = πR and the
+# half-circumference beach ring (πR beach tiles) costs πR·1 = πR — so going
+# around vs cutting through give ~equal shaping integrals. Deadly cells are
+# treated as unreachable (infinite cost).
+CLASSIC_CTG_COST_CHEAP = 1.0        # beach, sandy
+CLASSIC_CTG_COST_STANDARD = math.pi / 2  # everything else
+CLASSIC_SHAPING_COEF = 0.1
+
+
+def _compute_classic_ctg(tidx: np.ndarray, target: tuple[int, int]) -> np.ndarray:
+    """Dijkstra cost-to-go from every cell to ``target`` under the classic
+    geodesic metric (beach/sandy = 1, else = π/2, deadly = impassable).
+
+    Returns a float32 array matching ``tidx.shape``; unreachable cells are
+    np.inf.
+    """
+    H, W = tidx.shape
+    name_to_idx = {n: i for i, n in enumerate(gt.TERRAIN_NAMES)}
+    cost_by_class = np.full(len(gt.TERRAIN_NAMES), CLASSIC_CTG_COST_STANDARD,
+                            dtype=np.float64)
+    cost_by_class[name_to_idx["beach"]] = CLASSIC_CTG_COST_CHEAP
+    cost_by_class[name_to_idx["sandy"]] = CLASSIC_CTG_COST_CHEAP
+
+    ctg = np.full((H, W), np.inf, dtype=np.float64)
+    tr, tc = target
+    if tidx[tr, tc] < 0:
+        return ctg.astype(np.float32)
+    ctg[tr, tc] = 0.0
+
+    heap: list[tuple[float, int, int]] = [(0.0, tr, tc)]
+    while heap:
+        d, r, c = heapq.heappop(heap)
+        if d > ctg[r, c]:
+            continue
+        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            nr, nc = r + dr, c + dc
+            if not (0 <= nr < H and 0 <= nc < W):
+                continue
+            idx_n = tidx[nr, nc]
+            if idx_n < 0:
+                continue
+            nd = d + cost_by_class[idx_n]
+            if nd < ctg[nr, nc]:
+                ctg[nr, nc] = nd
+                heapq.heappush(heap, (nd, nr, nc))
+    return ctg.astype(np.float32)
 
 # Folder that ships with the demo, containing one subfolder per selectable
 # model. Each subfolder must mirror ``results/<run_id>/checkpoints/`` layout:
@@ -130,6 +206,12 @@ def load_val_dataset():
     if not VAL_PATH.exists():
         return None
     return torch.load(str(VAL_PATH), map_location="cpu", weights_only=False)
+
+
+def load_classic_val_dataset():
+    if not VAL_PATH_CLASSIC.exists():
+        return None
+    return torch.load(str(VAL_PATH_CLASSIC), map_location="cpu", weights_only=False)
 
 
 def _sample_spawn_target(tidx: np.ndarray, seed: int,
@@ -401,6 +483,115 @@ class CognilandGame:
             self.game_over = True
             self.won = False
         elif self.pos == self.target:
+            self.game_over = True
+            self.won = True
+
+
+# ── Classic game ────────────────────────────────────────────────────────────
+
+class ClassicGame:
+    """Simplified mode: 4 movement actions, HP only, per-terrain heal/drain,
+    berries heal +25 per step just by standing on them.
+
+    Reward = CLASSIC_REACH_BONUS on reaching the target + a PBRS shaping term
+    with Φ(s) = -ctg(s), where ctg is the Dijkstra geodesic distance with
+    beach/sandy = 1 and every other tile = π/2. On a round island the
+    diameter and the half-circumference coastline have (approximately) the
+    same ctg, so going around vs cutting through produces nearly identical
+    total shaping reward.
+    """
+
+    def __init__(self, rgb: np.ndarray, heightmap: np.ndarray,
+                 tidx: np.ndarray, berry_mask: np.ndarray,
+                 biome: str, seed: int):
+        self.biome = biome
+        self.seed = seed
+        self.rgb = rgb.copy()
+        self.heightmap = heightmap.astype(np.float32)
+        self.tidx = tidx.astype(np.int32)
+        self.berry_mask = berry_mask.copy()
+
+        self.hp_max = CLASSIC_HP_MAX
+        self.shaping_coef = CLASSIC_SHAPING_COEF
+
+        self.spawn, self.target = _sample_spawn_target(self.tidx, seed)
+        self.pos = self.spawn
+        self.hp: float = float(CLASSIC_HP_INIT)
+        self.steps = 0
+        self.path: list[tuple[int, int]] = [self.spawn]
+        self.hp_history: list[float] = [self.hp]
+
+        self._ctg = _compute_classic_ctg(self.tidx, self.target)
+
+        self.reward: float = 0.0
+        self.last_shaping: float = 0.0
+        self.last_delta: int = 0
+        self.last_terrain: str = self._terrain_name(*self.pos)
+        self.game_over = False
+        self.won = False
+
+    def _terrain_name(self, r: int, c: int) -> str:
+        idx = int(self.tidx[r, c])
+        if idx < 0:
+            return "deadly"
+        return gt.TERRAIN_NAMES[idx]
+
+    def _potential(self, pos: tuple[int, int]) -> float:
+        c = float(self._ctg[pos[0], pos[1]])
+        if not math.isfinite(c):
+            return -1e6
+        return -c
+
+    def hp_delta_for(self, terrain: str, on_berry: bool) -> int:
+        if on_berry:
+            return CLASSIC_BERRY_HEAL
+        return CLASSIC_HP_DELTA.get(terrain, 0)
+
+    def step(self, dr: int, dc: int):
+        if self.game_over:
+            return
+        nr, nc = self.pos[0] + dr, self.pos[1] + dc
+        if not (0 <= nr < MAP_SIZE and 0 <= nc < MAP_SIZE):
+            return
+
+        idx = int(self.tidx[nr, nc])
+        if idx < 0:
+            self.pos = (nr, nc)
+            self.last_terrain = "deadly"
+            self.last_delta = -int(self.hp_max)
+            self.last_shaping = 0.0
+            self.hp = 0.0
+            self.path.append(self.pos)
+            self.hp_history.append(self.hp)
+            self.steps += 1
+            self.game_over = True
+            self.won = False
+            return
+
+        terrain = gt.TERRAIN_NAMES[idx]
+        on_berry = bool(self.berry_mask[nr, nc])
+        delta = self.hp_delta_for(terrain, on_berry)
+
+        prev_pot = self._potential(self.pos)
+        self.pos = (nr, nc)
+        new_pot = self._potential(self.pos)
+        shaping = self.shaping_coef * (new_pot - prev_pot)
+        self.reward += shaping
+        self.last_shaping = shaping
+
+        self.hp = min(float(self.hp_max), max(0.0, self.hp + delta))
+        self.steps += 1
+        self.path.append(self.pos)
+        self.hp_history.append(self.hp)
+        self.last_delta = delta
+        self.last_terrain = terrain
+
+        if self.hp <= 0:
+            self.hp = 0.0
+            self.game_over = True
+            self.won = False
+        elif self.pos == self.target:
+            self.reward += CLASSIC_REACH_BONUS
             self.game_over = True
             self.won = True
 
@@ -809,6 +1000,7 @@ def draw_compass_arrow(surface: pygame.Surface, cx: int, cy: int,
 # ── Screens ─────────────────────────────────────────────────────────────────
 
 def screen_main_menu(screen, clock, val_ok: bool,
+                     classic_ok: bool = False,
                      ai_info: str = f"Drop models into {DEMO_ARTIFACTS_PATH.name}/",
                      ai_ready: bool = False):
     ft = pygame.font.Font(None, 72)
@@ -820,27 +1012,32 @@ def screen_main_menu(screen, clock, val_ok: bool,
             if ev.type == pygame.KEYDOWN:
                 if ev.key == pygame.K_ESCAPE:                       return None
                 if ev.key == pygame.K_h and val_ok:                 return "human"
+                if ev.key == pygame.K_c and classic_ok:             return "classic"
                 if ev.key == pygame.K_a:                            return "agent"
         screen.fill(COLORS["bg"])
         title = ft.render("Cogniland", True, COLORS["accent"])
-        screen.blit(title, title.get_rect(center=(WINDOW_W // 2, 160)))
+        screen.blit(title, title.get_rect(center=(WINDOW_W // 2, 140)))
         screen.blit(fm.render("Choose a mode", True, COLORS["fg"]),
-                    (WINDOW_W // 2 - 110, 250))
+                    (WINDOW_W // 2 - 110, 220))
 
         options = [
             ("H", "Human", "Play on a val map" if val_ok
                            else "Val dataset missing — run generate_dataset.py",
              val_ok),
+            ("C", "Classic",
+             "Round maps · HP only · 4 actions · Dijkstra shaping" if classic_ok
+             else "Run: python scripts/generate_classic_maps.py --dataset",
+             classic_ok),
             ("A", "AI Agent", ai_info, ai_ready and val_ok),
         ]
-        y = 340
+        y = 300
         for key, label, desc, enabled in options:
             kcol = COLORS["accent"] if enabled else COLORS["dim"]
             lcol = COLORS["white"] if enabled else COLORS["dim"]
             screen.blit(fm.render(f"[{key}]", True, kcol), (WINDOW_W // 2 - 180, y))
             screen.blit(fm.render(f"  {label}", True, lcol), (WINDOW_W // 2 - 130, y))
             screen.blit(fs.render(desc, True, COLORS["dim"]), (WINDOW_W // 2 - 130, y + 32))
-            y += 90
+            y += 85
 
         screen.blit(fs.render("ESC — Quit", True, COLORS["dim"]),
                     (WINDOW_W // 2 - 40, WINDOW_H - 50))
@@ -1156,6 +1353,169 @@ def screen_play(screen, clock, dataset, idx: int):
         clock.tick(60)
 
 
+def draw_classic_game(screen, game: "ClassicGame", fs, fm, fl, ft):
+    """Simplified variant of draw_game for classic mode — HP + reward only,
+    no wood/tool/forage widgets."""
+    screen.fill(COLORS["bg"])
+
+    # ── Map ────────────────────────────────────────────────────────────────
+    map_surf = rgb_to_surface(game.rgb, MAP_DISPLAY)
+    MAP_X, MAP_Y = 20, 60
+    screen.blit(map_surf, (MAP_X, MAP_Y))
+    pygame.draw.rect(screen, COLORS["white"], (MAP_X, MAP_Y, MAP_DISPLAY, MAP_DISPLAY), 1)
+
+    scale = MAP_DISPLAY / MAP_SIZE
+
+    def w2s(r, c):
+        return int(c * scale + scale / 2) + MAP_X, int(r * scale + scale / 2) + MAP_Y
+
+    # Trajectory
+    if len(game.path) >= 2:
+        visit_counts: Counter[tuple[int, int]] = Counter()
+        for i in range(len(game.path)):
+            cell = game.path[i]
+            visit_counts[cell] += 1
+            if i > 0:
+                p0 = w2s(*game.path[i - 1])
+                p1 = w2s(*cell)
+                col = _visit_color(visit_counts[cell])
+                pygame.draw.line(screen, col, p0, p1, 1)
+
+    sx, sy = w2s(*game.spawn)
+    pygame.draw.circle(screen, (200, 200, 200), (sx, sy), 6, 1)
+    draw_star(screen, *w2s(*game.target), r_outer=7, r_inner=3,
+              color=(255, 215, 0), outline=(0, 0, 0))
+    px, py = w2s(*game.pos)
+    pygame.draw.circle(screen, COLORS["player"], (px, py), 7)
+    pygame.draw.circle(screen, COLORS["white"],  (px, py), 7, 1)
+
+    title = fl.render(f"CLASSIC  seed={game.seed}", True, COLORS["accent"])
+    screen.blit(title, (MAP_X, 20))
+
+    # ── Right panel ─────────────────────────────────────────────────────────
+    pygame.draw.rect(screen, COLORS["panel"],
+                     (PANEL_X - 10, 50, PANEL_W + 20, WINDOW_H - 70))
+    y = 70
+
+    # Minimap view
+    minimap_surf = render_minimap(
+        game.rgb, game.heightmap,
+        game.pos, game.target, game.last_terrain,
+    )
+    mm_x = PANEL_X + (PANEL_W - MINIMAP_DISPLAY) // 2
+    mm_y = y
+    screen.blit(minimap_surf, (mm_x, mm_y))
+    pygame.draw.rect(screen, COLORS["dim"], (mm_x, mm_y, MINIMAP_DISPLAY, MINIMAP_DISPLAY), 1)
+    screen.blit(fs.render("Agent view (occlusion)", True, COLORS["fg"]),
+                (mm_x, mm_y - 16))
+    y = mm_y + MINIMAP_DISPLAY + 10
+
+    # Reward
+    rwd_col = COLORS["hp_full"] if game.reward >= 0 else COLORS["hp_low"]
+    screen.blit(fm.render(f"Reward: {game.reward:+.2f}", True, rwd_col),
+                (PANEL_X, y))
+    y += 28
+
+    # Per-step status
+    sign = "+" if game.last_delta > 0 else ""
+    delta_col = (COLORS["hp_full"] if game.last_delta > 0
+                 else COLORS["hp_low"] if game.last_delta < 0
+                 else COLORS["dim"])
+    on_berry = bool(game.berry_mask[game.pos[0], game.pos[1]])
+    terr_disp = game.last_terrain + (" + berry" if on_berry else "")
+    ctg_here = float(game._ctg[game.pos[0], game.pos[1]])
+    ctg_str = f"{ctg_here:.1f}" if math.isfinite(ctg_here) else "inf"
+    for lbl, val, col in [
+        ("Terrain", terr_disp, COLORS["fg"]),
+        ("ΔHP",      f"{sign}{game.last_delta}", delta_col),
+        ("Shaping",  f"{game.last_shaping:+.2f}", COLORS["dim"]),
+        ("CTG →",    ctg_str, COLORS["fg"]),
+        ("Steps",    str(game.steps), COLORS["fg"]),
+        ("Pos",      f"({game.pos[0]}, {game.pos[1]})", COLORS["fg"]),
+    ]:
+        screen.blit(fs.render(lbl, True, COLORS["dim"]), (PANEL_X, y))
+        screen.blit(fs.render(val, True, col), (PANEL_X + 70, y))
+        y += 20
+    y += 8
+
+    # HP plot
+    screen.blit(fs.render(f"HP: {int(game.hp)}/{game.hp_max}", True,
+                          hp_color(game.hp, game.hp_max)), (PANEL_X, y))
+    y += 16
+    PW, PH = PANEL_W - 10, 80
+    plot = pygame.Surface((PW, PH))
+    plot.fill((15, 15, 22))
+    pygame.draw.rect(plot, COLORS["dim"], (0, 0, PW, PH), 1)
+    hist = game.hp_history
+    n = max(len(hist) - 1, 1)
+    def _x(i): return int(i / n * (PW - 2)) + 1
+    def _y(h): return PH - 1 - int(min(max(h, 0), game.hp_max) / game.hp_max * (PH - 2))
+    if len(hist) >= 2:
+        pts = [(_x(i), _y(h)) for i, h in enumerate(hist)]
+        pygame.draw.lines(plot, COLORS["hp_full"], False, pts, 2)
+    screen.blit(plot, (PANEL_X, y))
+    y += PH + 8
+
+    # Controls
+    screen.blit(fs.render("Controls", True, COLORS["accent"]), (PANEL_X, y))
+    y += 16
+    for line in ["WASD / arrows - move",
+                 "R - reset  |  ESC - menu"]:
+        screen.blit(fs.render(line, True, COLORS["dim"]), (PANEL_X, y))
+        y += 16
+
+    if game.game_over:
+        overlay = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 170))
+        screen.blit(overlay, (0, 0))
+        msg = "TARGET REACHED!" if game.won else "YOU DIED"
+        mcol = COLORS["hp_full"] if game.won else COLORS["hp_low"]
+        surf = ft.render(msg, True, mcol)
+        screen.blit(surf, surf.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2 - 40)))
+        sub = fm.render(f"Steps: {game.steps}   HP: {int(game.hp)}   "
+                        f"Reward: {game.reward:+.2f}",
+                        True, COLORS["white"])
+        screen.blit(sub, sub.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2 + 10)))
+        hint = fs.render("R = new game   |   ESC = menu", True, COLORS["dim"])
+        screen.blit(hint, hint.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2 + 50)))
+
+
+def screen_classic_play(screen, clock, dataset, idx: int):
+    rgb = dataset["rgb"][idx].numpy()
+    heightmap = dataset["heightmap"][idx].numpy()
+    tidx = dataset["terrain_idx"][idx].numpy()
+    mask = dataset["berry_mask"][idx].numpy()
+    biome = dataset["biomes"][idx]
+    seed = int(dataset["seeds"][idx])
+
+    def make_game():
+        return ClassicGame(rgb, heightmap, tidx, mask, biome, seed)
+
+    game = make_game()
+    fs = pygame.font.Font(None, 22)
+    fm = pygame.font.Font(None, 30)
+    fl = pygame.font.Font(None, 38)
+    ft = pygame.font.Font(None, 64)
+
+    while True:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                return "quit"
+            if ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_ESCAPE:
+                    return "menu"
+                if ev.key == pygame.K_r:
+                    game = make_game()
+                    continue
+                if ev.key in ACTIONS and not game.game_over:
+                    dr, dc = ACTIONS[ev.key]
+                    game.step(dr, dc)
+
+        draw_classic_game(screen, game, fs, fm, fl, ft)
+        pygame.display.flip()
+        clock.tick(60)
+
+
 def screen_agent_stub(screen, clock, lines: list[str] | None = None):
     """Fallback screen shown when no models are available (or loading failed)."""
     fm = pygame.font.Font(None, 36)
@@ -1402,6 +1762,8 @@ def main():
 
     dataset = load_val_dataset()
     val_ok = dataset is not None
+    classic_dataset = load_classic_val_dataset()
+    classic_ok = classic_dataset is not None
 
     # Scan the shipped artifacts folder for selectable models.
     models = scan_demo_artifacts()
@@ -1414,6 +1776,7 @@ def main():
     while True:
         mode = screen_main_menu(
             screen, clock, val_ok,
+            classic_ok=classic_ok,
             ai_info=ai_info,
             ai_ready=bool(models) and val_ok,
         )
@@ -1477,6 +1840,15 @@ def main():
                 if idx is None:
                     break
                 result = screen_play(screen, clock, dataset, idx)
+                if result == "quit":
+                    pygame.quit(); sys.exit()
+
+        if mode == "classic":
+            while True:
+                idx = screen_pick_map(screen, clock, classic_dataset)
+                if idx is None:
+                    break
+                result = screen_classic_play(screen, clock, classic_dataset, idx)
                 if result == "quit":
                     pygame.quit(); sys.exit()
 

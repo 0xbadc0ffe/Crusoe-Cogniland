@@ -6,6 +6,40 @@ An agent spawns on a 128x128 island and must reach a target while managing HP. T
 
 The framework supports multiple RL agents (PPO-RNN, DreamerV3, STORM) through a shared `Agent` interface. All training, evaluation, and logging infrastructure is agent-agnostic.
 
+## Project structure
+
+```
+scripts/train.py               Entry point
+configs/env/cogniland.yaml     Environment + experiment config
+configs/agent/*.yaml           Agent hyperparameters
+configs/sweeps/*.yaml          W&B sweep definitions
+
+src/cogniland/
+  envs/                        Batched numpy environment
+    env.py              Game loop (8 actions, HP/wood/tools)
+    tile_effects.py              Terrain drain table
+    tasks.py                     Per-task reward functions
+    multitask_wrapper.py         Reward routing + task embeddings
+  agents/                      JAX agent implementations
+    ppo_rnn.py                   PPO-RNN (Flax CNN+LSTM)
+    dreamer.py                   DreamerV3
+    storm.py                     STORM
+    agent.py                     Agent dataclass (the interface)
+    registry.py                  @register_agent + auto-discovery
+    commons/                     Shared NN blocks, replay buffers
+    policy/                      Actor-critic training
+    world_models/                RSSM, TSSM implementations
+  trainer/                     Training orchestration
+    trainer.py                   Main loop + multi-task eval
+    run_logger.py                W&B integration
+    checkpoint.py                Orbax save/load
+  config/                      Config loading, XLA setup
+  metrics/                     Rolling stats tracker
+
+data/maps/                 Pre-generated map datasets (.pt)
+demo.py                        Playable human demo (pygame)
+```
+
 ## Setup
 
 ```bash
@@ -111,41 +145,3 @@ The environment supports multiple tasks sharing the same world. Tasks differ onl
 | `ppo_rnn` | `configs/agent/ppo_rnn.yaml` | PPO with LSTM, CNN minimap encoder (JAX/Flax) |
 | `dreamerv3` | `configs/agent/dreamerv3.yaml` | DreamerV3 world model with RSSM (JAX) |
 | `storm` | `configs/agent/storm.yaml` | STORM world model with Transformer SSM (JAX) |
-
-## Project structure
-
-```
-scripts/train.py               Entry point
-configs/env/cogniland.yaml     Environment + experiment config
-configs/agent/*.yaml           Agent hyperparameters
-configs/sweeps/*.yaml          W&B sweep definitions
-
-src/cogniland/
-  envs/                        Batched numpy environment
-    env.py              Game loop (8 actions, HP/wood/tools)
-    tile_effects.py              Terrain drain table
-    tasks.py                     Per-task reward functions
-    multitask_wrapper.py         Reward routing + task embeddings
-  agents/                      JAX agent implementations
-    ppo_rnn.py                   PPO-RNN (Flax CNN+LSTM)
-    dreamer.py                   DreamerV3
-    storm.py                     STORM
-    agent.py                     Agent dataclass (the interface)
-    registry.py                  @register_agent + auto-discovery
-    commons/                     Shared NN blocks, replay buffers
-    policy/                      Actor-critic training
-    world_models/                RSSM, TSSM implementations
-  trainer/                     Training orchestration
-    trainer.py                   Main loop + multi-task eval
-    run_logger.py                W&B integration
-    checkpoint.py                Orbax save/load
-  config/                      Config loading, XLA setup
-  metrics/                     Rolling stats tracker
-
-data/maps/                 Pre-generated map datasets (.pt)
-demo.py                        Playable human demo (pygame)
-```
-
-## License
-
-MIT

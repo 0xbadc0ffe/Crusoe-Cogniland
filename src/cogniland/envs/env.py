@@ -889,6 +889,12 @@ class CognilandEnv:
         self.steps = np.zeros(B, dtype=np.int32)
         self.done = np.zeros(B, dtype=bool)
         self.crafted_this_step = np.zeros(B, dtype=np.int32)
+        self.berry_forages = np.zeros(B, dtype=np.int32)
+        # Per-episode tracker: cells whose berry has already been consumed.
+        # Prevents reward-hacking loops (step off berry → step back → forage).
+        self.foraged_cells = np.zeros(
+            (B, self._map_size, self._map_size), dtype=bool
+        )
 
         # Precompute Dijkstra cost-to-go maps per env (one per episode),
         # measured from the midpoint between YES and NO targets.
@@ -937,6 +943,8 @@ class CognilandEnv:
         self.steps[indices] = 0
         self.done[indices] = False
         self.crafted_this_step[indices] = 0
+        self.berry_forages[indices] = 0
+        self.foraged_cells[indices] = False
 
         # Recompute cost-to-go (from midpoint) for envs that just reset.
         for j, b in enumerate(indices):
@@ -977,6 +985,7 @@ class CognilandEnv:
         returned_episode = np.zeros(B, dtype=bool)
         returned_episode_returns = np.zeros(B, dtype=np.float32)
         returned_episode_lengths = np.zeros(B, dtype=np.int32)
+        returned_episode_berry_forages = np.zeros(B, dtype=np.int32)
 
         # Process each env — vectorize the common path, loop for special cases
         # We process movement, forage, and craft separately
@@ -1065,9 +1074,12 @@ class CognilandEnv:
             valid = ~deadly
             t_idx_safe = np.where(valid, t_idx, 0).astype(np.int32)
 
-            is_berry = valid & self._berry_mask[mi, cur_r, cur_c]
-            is_forest = valid & ~is_berry & (t_idx_safe == forest_idx)
-            terrain_is_grass = valid & ~is_berry & (t_idx_safe == grass_idx)
+            is_berry_cell = valid & self._berry_mask[mi, cur_r, cur_c]
+            # Berry is only edible if it hasn't been consumed this episode.
+            already_foraged = self.foraged_cells[idx, cur_r, cur_c]
+            is_berry = is_berry_cell & ~already_foraged
+            is_forest = valid & ~is_berry_cell & (t_idx_safe == forest_idx)
+            terrain_is_grass = valid & ~is_berry_cell & (t_idx_safe == grass_idx)
 
             # Berry: heal & reset consec_grass; no drain.
             heal = np.where(is_berry, berry_heal, 0.0)
@@ -1077,25 +1089,34 @@ class CognilandEnv:
             tool_id = self.tool[idx]
             shoes_active = (tool_id == 3) & terrain_is_grass & (new_consec >= shoes_k)
             drain = drain_lut[t_idx_safe, tool_id, shoes_active.astype(np.int32)]
-            drain = np.where(valid & ~is_berry, drain, 0.0)
+            drain = np.where(valid & ~is_berry_cell, drain, 0.0)
 
             new_hp = self.hp[idx] + heal - drain
             new_hp = np.minimum(new_hp, hp_max)
             new_hp = np.where(new_hp < 0, 0.0, new_hp)
             self.hp[idx] = new_hp
 
+            self.berry_forages[idx] += is_berry.astype(np.int32)
+            # Mark the berry at this cell as consumed for the rest of the
+            # episode (fresh berries on reset).
+            consumed_rows = cur_r[is_berry]
+            consumed_cols = cur_c[is_berry]
+            consumed_envs = idx[is_berry]
+            if consumed_envs.size:
+                self.foraged_cells[consumed_envs, consumed_rows, consumed_cols] = True
+
             add_wood = np.where(is_forest, forest_wood, 0).astype(np.int32)
             new_wood = np.minimum(self.wood[idx] + add_wood, wood_max)
             self.wood[idx] = new_wood
 
-            # consec_grass: 0 on berry; unchanged on deadly; new_consec otherwise.
+            # consec_grass: 0 on berry (consumed or not); unchanged on deadly.
             self.consec_grass[idx] = np.where(
-                is_berry, 0,
+                is_berry_cell, 0,
                 np.where(deadly, prev_consec, new_consec),
             )
 
-            # Done only if drain killed us (berry can't kill; deadly forage = no-op).
-            hp_dead = valid & ~is_berry & (new_hp <= 0)
+            # Done only if drain killed us (berry cells can't drain; deadly forage = no-op).
+            hp_dead = valid & ~is_berry_cell & (new_hp <= 0)
             self.done[idx] = self.done[idx] | hp_dead
             self.steps[idx] += 1
 
@@ -1156,6 +1177,7 @@ class CognilandEnv:
             returned_episode[just_done] = True
             returned_episode_returns[just_done] = self._episode_returns[just_done]
             returned_episode_lengths[just_done] = self.steps[just_done]
+            returned_episode_berry_forages[just_done] = self.berry_forages[just_done]
 
         # Cost-to-go at the new position (after the step, before any auto-reset).
         # Agents that ended on a deadly cell or otherwise unreachable index will
@@ -1172,6 +1194,7 @@ class CognilandEnv:
             "returned_episode_returns": returned_episode_returns,
             "returned_episode_lengths": returned_episode_lengths,
             "returned_episode": returned_episode,
+            "returned_episode_berry_forages": returned_episode_berry_forages,
             # Extra info for reward computation
             "reached": reached_yes | reached_no,
             "reached_yes": reached_yes,

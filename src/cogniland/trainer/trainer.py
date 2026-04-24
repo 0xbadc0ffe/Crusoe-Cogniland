@@ -416,6 +416,7 @@ class Trainer:
             pbar.close()
 
             episode_info = agent_metrics.get("episode_info")
+            eval_berries_mean = 0.0
             if episode_info is not None:
                 returns = jnp.array(episode_info["returned_episode_returns"]).reshape(-1)
                 lengths = jnp.array(episode_info["returned_episode_lengths"]).reshape(-1)
@@ -427,6 +428,13 @@ class Trainer:
                 s = task_success[done].astype(jnp.int32)
                 tracker.episode_success_history.extend(s.tolist())
                 tracker.env_total_episodes += int(done.sum())
+                berries = episode_info.get("berry_forages")
+                if berries is not None:
+                    berries_arr = np.asarray(berries).reshape(-1)
+                    done_np = np.asarray(done)
+                    b_done = berries_arr[done_np]
+                    if b_done.size:
+                        eval_berries_mean = float(np.mean(b_done))
 
             agg = {
                 "reward":   float(np.mean(tracker.episode_reward_history))
@@ -436,6 +444,7 @@ class Trainer:
                 "length":   float(np.mean(tracker.episode_length_history))
                             if tracker.episode_length_history else 0.0,
                 "episodes": tracker.env_total_episodes,
+                "berries":  eval_berries_mean,
             }
             all_task_metrics[task_id] = agg
 
@@ -444,6 +453,7 @@ class Trainer:
                 f"eval/task_{task_id}/success":  agg["success"],
                 f"eval/task_{task_id}/length":   agg["length"],
                 f"eval/task_{task_id}/episodes": agg["episodes"],
+                f"eval/task_{task_id}/berries":  agg["berries"],
                 "train_frames": global_train_frames,
             })
 
@@ -461,10 +471,12 @@ class Trainer:
         rows = []
         for tid, m in all_task_metrics.items():
             rows.append([f"task_{tid}", f"{m['reward']:.3f}",
-                         f"{m['success']:.3f}", m['episodes']])
-        rows.append(["AGGREGATE", f"{reward:.3f}", f"{success:.3f}", ""])
+                         f"{m['success']:.3f}", f"{m['berries']:.2f}", m['episodes']])
+        berries_agg = float(np.mean([m["berries"] for m in all_task_metrics.values()]))
+        rows.append(["AGGREGATE", f"{reward:.3f}", f"{success:.3f}",
+                     f"{berries_agg:.2f}", ""])
         logger.info("\nEval set %d\n%s", self.eval_set,
-                    tabulate(rows, headers=["task", "reward", "success", "episodes"],
+                    tabulate(rows, headers=["task", "reward", "success", "berries", "episodes"],
                              tablefmt="grid"))
 
         return {"eval_return": reward, "eval_success": success}

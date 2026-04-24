@@ -1,0 +1,6 @@
+jax>=0.4.30
+jaxlib>=0.4.30
+flax>=0.8
+gymnax>=0.0.9
+numpy>=1.24
+torch>=2.0
