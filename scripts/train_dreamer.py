@@ -347,7 +347,9 @@ def encode_action(move: int, scalar: float, num_moves: int = 5) -> np.ndarray:
     """Pack (discrete move, scalar) into a flat continuous vector of size 5+1=6."""
     onehot = np.zeros(num_moves, dtype=np.float32)
     onehot[move] = 1.0
-    return np.concatenate([onehot, [float(scalar)]])
+    return np.concatenate(
+        [onehot, np.array([float(scalar)], dtype=np.float32)]
+    ).astype(np.float32)
 
 
 def decode_action(action_t: torch.Tensor):
@@ -514,7 +516,7 @@ def main():
         else:
             move, scalar = actor_action(post, deterministic=deterministic)
         action_vec = encode_action(move, scalar)
-        prev_actions[i] = torch.from_numpy(action_vec).unsqueeze(0).to(device)
+        prev_actions[i] = torch.from_numpy(action_vec).float().unsqueeze(0).to(device)
 
         action = {"move": move, "build_scalar": np.array([scalar], np.float32)}
         next_obs, reward, term, trunc, info = envs[i].step(action)
