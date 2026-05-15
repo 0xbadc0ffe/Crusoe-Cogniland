@@ -26,7 +26,15 @@ dependencies = [
     "einops",
     # 0.1.8+ depends on tfp-nightly and blows up the resolver with recent JAX.
     "distrax==0.1.5",
+    # cogniland.nav (PyTorch/Gymnasium navigation env)
+    "gymnasium",
+    "pygame",
+    "pillow",
+    "opensimplex",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"cogniland.assets" = ["sprites/*.png", "README.md"]
