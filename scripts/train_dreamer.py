@@ -94,27 +94,31 @@ def _layer_init(layer, std=math.sqrt(2.0), bias=0.0):
 
 
 class Encoder(nn.Module):
-    """CNN encoder; turns (B, 3, H, W) uint8 → (B, embed_dim). 3 stride-2
-    layers — image must be a multiple of 8 on each side."""
+    """CNN encoder; (B, 3, H, W) uint8 → (B, embed_dim). 3 stride-2 convs
+    + 1×1 bottleneck — image must be a multiple of 8 on each side.
 
-    def __init__(self, image_shape, embed_dim: int = 1024):
+    Channel widths default to a small ladder (16, 32, 64) with a 1×1
+    bottleneck to 8 channels, which makes the final flatten → linear
+    layer the right size for a tile-rendered toy env.
+    """
+
+    def __init__(self, image_shape, embed_dim: int = 256,
+                 channels=(16, 32, 64), bottleneck: int = 8):
         super().__init__()
         C, H, W = image_shape
         assert H % 8 == 0 and W % 8 == 0, "image dims must be divisible by 8"
-        chs = [32, 64, 128]
         layers = []
         in_c = C
-        for c in chs:
+        for c in channels:
             layers += [
                 _layer_init(nn.Conv2d(in_c, c, 4, stride=2, padding=1)),
-                nn.GroupNorm(8, c),
+                nn.GroupNorm(min(8, c), c),
                 nn.SiLU(),
             ]
             in_c = c
-        # 1×1 bottleneck so the flatten before the projection stays small.
         layers += [
-            _layer_init(nn.Conv2d(128, 32, 1)),
-            nn.GroupNorm(8, 32),
+            _layer_init(nn.Conv2d(in_c, bottleneck, 1)),
+            nn.GroupNorm(min(8, bottleneck), bottleneck),
             nn.SiLU(),
         ]
         self.cnn = nn.Sequential(*layers)
@@ -131,28 +135,34 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    """Inverse of Encoder. Inputs (B, feat_dim) → (B, 3, H, W) logits."""
+    """Inverse of Encoder. (B, feat_dim) → (B, 3, H, W) logits.
 
-    def __init__(self, feat_dim: int, image_shape):
+    ``base`` controls the first-stage channel count. We start from a
+    small ``base`` (16) so the ``linear(feat → base × h₀ × w₀)`` doesn't
+    explode — that linear is the bulk of the world-model parameters.
+    """
+
+    def __init__(self, feat_dim: int, image_shape, base: int = 16):
         super().__init__()
         C, H, W = image_shape
         assert H % 8 == 0 and W % 8 == 0, "image dims must be divisible by 8"
         h0, w0 = H // 8, W // 8
         self.h0, self.w0 = h0, w0
-        self.fc = _layer_init(nn.Linear(feat_dim, 128 * h0 * w0))
+        self.base = base
+        self.fc = _layer_init(nn.Linear(feat_dim, base * h0 * w0))
         layers = [
-            nn.GroupNorm(8, 128), nn.SiLU(),
-            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1),
-            nn.GroupNorm(8, 64), nn.SiLU(),
-            nn.ConvTranspose2d(64, 32, 4, stride=2, padding=1),
-            nn.GroupNorm(8, 32), nn.SiLU(),
-            nn.ConvTranspose2d(32, C, 4, stride=2, padding=1),
+            nn.GroupNorm(min(8, base), base), nn.SiLU(),
+            nn.ConvTranspose2d(base, base * 2, 4, stride=2, padding=1),
+            nn.GroupNorm(min(8, base * 2), base * 2), nn.SiLU(),
+            nn.ConvTranspose2d(base * 2, base * 4, 4, stride=2, padding=1),
+            nn.GroupNorm(min(8, base * 4), base * 4), nn.SiLU(),
+            nn.ConvTranspose2d(base * 4, C, 4, stride=2, padding=1),
         ]
         self.deconv = nn.Sequential(*layers)
 
     def forward(self, x):
         B = x.shape[0]
-        x = self.fc(x).view(B, 128, self.h0, self.w0)
+        x = self.fc(x).view(B, self.base, self.h0, self.w0)
         return self.deconv(x)
 
 
@@ -160,8 +170,8 @@ class RSSM(nn.Module):
     """Recurrent state-space model with discrete stochastic latents."""
 
     def __init__(self, embed_dim: int, action_dim: int,
-                 deter: int = 512, stoch_classes: int = 32, stoch_dim: int = 32,
-                 hidden: int = 512):
+                 deter: int = 256, stoch_classes: int = 16, stoch_dim: int = 16,
+                 hidden: int = 256):
         super().__init__()
         self.deter = deter
         self.classes = stoch_classes
@@ -762,8 +772,11 @@ def train_step(batch, enc, rssm, dec, rew_head, cont_head,
     nn.utils.clip_grad_norm_(actor.parameters(), args.max_grad_norm)
     opt_actor.step()
 
-    # Critic loss — λ-return regression
-    critic_pred = critic(img_feats_flat[:H * img_feats.shape[1]]).view(H, -1)
+    # Critic loss — λ-return regression. Inputs are detached because the
+    # imagined-dynamics graph was already consumed by actor_loss.backward();
+    # the critic only needs gradients w.r.t. its own parameters.
+    critic_in = img_feats_flat.detach()[: H * img_feats.shape[1]]
+    critic_pred = critic(critic_in).view(H, -1)
     critic_loss = F.mse_loss(critic_pred, returns.detach())
 
     opt_critic.zero_grad(set_to_none=True)

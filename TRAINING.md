@@ -113,7 +113,7 @@ python scripts/train_dreamer.py \
     --wandb-project cogniland-nav-dreamer --run-name dreamer_main
 ```
 
-At default config the model is ~30M params; one update step on a 4090 takes ~80–100 ms, so `train-ratio 32` runs at roughly 1 env step every ~3 s of wall-time and converges in ~12-24 hours for 1 M env steps. Drop `--train-ratio` to 16 if you want faster wall-clock at the cost of sample efficiency.
+At default config the world model is ~5.8M params + ~1M AC = ~7M total. One update step on a 4090 takes ~25-35 ms, so `train-ratio 32` runs at roughly 1 env step per ~1 s wall-time and 1 M env steps lands in 6-10 hours. Drop `--train-ratio` to 16 if you want faster wall-clock at the cost of sample efficiency, or bump `--deter` to 512 if you need more capacity later.
 
 ### Quick smoke test
 
@@ -136,7 +136,8 @@ python scripts/train_dreamer.py \
 | `--imagine-horizon` | 15 | imagined-rollout length for AC training |
 | `--world-lr` / `--actor-lr` / `--critic-lr` | 1e-4 / 3e-5 / 3e-5 | three independent optimizers |
 | `--kl-alpha` / `--kl-free` | 0.8 / 1.0 | KL balancing |
-| `--deter` / `--stoch-classes` × `--stoch-dim` | 512 / 32 × 32 | latent capacity |
+| `--deter` / `--stoch-classes` × `--stoch-dim` | 256 / 16 × 16 | latent capacity (≈8× smaller than the DV3 paper defaults — fine for tile-rendered Cogniland; bump to 512 / 32 × 32 if it under-fits) |
+| `--embed-dim` | 256 | encoder output dim |
 | `--imagine-every` | 2000 | how often to log an imagined video |
 | `--imagine-batch` | 4 | number of parallel rollouts in each video |
 | `--save-every-updates` | 5000 | checkpoint + W&B upload cadence |
