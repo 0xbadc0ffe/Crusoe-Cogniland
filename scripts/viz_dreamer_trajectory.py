@@ -112,7 +112,9 @@ def rollout_one_episode(env, env_params, params_dict, rng, max_steps=300):
     ac_p = params_dict["ac_params"]
 
     rng, sub = jax.random.split(rng)
-    obs, state = env.reset(sub, env_params)
+    # use the env's default_params (closed over) — JIT requires hashable
+    # statics, and the EnvParams pytree isn't hashable.
+    obs, state = env.reset(sub, None)
     states = [state]
     actions = []
     rewards = []
@@ -138,7 +140,7 @@ def rollout_one_episode(env, env_params, params_dict, rng, max_steps=300):
         logits = actor.apply(ac_p["actor"], feat)
         action_idx = jnp.argmax(logits, axis=-1)        # deterministic
         a_oh = jax.nn.one_hot(action_idx, C.NUM_ACTIONS)
-        obs, state, r, done, info = env.step(s_step, state, action_idx[0], env_params)
+        obs, state, r, done, info = env.step(s_step, state, action_idx[0], None)
         states.append(state)
         actions.append(int(action_idx[0]))
         rewards.append(float(r))
