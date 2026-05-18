@@ -217,14 +217,12 @@ def _generate_one(
     target_r = int(rng.integers(0, zone))
     target_c = int(rng.integers(size - zone, size))
 
-    # one OpenSimplex per logical channel (start_a, start_b, water, mountain,
-    # sand, worm-width modulation)
+    # one OpenSimplex per logical channel (start_a, start_b, water, mountain, sand)
     sim_sa = opensimplex.OpenSimplex(seed=seed * 7 + 1)
     sim_sb = opensimplex.OpenSimplex(seed=seed * 7 + 2)
     sim_w = opensimplex.OpenSimplex(seed=seed * 7 + 3)
     sim_m = opensimplex.OpenSimplex(seed=seed * 7 + 4)
     sim_sn = opensimplex.OpenSimplex(seed=seed * 7 + 5)
-    sim_wn = opensimplex.OpenSimplex(seed=seed * 7 + 6)
 
     # Slightly larger spawn / target bubbles than Crafter's default — we
     # need the agent to have room to manoeuvre before hitting terrain.
@@ -243,62 +241,41 @@ def _generate_one(
     start = np.maximum(start_a, start_b)
 
     # Map-type-specific terrain parameters.
-    #
-    # We now place water and rock as *ridge bands* around the zero
-    # level-set of a zero-mean simplex field. A cell is "inside the
-    # band" when ``band_width − |raw_noise| > 0``; the slope of the
-    # noise at the level-set governs the band width, which gives
-    # worm-shaped features. An auxiliary low-frequency noise modulates
-    # the band per cell, so the width also *varies along the worm*.
-    #
-    #   bias_strength : how strongly to push the main barrier along
-    #                   the spawn-target line (0 for balanced).
-    #   *_band        : nominal worm half-thickness (in noise-units).
+    #   bias_strength : how strongly to push the main barrier along the
+    #                   spawn-target line (0 for balanced — we want the
+    #                   barrier to NOT cross the path).
+    #   water_thr     : threshold above which a cell becomes water.
+    #   mountain_thr  : threshold above which a cell becomes stone.
     if map_type == "balanced":
         bias_strength = 0.0
-        water_band = 0.025           # narrow ponds / streams
-        mountain_band = 0.06         # vein-like rocky outcrops
-        bias_extra = 0.0
+        water_thr_high = 0.70       # very little water (was 0.55 — most
+                                    # balanced maps had small lakes, rocks
+                                    # were scarce; we want the inverse)
+        water_thr_sand_lo = 0.60
+        water_thr_sand_hi = 0.70
+        mountain_thr = 0.40         # more rocky outcrops (was 0.55)
     else:
         bias_strength = 0.40
-        water_band = 0.04            # thin off-path; thickened by bias_extra
-        mountain_band = 0.05         # on the spawn-target line for the
-        bias_extra = 0.36            # *correct* skill's terrain only.
+        water_thr_high = 0.30
+        water_thr_sand_lo = 0.25
+        water_thr_sand_hi = 0.35
+        mountain_thr = 0.40
 
     bias_main = _diagonal_bias(
         size, (spawn_r, spawn_c), (target_r, target_c), sigma=size / 5.0
     )
-
-    # Width modulation: scale the worm band per cell so the same worm
-    # narrows in places and widens elsewhere. Range ~[0.4, 1.6].
-    width_mod = _simplex_field(sim_wn, size, sizes={15: 1.0, 6: 0.3}, normalize=True)
-    width_mul = 1.0 + 0.6 * width_mod
-
-    # Zero-mean noise fields; ridges sit at |raw| ≈ 0.
-    raw_w = _simplex_field(sim_w, size, sizes={18: 1.0, 7: 0.30}, normalize=True)
-    raw_m = _simplex_field(sim_m, size, sizes={18: 1.0, 7: 0.35}, normalize=True)
-
-    # water > 0 inside the worm band; `bias_extra * bias_main` thickens it
-    # along the spawn-target line for lake/rocky. `start` suppresses it
-    # in the spawn/target bubbles.
     water = (
-        water_band * width_mul - np.abs(raw_w)
-        - 0.20 * start
-        + bias_extra * bias_main
+        _simplex_field(sim_w, size, sizes={15: 1.0, 5: 0.15}, normalize=False)
+        + 0.1
+        - 2.0 * start
+        + bias_strength * bias_main
     )
     mountain = (
-        mountain_band * width_mul - np.abs(raw_m)
-        - 0.20 * start
-        - 0.40 * np.clip(water, 0.0, None)
+        _simplex_field(sim_m, size, sizes={15: 1.0, 5: 0.3}, normalize=True)
+        - 4.0 * start
+        - 0.3 * water
     )
     sand_noise = _simplex_field(sim_sn, size, sizes=9)
-
-    # All thresholds now centre on 0 (inside the band). Sand sits in
-    # a thin envelope just outside the water band, creating beaches.
-    water_thr_high = 0.0
-    water_thr_sand_lo = -0.04
-    water_thr_sand_hi = 0.0
-    mountain_thr = 0.0
 
     material = np.full((size, size), GRASS, dtype=np.int8)
     start_grass = start > 0.5
