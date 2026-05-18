@@ -333,8 +333,10 @@ def main():
     parser.add_argument("--wandb-mode", default="online",
                         choices=("online", "offline", "disabled"))
     parser.add_argument("--run-name", default=None)
-    parser.add_argument("--checkpoint-dir", type=Path, default=Path("checkpoints"))
-    parser.add_argument("--save-every-iters", type=int, default=50)
+    parser.add_argument("--checkpoint-dir", type=Path, default=Path("checkpoints"),
+                        help="parent dir; each run writes into "
+                             "<checkpoint-dir>/<run_name>/{iter<N>.pt,final.pt}")
+    parser.add_argument("--save-every-iters", type=int, default=300)
     args = parser.parse_args()
 
     assert args.num_envs % args.num_minibatches == 0, \
@@ -391,6 +393,9 @@ def main():
         size_str = f"size={n_params / 1e6:.1f}M"
         wandb.run.tags = list(wandb.run.tags or []) + [size_str]
 
+    # Each run writes into its own subdir so the checkpoints/ tree stays
+    # readable when many runs share the parent (e.g. during a sweep).
+    args.checkpoint_dir = args.checkpoint_dir / run_name
     args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     # -------------------------------------- rollout buffers (on device)
@@ -722,7 +727,7 @@ def main():
             )
 
         if iteration % args.save_every_iters == 0:
-            ckpt = args.checkpoint_dir / f"{run_name}_iter{iteration}.pt"
+            ckpt = args.checkpoint_dir / f"iter{iteration}.pt"
             torch.save(
                 {
                     "policy": policy.state_dict(),
@@ -736,7 +741,7 @@ def main():
             wandb.save(str(ckpt))
             print(f"saved {ckpt}")
 
-    final_ckpt = args.checkpoint_dir / f"{run_name}_final.pt"
+    final_ckpt = args.checkpoint_dir / "final.pt"
     torch.save(
         {
             "policy": policy.state_dict(),
