@@ -248,10 +248,12 @@ def _generate_one(
     #   mountain_thr  : threshold above which a cell becomes stone.
     if map_type == "balanced":
         bias_strength = 0.0
-        water_thr_high = 0.55       # very little water
-        water_thr_sand_lo = 0.45
-        water_thr_sand_hi = 0.55
-        mountain_thr = 0.55         # very little stone
+        water_thr_high = 0.70       # very little water (was 0.55 — most
+                                    # balanced maps had small lakes, rocks
+                                    # were scarce; we want the inverse)
+        water_thr_sand_lo = 0.60
+        water_thr_sand_hi = 0.70
+        mountain_thr = 0.40         # more rocky outcrops (was 0.55)
     else:
         bias_strength = 0.40
         water_thr_high = 0.30
