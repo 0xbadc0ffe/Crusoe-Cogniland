@@ -99,8 +99,8 @@ Two sweep configs ship in `configs/sweeps/`:
 
 | Sweep | Axes | # runs |
 |---|---|---|
-| `ppo_gru_map_sizes.yaml`  | `env-size ∈ {32, 64, 96, 128}` | 4 |
-| `dreamer_size_x_map.yaml` | `size ∈ {12M,25M,50M,100M}` × `map-size ∈ {32,64,96,128}` | 16 |
+| `ppo_gru_map_sizes.yaml`  | `env-size ∈ {32, 96}` | 2 |
+| `dreamer_size_x_map.yaml` | `size ∈ {12M,25M,50M,100M}` × `map-size ∈ {32,96}` | 8 |
 
 Cluster setup (do once):
 
@@ -112,8 +112,8 @@ pip install -e .
 
 # 2. Put your WANDB_API_KEY in $PROJECT_DIR/.env (one line: WANDB_API_KEY=...)
 
-# 3. Pre-generate map datasets for all sizes so agents don't race
-python scripts/generate_maps.py --sizes 32 64 96 128
+# 3. Pre-generate map datasets so agents don't race on lazy generation
+python scripts/generate_maps.py --sizes 32 96
 
 # 4. EDIT cluster-specific paths in scripts/job_sweep.slurm:
 #    PROJECT_DIR, CONDA_ENV, --mail-user, --exclude
