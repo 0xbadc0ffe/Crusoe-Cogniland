@@ -76,16 +76,18 @@ def _to_tensor_obs(obs: dict, device: torch.device) -> dict:
 @torch.no_grad()
 def _select_action(policy: PPOGRUPolicy, obs_t: dict, hidden: torch.Tensor,
                    done: torch.Tensor, greedy: bool):
+    # New policy heads return (logits, belief, value). The belief is already
+    # deterministic (tanh of a linear projection) so greedy == stochastic
+    # for the build_scalar.
     if not greedy:
-        action, scalar, _, _, _, h_new = policy.get_action_and_value(obs_t, hidden, done)
-        return int(action.item()), float(scalar.squeeze().item()), h_new
+        action, belief, _, _, _, h_new = policy.get_action_and_value(obs_t, hidden, done)
+        return int(action.item()), float(belief.squeeze().item()), h_new
 
-    # Greedy: argmax over moves, mean of the tanh-Gaussian for build_scalar.
     obs_seq = {k: v.unsqueeze(0) for k, v in obs_t.items()}
     gru_out, h_new = policy._gru_forward(obs_seq, done.unsqueeze(0), hidden)
     x = gru_out.squeeze(0)
-    logits, mean, _, _ = policy._heads(x)
-    return int(logits.argmax(-1).item()), float(mean.squeeze().item()), h_new
+    logits, belief, _ = policy._heads(x)
+    return int(logits.argmax(-1).item()), float(belief.squeeze().item()), h_new
 
 
 def _rollout(policy: PPOGRUPolicy, env: CognilandNavEnv, device: torch.device,
