@@ -55,9 +55,13 @@ NUM_OBJECTS = 3
 OBJECT_NAMES = {NONE: "none", RAFT: "raft", HARNESS: "harness"}
 
 # ── Reward constants ──────────────────────────────────────────────────────
-SLACK_PENALTY = -0.005    # flat per-action cost
+SLACK_PENALTY = -0.02     # flat per-action cost (was -0.005; raised so
+                          # length-of-path dominates the return, pushing
+                          # the policy to keep tightening the route)
 SHAPING_COEF = +0.01      # × Δctg (positive = closer)
-REACH_BONUS = +1.0        # sparse terminal bonus
+REACH_BONUS = +0.0        # disabled — PBRS shaping is the sole positive
+                          # signal; eliminates the value-fn cliff at the
+                          # target and removes the "any-route-wins" plateau
 
 # Legacy names kept for any external callers — the env uses SLACK_PENALTY now.
 STEP_COST = SLACK_PENALTY
@@ -65,7 +69,12 @@ BUILD_COST = SLACK_PENALTY
 COLLISION_PENALTY = 0.0   # already folded into the flat slack
 
 # ── Slip mechanic ─────────────────────────────────────────────────────────
-SLIP_PROB_DEFAULT = 0.90   # on water/rock without the matching item
+SLIP_PROB_DEFAULT = 0.70   # on water/rock without the matching item.
+                           # Lowered from 0.90 so that going *around* a
+                           # small lake/rocky patch (≈3.3× attempts/cell
+                           # without skill, was 10×) competes with
+                           # committing to raft/harness — drives the
+                           # policy to use no-skill when shape allows.
 SLIP_WEIGHT_LAND = 0.30    # carrying any item slips this often on plain land
                            # — the "weight" tax that makes the wrong skill
                            # strictly worse than carrying nothing.

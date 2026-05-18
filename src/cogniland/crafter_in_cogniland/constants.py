@@ -41,12 +41,16 @@ OBJ_HARNESS = 2
 NUM_OBJECTS = 3
 
 # ── reward constants (mirror skills.py) ───────────────────────────────
-SLACK_PENALTY = -0.005
+# Reach bonus is OFF: with PBRS shaping providing the gradient toward
+# target and a non-trivial slack per step, the agent is pushed toward
+# the SHORTEST path. Without the +1 cliff at the target, returns keep
+# improving as the trajectory tightens, which is what we want.
+SLACK_PENALTY = -0.02
 SHAPING_COEF = 0.01
-REACH_BONUS = 1.0
+REACH_BONUS = 0.0
 
 # ── slip mechanic (mirror skills.py) ──────────────────────────────────
-SLIP_PROB_DEFAULT = 0.90    # water/rock without the matching item; trees
+SLIP_PROB_DEFAULT = 0.70    # water/rock without the matching item; trees
 SLIP_WEIGHT_LAND = 0.30     # land slip if carrying anything (weight tax)
 
 
