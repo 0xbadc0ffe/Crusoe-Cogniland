@@ -9,6 +9,7 @@
 #   ./scripts/launch_sweep.sh configs/sweeps/dreamer_size_x_map.yaml
 
 program: scripts/dreamerv3_crafter_in_cogniland.py
+project: crafter_in_cogniland
 method: grid
 metric:
   name: success/rolling100

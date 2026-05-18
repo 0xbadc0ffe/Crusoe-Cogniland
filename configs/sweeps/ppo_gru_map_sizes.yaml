@@ -10,6 +10,7 @@
 #   wandb agent --count 4 <entity>/<project>/<sweep_id>
 
 program: scripts/train_ppo_gru.py
+project: crafter_in_cogniland
 method: grid
 metric:
   name: success/rolling100
