@@ -47,7 +47,7 @@ REACH_BONUS = 1.0
 
 # ── slip mechanic (mirror skills.py) ──────────────────────────────────
 SLIP_PROB_DEFAULT = 0.90    # water/rock without the matching item; trees
-SLIP_WEIGHT_LAND = 0.15     # land slip if carrying anything (weight tax)
+SLIP_WEIGHT_LAND = 0.30     # land slip if carrying anything (weight tax)
 
 
 __all__ = [

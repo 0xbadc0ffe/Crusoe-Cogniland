@@ -45,7 +45,7 @@ _TERRAIN_SPRITES: dict[int, str] = {
     SAND: "sand.png",
     WATER: "water.png",
     ROCK: "stone.png",
-    TARGET: "grass.png",  # target is land; the diamond is drawn on top
+    TARGET: "grass.png",  # target is land; a flag sprite is drawn on top
     TREE: "grass.png",    # tree sits on a grass base; tree overlay added later
     LAVA: "lava.png",
 }
@@ -92,7 +92,7 @@ class SpriteSheet:
             "sand.png",
             "water.png",
             "stone.png",
-            "diamond.png",
+            "flag.png",
             "tree.png",
             "lava.png",
             "player.png",
@@ -154,7 +154,7 @@ class SpriteSheet:
                     self._blit(canvas, "tree.png", r, c)
         # target overlay
         tr, tc = target_pos
-        self._blit(canvas, "diamond.png", tr, tc)
+        self._blit(canvas, "flag.png", tr, tc)
         # agent overlay
         ar, ac = agent_pos
         face_map = {
@@ -220,7 +220,7 @@ class SpriteSheet:
             for vc in range(view_size):
                 mc = c0 + vc
                 if 0 <= mc < W and int(terrain[mr, mc]) == TARGET:
-                    self._blit(canvas, "diamond.png", vr, vc)
+                    self._blit(canvas, "flag.png", vr, vc)
         # agent overlay at view centre
         face_map = {
             "up": "player-up.png",

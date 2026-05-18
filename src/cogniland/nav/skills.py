@@ -66,7 +66,7 @@ COLLISION_PENALTY = 0.0   # already folded into the flat slack
 
 # ── Slip mechanic ─────────────────────────────────────────────────────────
 SLIP_PROB_DEFAULT = 0.90   # on water/rock without the matching item
-SLIP_WEIGHT_LAND = 0.15    # carrying any item slips this often on plain land
+SLIP_WEIGHT_LAND = 0.30    # carrying any item slips this often on plain land
                            # — the "weight" tax that makes the wrong skill
                            # strictly worse than carrying nothing.
 
