@@ -99,8 +99,8 @@ Two sweep configs ship in `configs/sweeps/`:
 
 | Sweep | Axes | # runs |
 |---|---|---|
-| `ppo_gru_map_sizes.yaml`   | `env-size ∈ {32, 64, 96, 128}` × 3 seeds | 12 |
-| `dreamer_size_x_map.yaml` | `size ∈ {12M,25M,50M,100M}` × `map-size ∈ {32,64,96,128}` × 2 seeds | 32 |
+| `ppo_gru_map_sizes.yaml`  | `env-size ∈ {32, 64, 96, 128}` | 4 |
+| `dreamer_size_x_map.yaml` | `size ∈ {12M,25M,50M,100M}` × `map-size ∈ {32,64,96,128}` | 16 |
 
 Cluster setup (do once):
 

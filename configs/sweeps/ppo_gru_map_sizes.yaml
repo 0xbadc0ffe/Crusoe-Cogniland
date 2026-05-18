@@ -1,12 +1,12 @@
 # PPO + GRU across map sizes.
 #
-# 4 map sizes × 3 seeds = 12 runs. Each run is ~30-90 minutes on an
+# 4 map sizes × 1 seed = 4 runs. Each run is ~30-90 minutes on an
 # RTX 4090-class GPU at 5M timesteps. The `map=<N>` wandb tag is
 # populated inside the script from --env-size so the cross-run charts
 # can group/filter by map size.
 #
 # Submit:
-#   ./scripts/launch_sweep.sh configs/sweeps/ppo_gru_map_sizes.yaml -n 4
+#   ./scripts/launch_sweep.sh configs/sweeps/ppo_gru_map_sizes.yaml
 
 program: scripts/train_ppo_gru.py
 method: grid
@@ -15,12 +15,12 @@ metric:
   goal: maximize
 
 parameters:
-  # Swept axes
+  # Swept axis
   env-size:
     values: [32, 64, 96, 128]
-  seed:
-    values: [0, 1, 2]
   # Fixed training budget + infra
+  seed:
+    value: 0
   total-timesteps:
     value: 5_000_000
   num-envs:
