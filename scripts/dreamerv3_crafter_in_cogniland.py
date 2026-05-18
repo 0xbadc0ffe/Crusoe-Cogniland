@@ -379,6 +379,17 @@ def make_train(cfg, log_cb=None):
         completed = info["returned_episode"].astype(jnp.float32)
         n_completed = jnp.maximum(completed.sum(), 1.0)
         success_episodes = (info["reached_target"] & info["returned_episode"]).astype(jnp.float32)
+        # Per-step contribution to the (map_type, skill) count matrix.
+        # Both map_type and active_object are in {0,1,2}, so the
+        # outer-product trick gives us a (3, 3) integer matrix counting
+        # episodes that finished *this step* in each (row, col) cell.
+        # Host side then accumulates across many steps.
+        map_oh = jax.nn.one_hot(info["map_type"].astype(jnp.int32), 3)        # (E, 3)
+        skill_oh = jax.nn.one_hot(info["active_object"].astype(jnp.int32), 3) # (E, 3)
+        completed_mask = info["returned_episode"].astype(jnp.float32)[..., None, None]
+        skill_matrix = (
+            completed_mask * map_oh[..., None] * skill_oh[..., None, :]
+        ).sum(0)                                                              # (3, 3)
         metrics = {
             "rollout/reward_step_mean": reward_next.mean(),
             "rollout/done_frac": done_next.mean(),
@@ -386,6 +397,7 @@ def make_train(cfg, log_cb=None):
             "rollout/returned_episode_count": completed.sum(),
             "success/mean": success_episodes.sum() / n_completed,
             "rollout/episode_length": (info["returned_episode_lengths"] * completed).sum() / n_completed,
+            "rollout/skill_matrix": skill_matrix,
         }
         return new_carry, metrics
 
@@ -761,18 +773,41 @@ def main():
     _last = {"step": 0, "time": time.time()}
     _success_history: list[tuple[int, float]] = []   # (n_episodes, success_rate)
     _return_history: list[tuple[int, float]] = []
+    # (3, 3) count matrix of (map_type, skill) for episodes that finished
+    # since the last wandb log emission. Reset to zero after each log so
+    # the matrix is "this interval's distribution of skill usage", not a
+    # cumulative average across training. Internal indexing is map_type
+    # in {0=balanced, 1=lake, 2=rocky} and skill in {0=NONE, 1=RAFT,
+    # 2=HARNESS}; the wandb-facing presentation reorders to the
+    # user-requested rows=(grassland, rocky, lake) × cols=(noskill,
+    # harness, raft).
+    _skill_matrix = np.zeros((3, 3), dtype=np.float64)
+
+    _ROW_LABELS = ("grassland", "rocky", "lake")
+    _ROW_PERM = (0, 2, 1)   # internal map_type → display row
+    _COL_LABELS = ("noskill", "harness", "raft")
+    _COL_PERM = (0, 2, 1)   # internal skill → display column
 
     def log_cb(metrics_dict, env_step):
         n_completed = int(metrics_dict.get("rollout/returned_episode_count", 0))
         if n_completed > 0:
             _success_history.append((n_completed, float(metrics_dict["success/mean"])))
             _return_history.append((n_completed, float(metrics_dict["return/mean"])))
+        # accumulate skill_matrix counts whenever any episode finished
+        sm = metrics_dict.get("rollout/skill_matrix", None)
+        if sm is not None:
+            arr = np.asarray(sm, dtype=np.float64)
+            if arr.shape == (3, 3) and arr.sum() > 0:
+                _skill_matrix[...] = _skill_matrix + arr
 
         step = int(env_step)
         if step % cfg["wandb_log_interval"] != 0:
             return
         payload = {}
         for k, v in metrics_dict.items():
+            # skip the matrix here — it's logged separately as a table
+            if k == "rollout/skill_matrix":
+                continue
             try:
                 payload[k] = float(v)
             except (TypeError, ValueError):
@@ -790,6 +825,29 @@ def main():
             wsum = sum(n * r for n, r in recent)
             if tot_n > 0:
                 payload["return/rolling100"] = wsum / tot_n
+
+        # Row-normalised skill-usage matrix (rows = map type, cols = skill).
+        # Each row sums to 1; rows with zero episodes show 0 across.
+        row_sums = _skill_matrix.sum(axis=1, keepdims=True)
+        norm = np.divide(
+            _skill_matrix, row_sums,
+            out=np.zeros_like(_skill_matrix), where=row_sums > 0,
+        )
+        # apply display permutation
+        norm_disp = norm[np.ix_(_ROW_PERM, _COL_PERM)]
+        # log every cell as a scalar so line charts work over time
+        for i, row_lbl in enumerate(_ROW_LABELS):
+            for j, col_lbl in enumerate(_COL_LABELS):
+                payload[f"skill_usage/{row_lbl}/{col_lbl}"] = float(norm_disp[i, j])
+        # also log the matrix as a wandb.Table for the dashboard view
+        try:
+            table = wandb.Table(columns=["map_type"] + list(_COL_LABELS))
+            for i, row_lbl in enumerate(_ROW_LABELS):
+                table.add_data(row_lbl, *[float(norm_disp[i, j]) for j in range(3)])
+            payload["skill_usage/table"] = table
+        except Exception:
+            pass
+
         now = time.time()
         dt = now - _last["time"]
         ds = step - _last["step"]
@@ -797,6 +855,8 @@ def main():
             payload["perf/fps"] = ds / dt
         _last["step"] = step; _last["time"] = now
         wandb.log(payload, step=step)
+        # reset the matrix so the next log shows only its interval's data
+        _skill_matrix[...] = 0.0
 
     live_cb = log_cb if wandb_active else None
     init_carry_fn, run_chunk_fn, chunk_updates = make_train(cfg, log_cb=live_cb)

@@ -426,6 +426,17 @@ def main():
     num_iterations = args.total_timesteps // batch_size
     global_step = 0
     start_time = time.time()
+    # Display labels + permutations for the per-iteration skill matrix.
+    # Internal indexing matches the JAX trainer:
+    #   row: 0=balanced, 1=lake, 2=rocky
+    #   col: 0=none, 1=raft, 2=harness
+    # Display reorders to rows=(grassland, rocky, lake) ×
+    # cols=(noskill, harness, raft). The matrix logged at each iteration
+    # reflects only that iteration's finished episodes (not cumulative).
+    _ROW_LABELS = ("grassland", "rocky", "lake")
+    _ROW_PERM = (0, 2, 1)
+    _COL_LABELS = ("noskill", "harness", "raft")
+    _COL_PERM = (0, 2, 1)
 
     print(
         f"num_iterations={num_iterations}  batch_size={batch_size}  "
@@ -448,6 +459,12 @@ def main():
         match_obj: dict[str, list[float]] = {"raft_built_on_lake": [], "harness_built_on_rocky": []}
         wrong_obj: list[float] = []
         none_obj: list[float] = []
+        # Per-iteration (map_type, skill) finished-episode counts. Internal
+        # indexing matches the JAX trainer:
+        #   row: 0=balanced, 1=lake, 2=rocky
+        #   col: 0=none, 1=raft, 2=harness
+        # The cumulative version lives on the outer scope (`_skill_matrix_total`).
+        iter_skill_counts = np.zeros((3, 3), dtype=np.int64)
 
         for step in range(args.num_steps):
             global_step += args.num_envs
@@ -497,6 +514,11 @@ def main():
                         match_obj["harness_built_on_rocky"].append(1.0)
                 else:
                     wrong_obj.append(1.0)
+                # Skill-usage matrix counts.
+                row = {"balanced": 0, "lake": 1, "rocky": 2}.get(ep["map_type"])
+                col = {"none": 0, "raft": 1, "harness": 2}.get(active)
+                if row is not None and col is not None:
+                    iter_skill_counts[row, col] += 1
 
         # -------- bootstrap + GAE ---------------------------------------
         with torch.no_grad():
@@ -626,14 +648,38 @@ def main():
                      max(1, len(ep_returns_recent)))
                 ),
             })
+            # ── Per-iteration skill-usage matrix ──
+            # Row-normalise the count matrix so each row sums to 1 (or
+            # zero if no episodes finished on that map type this iter).
+            sm = iter_skill_counts.astype(np.float64)
+            row_sums = sm.sum(axis=1, keepdims=True)
+            norm = np.divide(
+                sm, row_sums,
+                out=np.zeros_like(sm), where=row_sums > 0,
+            )
+            norm_disp = norm[np.ix_(_ROW_PERM, _COL_PERM)]
+            for i, row_lbl in enumerate(_ROW_LABELS):
+                for j, col_lbl in enumerate(_COL_LABELS):
+                    log_payload[f"skill_usage/{row_lbl}/{col_lbl}"] = float(norm_disp[i, j])
+            try:
+                table = wandb.Table(columns=["map_type"] + list(_COL_LABELS))
+                for i, row_lbl in enumerate(_ROW_LABELS):
+                    table.add_data(
+                        row_lbl, *[float(norm_disp[i, j]) for j in range(3)]
+                    )
+                log_payload["skill_usage/table"] = table
+            except Exception:
+                pass
         wandb.log(log_payload, step=global_step)
 
         if iteration % 5 == 0 or iteration == 1:
-            er = log_payload.get("charts/episode_return_mean", float("nan"))
+            er = log_payload.get("return/mean", float("nan"))
+            succ = log_payload.get("success/mean", float("nan"))
             print(
                 f"iter={iteration:4d}/{num_iterations}  step={global_step:>9d}  sps={sps:.0f}  "
-                f"ep_return={er:+.2f}  policy_loss={log_payload['train/policy_loss']:+.3f}  "
-                f"value_loss={log_payload['train/value_loss']:.3f}  "
+                f"ret={er:+.2f}  success={succ:.2f}  "
+                f"pg={log_payload['loss/policy']:+.3f}  "
+                f"val={log_payload['loss/value']:.3f}  "
                 f"kl={log_payload['train/approx_kl']:.4f}  "
                 f"belief_mae={log_payload['train/belief_mae']:.3f}"
             )
