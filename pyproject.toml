@@ -4,33 +4,25 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cogniland"
-version = "0.2.0"
+version = "0.3.0"
+description = "Cogniland Nav — a procedurally-generated navigation env + PPO/Dreamer baselines."
 requires-python = ">=3.11"
 dependencies = [
-    # Pinned together so pip resolves quickly. jax[cuda12] is Linux-only: the
-    # CUDA plugin wheels are not published for macOS/Windows, which makes an
-    # unconditional jax[cuda12] dependency trigger extreme pip backtracking.
-    "jax[cuda12]==0.8.2; sys_platform == 'linux'",
-    "jax==0.8.2; sys_platform != 'linux'",
-    "jaxlib==0.8.2",
-    "flax==0.12.6",
-    "optax==0.2.8",
-    "orbax-checkpoint==0.11.36",
-    "chex==0.1.91",
-    "omegaconf",
+    # Core RL agents (PyTorch-only)
+    "torch",
+    "numpy",
+    "einops",
     "wandb",
     "tqdm",
     "tabulate",
-    "numpy",
-    "torch",
-    "einops",
-    # 0.1.8+ depends on tfp-nightly and blows up the resolver with recent JAX.
-    "distrax==0.1.5",
-    # cogniland.nav (PyTorch/Gymnasium navigation env)
+    "imageio",
+    "imageio-ffmpeg",
+    # Cogniland Nav env
     "gymnasium",
     "pygame",
     "pillow",
     "opensimplex",
+    "matplotlib",
 ]
 
 [tool.setuptools.packages.find]

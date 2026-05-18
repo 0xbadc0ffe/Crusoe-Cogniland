@@ -206,8 +206,14 @@ class PPOGRUPolicy(nn.Module):
                 nn.init.constant_(p, 0.0)
 
         self.actor = _layer_init(nn.Linear(gru_hidden, num_move_actions), std=0.01)
-        self.scalar_mean = _layer_init(nn.Linear(gru_hidden, 1), std=0.01)
-        self.scalar_log_std = nn.Parameter(torch.zeros(1) - 0.5)
+        # ``belief`` replaces the old (scalar_mean, scalar_log_std) Gaussian.
+        # It is a *deterministic* tanh-bounded estimate of which item the
+        # agent should build (+1 raft on lake, -1 harness on rocky, 0 on
+        # balanced) and is supervised by an MSE aux loss using the privileged
+        # map_type label. At inference the env reads only this scalar, so
+        # there's no information leak — the policy still has to infer the
+        # belief from the local observation.
+        self.belief_head = _layer_init(nn.Linear(gru_hidden, 1), std=0.01)
         self.critic = _layer_init(nn.Linear(gru_hidden, 1), std=1.0)
         self.gru_hidden = gru_hidden
 
@@ -247,44 +253,37 @@ class PPOGRUPolicy(nn.Module):
 
     def _heads(self, x):
         logits = self.actor(x)
-        scalar_mean = torch.tanh(self.scalar_mean(x))
-        scalar_std = self.scalar_log_std.exp().expand_as(scalar_mean)
+        belief = torch.tanh(self.belief_head(x)).squeeze(-1)  # (B,) in [-1, 1]
         value = self.critic(x).squeeze(-1)
-        return logits, scalar_mean, scalar_std, value
+        return logits, belief, value
 
     # ---- 1-step path (rollout collection) ------------------------------
 
-    def get_action_and_value(self, obs, hidden, done, action=None, scalar=None):
+    def get_action_and_value(self, obs, hidden, done, action=None):
         # add fake time dim of 1
         obs_seq = {k: v.unsqueeze(0) for k, v in obs.items()}
         gru_out, h_new = self._gru_forward(obs_seq, done.unsqueeze(0), hidden)
         x = gru_out.squeeze(0)
-        logits, mean, std, value = self._heads(x)
+        logits, belief, value = self._heads(x)
         cat = Categorical(logits=logits)
-        norm = Normal(mean, std)
         if action is None:
             action = cat.sample()
-        if scalar is None:
-            scalar = norm.sample()
-        log_prob = cat.log_prob(action) + norm.log_prob(scalar).squeeze(-1)
-        entropy = cat.entropy() + norm.entropy().squeeze(-1)
-        return action, scalar, log_prob, entropy, value, h_new
+        log_prob = cat.log_prob(action)
+        entropy = cat.entropy()
+        return action, belief, log_prob, entropy, value, h_new
 
     # ---- T-step path (PPO update) --------------------------------------
 
-    def evaluate(self, obs_seq, done_seq, hidden, actions, scalars):
+    def evaluate(self, obs_seq, done_seq, hidden, actions):
         gru_out, _ = self._gru_forward(obs_seq, done_seq, hidden)
         T, B = gru_out.shape[:2]
         x = gru_out.reshape(T * B, -1)
-        logits, mean, std, value = self._heads(x)
+        logits, belief, value = self._heads(x)
         cat = Categorical(logits=logits)
-        norm = Normal(mean, std)
         actions_flat = actions.reshape(T * B)
-        scalars_flat = scalars.reshape(T * B, 1)
         lp_a = cat.log_prob(actions_flat).reshape(T, B)
-        lp_s = norm.log_prob(scalars_flat).squeeze(-1).reshape(T, B)
-        ent = (cat.entropy() + norm.entropy().squeeze(-1)).reshape(T, B)
-        return lp_a + lp_s, ent, value.reshape(T, B)
+        ent = cat.entropy().reshape(T, B)
+        return lp_a, ent, value.reshape(T, B), belief.reshape(T, B)
 
 
 # =============================================================== training
@@ -320,6 +319,8 @@ def main():
     parser.add_argument("--clip-coef", type=float, default=0.2)
     parser.add_argument("--ent-coef", type=float, default=0.01)
     parser.add_argument("--vf-coef", type=float, default=0.5)
+    parser.add_argument("--belief-coef", type=float, default=0.5,
+                        help="weight for the supervised belief MSE aux loss")
     parser.add_argument("--max-grad-norm", type=float, default=0.5)
     parser.add_argument("--target-kl", type=float, default=None)
     # network
@@ -395,7 +396,11 @@ def main():
             (args.num_steps, args.num_envs) + img_shape, dtype=torch.uint8, device=device
         )
     actions_buf = torch.zeros((args.num_steps, args.num_envs), dtype=torch.long, device=device)
-    scalars_buf = torch.zeros((args.num_steps, args.num_envs, 1), dtype=torch.float32, device=device)
+    beliefs_buf = torch.zeros((args.num_steps, args.num_envs), dtype=torch.float32, device=device)
+    belief_targets_buf = torch.zeros(
+        (args.num_steps, args.num_envs), dtype=torch.float32, device=device
+    )
+    _MAP_TYPE_TO_BELIEF = {"lake": 1.0, "rocky": -1.0, "balanced": 0.0}
     logprobs_buf = torch.zeros((args.num_steps, args.num_envs), dtype=torch.float32, device=device)
     rewards_buf = torch.zeros((args.num_steps, args.num_envs), dtype=torch.float32, device=device)
     dones_buf = torch.zeros((args.num_steps, args.num_envs), dtype=torch.float32, device=device)
@@ -441,22 +446,28 @@ def main():
             dones_buf[step] = next_done
 
             with torch.no_grad():
-                action, scalar, log_prob, _, value, next_hidden = policy.get_action_and_value(
+                action, belief, log_prob, _, value, next_hidden = policy.get_action_and_value(
                     next_obs_t, next_hidden, next_done
                 )
             actions_buf[step] = action
-            scalars_buf[step] = scalar  # store pre-clip sample for log_prob consistency
+            beliefs_buf[step] = belief
             logprobs_buf[step] = log_prob
             values_buf[step] = value
 
-            # env consumes scalar in [-1, 1]
+            # env consumes the belief in [-1, 1] as build_scalar.
             np_moves = action.cpu().numpy()
-            np_scalars = torch.clamp(scalar, -1.0, 1.0).squeeze(-1).cpu().numpy()
+            np_scalars = belief.detach().cpu().numpy()  # already in [-1, 1] via tanh
             next_obs, reward, done, infos = vec.step(np_moves, np_scalars)
 
             rewards_buf[step] = torch.from_numpy(reward).to(device)
             next_obs_t = _to_device(next_obs, device)
             next_done = torch.from_numpy(done.astype(np.float32)).to(device)
+            # supervision target for the belief head (privileged at train time
+            # only; the policy still has to infer this from local obs).
+            belief_targets_buf[step] = torch.tensor(
+                [_MAP_TYPE_TO_BELIEF[infos[i]["map_type"]] for i in range(args.num_envs)],
+                dtype=torch.float32, device=device,
+            )
 
             for info in infos:
                 if "episode" not in info:
@@ -480,7 +491,7 @@ def main():
         # -------- bootstrap + GAE ---------------------------------------
         with torch.no_grad():
             _, _, _, _, next_value, _ = policy.get_action_and_value(
-                next_obs_t, next_hidden, next_done
+                next_obs_t, next_hidden, next_done,
             )
             advantages = torch.zeros_like(rewards_buf)
             last_gae = torch.zeros(args.num_envs, device=device)
@@ -499,6 +510,7 @@ def main():
         # -------- PPO update (env-minibatched) --------------------------
         env_idx = np.arange(args.num_envs)
         pg_losses, v_losses, ent_losses, kls, clipfracs = [], [], [], [], []
+        belief_losses, belief_maes = [], []
 
         early_stop = False
         for epoch in range(args.update_epochs):
@@ -510,14 +522,14 @@ def main():
                 mb_obs = {k: v[:, mb_t] for k, v in obs_buf.items()}
                 mb_dones = dones_buf[:, mb_t]
                 mb_actions = actions_buf[:, mb_t]
-                mb_scalars = scalars_buf[:, mb_t]
+                mb_belief_targets = belief_targets_buf[:, mb_t]
                 mb_old_logp = logprobs_buf[:, mb_t]
                 mb_adv = advantages[:, mb_t]
                 mb_ret = returns[:, mb_t]
                 mb_h0 = initial_hidden[:, mb_t]
 
-                new_logp, ent, new_value = policy.evaluate(
-                    mb_obs, mb_dones, mb_h0, mb_actions, mb_scalars
+                new_logp, ent, new_value, new_belief = policy.evaluate(
+                    mb_obs, mb_dones, mb_h0, mb_actions
                 )
                 log_ratio = new_logp - mb_old_logp
                 ratio = log_ratio.exp()
@@ -534,8 +546,15 @@ def main():
                 pg_loss = torch.max(pg1, pg2).mean()
                 v_loss = 0.5 * (new_value - mb_ret).pow(2).mean()
                 ent_loss = ent.mean()
+                belief_loss = (new_belief - mb_belief_targets).pow(2).mean()
+                belief_mae = (new_belief - mb_belief_targets).abs().mean()
 
-                loss = pg_loss + args.vf_coef * v_loss - args.ent_coef * ent_loss
+                loss = (
+                    pg_loss
+                    + args.vf_coef * v_loss
+                    - args.ent_coef * ent_loss
+                    + args.belief_coef * belief_loss
+                )
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 nn.utils.clip_grad_norm_(policy.parameters(), args.max_grad_norm)
@@ -546,6 +565,8 @@ def main():
                 ent_losses.append(ent_loss.item())
                 kls.append(approx_kl.item())
                 clipfracs.append(clipfrac.item())
+                belief_losses.append(belief_loss.item())
+                belief_maes.append(belief_mae.item())
 
             if args.target_kl is not None and np.mean(kls[-args.num_minibatches :]) > args.target_kl:
                 early_stop = True
@@ -560,7 +581,8 @@ def main():
             "train/approx_kl": float(np.mean(kls)),
             "train/clipfrac": float(np.mean(clipfracs)),
             "train/lr": optimizer.param_groups[0]["lr"],
-            "train/scalar_std": float(policy.scalar_log_std.exp().item()),
+            "train/belief_loss": float(np.mean(belief_losses)),
+            "train/belief_mae": float(np.mean(belief_maes)),
             "train/iteration": iteration,
             "train/sps": sps,
             "train/early_stop": int(early_stop),
@@ -589,7 +611,8 @@ def main():
                 f"iter={iteration:4d}/{num_iterations}  step={global_step:>9d}  sps={sps:.0f}  "
                 f"ep_return={er:+.2f}  policy_loss={log_payload['train/policy_loss']:+.3f}  "
                 f"value_loss={log_payload['train/value_loss']:.3f}  "
-                f"kl={log_payload['train/approx_kl']:.4f}"
+                f"kl={log_payload['train/approx_kl']:.4f}  "
+                f"belief_mae={log_payload['train/belief_mae']:.3f}"
             )
 
         if iteration % args.save_every_iters == 0:

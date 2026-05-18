@@ -1,43 +1,35 @@
-# Cogniland
+# Cogniland Nav
 
-A multi-task reinforcement learning benchmark on procedurally generated maps.
+A small, fast 2-D navigation environment with a one-shot build commitment
+(raft vs harness) — designed to study partially observable RL agents on a
+procedurally generated grid world. PyTorch-only, baselines include
+**PPO + GRU** and **DreamerV3**.
 
-An agent spawns on a 128x128 island and must reach a target while managing HP. Terrain drains health at different rates, forests provide wood, berries heal, and craftable tools (raft, rope, shoes) unlock efficient traversal of specific terrain families. The game is designed so that naive shortest-path navigation usually fails — survival requires strategic foraging, tool crafting, and terrain awareness.
+The agent always sees an *egocentric* RGB crop. It must reach a target
+while choosing which build item to commit to — raft makes water easy,
+harness makes rock easy, and neither helps on balanced maps. The build
+decision is permanent.
 
-The framework supports multiple RL agents (PPO-RNN, DreamerV3, STORM) through a shared `Agent` interface. All training, evaluation, and logging infrastructure is agent-agnostic.
-
-## Project structure
+## Layout
 
 ```
-scripts/train.py               Entry point
-configs/env/cogniland.yaml     Environment + experiment config
-configs/agent/*.yaml           Agent hyperparameters
-configs/sweeps/*.yaml          W&B sweep definitions
-
 src/cogniland/
-  envs/                        Batched numpy environment
-    env.py              Game loop (8 actions, HP/wood/tools)
-    tile_effects.py              Terrain drain table
-    tasks.py                     Per-task reward functions
-    multitask_wrapper.py         Reward routing + task embeddings
-  agents/                      JAX agent implementations
-    ppo_rnn.py                   PPO-RNN (Flax CNN+LSTM)
-    dreamer.py                   DreamerV3
-    storm.py                     STORM
-    agent.py                     Agent dataclass (the interface)
-    registry.py                  @register_agent + auto-discovery
-    commons/                     Shared NN blocks, replay buffers
-    policy/                      Actor-critic training
-    world_models/                RSSM, TSSM implementations
-  trainer/                     Training orchestration
-    trainer.py                   Main loop + multi-task eval
-    run_logger.py                W&B integration
-    checkpoint.py                Orbax save/load
-  config/                      Config loading, XLA setup
-  metrics/                     Rolling stats tracker
+  nav/                         The environment
+    nav_env.py                 CognilandNavEnv (gymnasium)
+    mapgen.py                  procedural map generation
+    renderer.py                pygame / numpy sprite renderer
+    skills.py                  reward shaping + walkability + slip
+    tiles.py                   tile id constants
+    wrappers.py                TorchTensorWrapper (optional)
+  nav_dreamer_video.py         imagination-video helper for Dreamer
+  assets/sprites/              Crafter sprites used by the renderer
 
-data/maps/                 Pre-generated map datasets (.pt)
-demo.py                        Playable human demo (pygame)
+scripts/
+  train_dreamer.py             DreamerV3 trainer (paper hyperparameters)
+  train_ppo_gru.py             PPO + GRU trainer
+  play_cogniland.py            Playable pygame demo
+  play_ppo_gru.py              Evaluate / visualize a trained PPO policy
+  profile_dreamer.py           Per-component wallclock profiler
 ```
 
 ## Setup
@@ -46,102 +38,66 @@ demo.py                        Playable human demo (pygame)
 conda env create -f environment.yml
 conda activate crusoe
 pip install -e .
-
-# Generate map datasets (one-time, ~30s)
-python scripts/generate_dataset.py
 ```
 
 ## Quick start
 
+Play the env as a human:
 ```bash
-# Train PPO-RNN (default: 5M frames, 32 parallel envs, W&B logging)
-python scripts/train.py \
-  --env-config configs/env/cogniland.yaml \
-  --agent-config configs/agent/ppo_rnn.yaml
-
-# Smoke test (offline, fast)
-python scripts/train.py \
-  --env-config configs/env/cogniland.yaml \
-  --agent-config configs/agent/ppo_rnn.yaml \
-  --offline trainer.num_train_frames=20000
-
-# Switch agent
-python scripts/train.py \
-  --env-config configs/env/cogniland.yaml \
-  --agent-config configs/agent/dreamerv3.yaml
+python scripts/play_cogniland.py
 ```
 
-Any config value can be overridden from the command line using dotlist notation:
-
+Train PPO + GRU:
 ```bash
-python scripts/train.py \
-  --env-config configs/env/cogniland.yaml \
-  --agent-config configs/agent/ppo_rnn.yaml \
-  agent.lr=1e-4 agent.entropy_coef=0.05 seed=123
+python scripts/train_ppo_gru.py \
+  --total-timesteps 5_000_000 \
+  --num-envs 32 --num-steps 128 \
+  --env-size 64 --view-size 21 --tile-px 8 \
+  --device cuda --wandb-project cogniland-nav
 ```
 
-## Running experiments
-
-### K-seed benchmark (SLURM cluster)
-
+Train DreamerV3 (25M params default, ~paper hyperparameters):
 ```bash
-# Create sweep, submit 10 SLURM jobs (one per seed)
-./scripts/launch_sweep.sh configs/sweeps/ppo_rnn_seeds.yaml -n 10 -r 1
+python scripts/train_dreamer.py \
+  --model-size medium \
+  --view-size 21 --tile-px 8 \
+  --total-env-steps 1_000_000 \
+  --num-envs 4 --batch-size 16 --batch-length 64 \
+  --train-ratio 4 --compile \
+  --device cuda --wandb-project cogniland-nav
 ```
 
-### K-seed benchmark (local, multi-GPU)
+`--model-size small | medium | large | xlarge` selects 7M / 25M / 55M / 110M
+world-model presets. `--compile` turns on torch.compile of the RSSM step
+(~2x speedup, +20s compile time).
 
-```bash
-wandb sweep configs/sweeps/ppo_rnn_seeds.yaml
-python scripts/run_sweep.py <SWEEP_ID> --num-agents 5 --count 1 --gpus 0 1
-```
+## Environment summary
 
-### Hyperparameter search
+- **Map**: 32 / 64 / 96 / 128 grid sizes, biomes `random | lake | rocky | balanced`.
+- **Observation**: egocentric RGB crop (e.g. 21×21 tiles at tile_px=8 → 168×168).
+- **Actions**: `Dict(move=Discrete(5), build_scalar=Box(-1,1))`. Move is
+  up/down/left/right or build; build commits one item permanently —
+  `build_scalar ≥ 0` makes a raft, `< 0` a harness.
+- **Reward**: flat slack penalty + PBRS shaping over cost-to-go +
+  reach-target sparse bonus. See `src/cogniland/nav/skills.py`.
 
-```bash
-./scripts/launch_sweep.sh configs/sweeps/ppo_rnn_hpsearch.yaml -n 20 -r 5
-```
+## DreamerV3 implementation notes
 
-### Play as human
+`train_dreamer.py` is a self-contained PyTorch port that follows the
+paper recipe closely (Hafner et al. 2023):
 
-```bash
-python demo.py
-```
+* **TwoHotDist** heads for reward and value (bounded, symlog-spaced bins
+  — prevents the value-target spiral the old code suffered from).
+* **Slow critic** with EMA + cross-entropy regularizer.
+* **Percentile-EMA RetNorm** for actor advantage scaling.
+* **RMSNorm + SiLU** activations, **AGC(0.3)** gradient clipping,
+  **LaProp(eps=1e-20)** optimizer.
+* **Discrete action space** internally (4 moves + build-raft + build-harness)
+  to eliminate the unbounded `Normal.log_prob` path.
+* **KL-balanced** dyn/rep losses with `free_nats=1`, `beta_rep=0.1`.
+* Paper defaults: `gamma=0.997`, `lambda=0.95`, `entropy=3e-4`, `unimix=1%`.
 
-## How it works
-
-The framework has four layers. Each layer only talks to its immediate neighbors:
-
-```
-configs/           What to run (env params, agent hyperparams, sweep grids)
-    |
-Trainer            How to run (training loop, eval schedule, W&B logging)
-    |
-Agent              What to learn (network, optimizer, rollout collection, loss)
-    |
-Environment        What the world does (maps, terrain, HP drain, actions, obs)
-```
-
-**Environment** (`src/cogniland/envs/`) loads pre-generated 128x128 RGB maps and runs a batched game loop in numpy. Each step, the agent picks one of 8 actions (move, forage, craft). The env computes HP drain, foraging effects, and returns a 5-channel minimap observation (RGB + visibility mask + target indicator) with raycasted occlusion.
-
-**Agent** (`src/cogniland/agents/`) is a pure-function dataclass with `init`, `train`, and `evaluate` methods. The network runs in JAX; the env boundary converts numpy<->jax. An agent never imports wandb or knows about the training schedule.
-
-**Trainer** (`src/cogniland/trainer/`) orchestrates the loop: call `agent.train()` for N frames, periodically call `agent.evaluate()` on each task, log everything to W&B. It assigns tasks via `TaskSampler` and passes `task_ids` to the agent. The trainer never imports anything agent-specific.
-
-**Config** (`configs/`) uses OmegaConf with two YAML files merged at startup: `env` (experiment setup) + `agent` (hyperparameters). Agent config wins on conflicts. CLI dotlist and W&B sweep overrides apply on top.
-
-### Multi-task design
-
-The environment supports multiple tasks sharing the same world. Tasks differ only in reward function. Currently task 0 (reach target) is implemented; the framework is wired for 7 tasks.
-
-- The **Trainer** samples task assignments and passes `task_ids` to the agent
-- The **Agent** receives a task embedding (one-hot vector) concatenated to its features
-- **Evaluation** runs each task separately and logs per-task + aggregate metrics
-
-### Available agents
-
-| Agent | Config | Description |
-|-------|--------|-------------|
-| `ppo_rnn` | `configs/agent/ppo_rnn.yaml` | PPO with LSTM, CNN minimap encoder (JAX/Flax) |
-| `dreamerv3` | `configs/agent/dreamerv3.yaml` | DreamerV3 world model with RSSM (JAX) |
-| `storm` | `configs/agent/storm.yaml` | STORM world model with Transformer SSM (JAX) |
+Run `scripts/profile_dreamer.py` to see the wallclock breakdown — on an
+RTX 4090 with the medium model the env stepping is ~7% of an outer tick
+and the dominant costs are the WM backward (≈37%), the 64-step Python
+RSSM rollout (≈14%), and the decoder forward (≈12%).

@@ -3,6 +3,9 @@ outputs/
 wandb/
 checkpoints/
 trajectory_logs/
+imagine/
+rollouts/
+logs/
 
 # === Python ===
 
