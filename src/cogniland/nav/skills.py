@@ -69,9 +69,9 @@ BUILD_COST = SLACK_PENALTY
 COLLISION_PENALTY = 0.0   # already folded into the flat slack
 
 # ── Slip mechanic ─────────────────────────────────────────────────────────
-SLIP_PROB_DEFAULT = 0.70   # on water/rock without the matching item.
+SLIP_PROB_DEFAULT = 0.75   # on water/rock without the matching item.
                            # Lowered from 0.90 so that going *around* a
-                           # small lake/rocky patch (≈3.3× attempts/cell
+                           # small lake/rocky patch (4× attempts/cell
                            # without skill, was 10×) competes with
                            # committing to raft/harness — drives the
                            # policy to use no-skill when shape allows.

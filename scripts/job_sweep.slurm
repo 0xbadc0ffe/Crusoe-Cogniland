@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=cic_sweep
+#SBATCH --job-name=cogniland_sweep
 #SBATCH -D ./
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=fiwang@ethz.ch
