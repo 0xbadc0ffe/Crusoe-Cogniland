@@ -256,10 +256,13 @@ def _generate_one(
         mountain_thr = 0.40         # more rocky outcrops (was 0.55)
     else:
         bias_strength = 0.40
-        water_thr_high = 0.30
-        water_thr_sand_lo = 0.25
-        water_thr_sand_hi = 0.35
-        mountain_thr = 0.40
+        water_thr_high = 0.38      # slightly thinner lakes (was 0.30):
+                                   # raises the water threshold so each
+                                   # patch shrinks at the edges.
+        water_thr_sand_lo = 0.33   # sand band shifts with water.
+        water_thr_sand_hi = 0.38
+        mountain_thr = 0.48        # slightly thinner rocks (was 0.40):
+                                   # symmetric trim for rocky biome.
 
     bias_main = _diagonal_bias(
         size, (spawn_r, spawn_c), (target_r, target_c), sigma=size / 5.0
