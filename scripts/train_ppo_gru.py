@@ -635,9 +635,23 @@ def main():
             ret_rolling = float(np.mean(ep_returns_recent[-100:]))
             succ_mean = float(np.mean(ep_reached))
             succ_rolling = float(np.mean(ep_reached[-100:]))
+            # Path-efficiency ratio: `min_steps / num_steps` per episode,
+            # where `min_steps = 2 * env_size` is the worst-case Manhattan
+            # span across the map. 1.0 means the agent walked exactly that
+            # bound; > 1 means it took a shorter path (typical, since
+            # spawn/target sit in the corner zones, not opposite corners).
+            min_steps = 2 * args.env_size
+            min_over_steps = float(np.mean(
+                [min_steps / max(L, 1) for L in ep_lengths_recent]
+            ))
+            min_over_steps_rolling = float(np.mean(
+                [min_steps / max(L, 1) for L in ep_lengths_recent[-100:]]
+            ))
             log_payload.update({
                 "return/mean": ret_mean,
                 "return/rolling100": ret_rolling,
+                "return/min_over_steps": min_over_steps,
+                "return/min_over_steps_rolling100": min_over_steps_rolling,
                 "success/mean": succ_mean,
                 "success/rolling100": succ_rolling,
                 "rollout/episode_length": float(np.mean(ep_lengths_recent)),

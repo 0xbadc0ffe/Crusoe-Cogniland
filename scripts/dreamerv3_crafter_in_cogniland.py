@@ -408,10 +408,19 @@ def make_train(cfg, log_cb=None):
         skill_matrix = (
             completed_mask * map_oh[..., None] * skill_oh[..., None, :]
         ).sum(0)                                                              # (3, 3)
+        # Path-efficiency: 2 * map_size is the Manhattan span of the
+        # worst-case corner-to-corner path. Higher = the agent walked
+        # less than that bound (typical), 1.0 = exactly that bound,
+        # < 1 = it wandered.
+        min_steps = jnp.float32(2 * cfg["map_size"])
+        per_ep_ratio = min_steps / jnp.maximum(
+            info["returned_episode_lengths"].astype(jnp.float32), 1.0,
+        )
         metrics = {
             "rollout/reward_step_mean": reward_next.mean(),
             "rollout/done_frac": done_next.mean(),
             "return/mean": (info["returned_episode_returns"] * completed).sum() / n_completed,
+            "return/min_over_steps": (per_ep_ratio * completed).sum() / n_completed,
             "rollout/returned_episode_count": completed.sum(),
             "success/mean": success_episodes.sum() / n_completed,
             "rollout/episode_length": (info["returned_episode_lengths"] * completed).sum() / n_completed,

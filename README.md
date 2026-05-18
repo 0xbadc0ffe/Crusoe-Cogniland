@@ -234,6 +234,7 @@ default W&B workspace key off these metric names:
 | `success/rolling100`         | Rolling success rate over 100 eps    |
 | `return/mean`                | Mean episode return                  |
 | `return/rolling100`          | Rolling mean over 100 episodes       |
+| `return/min_over_steps`      | Path efficiency: mean of `2·map_size / length` per episode. 1.0 = the corner-to-corner Manhattan bound, > 1 = the agent's path was shorter than that bound (typical). |
 | `rollout/episode_length`     | Mean episode length                  |
 | `skill_usage/<biome>/<skill>`| Per-cell scalar of the 3×3 matrix    |
 | `skill_usage/matrix`         | 3×3 heatmap image (this log interval)|
