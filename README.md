@@ -88,10 +88,51 @@ PPO logs `size=X.YM` tag automatically based on its actual param count.
 ```bash
 python scripts/viz_dreamer_trajectory.py \
   --checkpoint runs/<run_id>/checkpoints/step_1000000 \
-  --maps-path data/crafter_in_cogniland/train_256.pkl \
+  --maps-path data/crafter_in_cogniland/train_64x64_n256.pkl \
   --n-episodes 8
 # → runs/<run_id>/viz/trajectories.png, trajectories.json
 ```
+
+### W&B sweeps (SLURM)
+
+Two sweep configs ship in `configs/sweeps/`:
+
+| Sweep | Axes | # runs |
+|---|---|---|
+| `ppo_gru_map_sizes.yaml`   | `env-size ∈ {32, 64, 96, 128}` × 3 seeds | 12 |
+| `dreamer_size_x_map.yaml` | `size ∈ {12M,25M,50M,100M}` × `map-size ∈ {32,64,96,128}` × 2 seeds | 32 |
+
+Cluster setup (do once):
+
+```bash
+# 1. Conda env on the cluster
+conda env create -f environment.yml -p $CONDA_ENV
+conda activate $CONDA_ENV
+pip install -e .
+
+# 2. Put your WANDB_API_KEY in $PROJECT_DIR/.env (one line: WANDB_API_KEY=...)
+
+# 3. Pre-generate map datasets for all sizes so agents don't race
+python scripts/generate_maps.py --sizes 32 64 96 128
+
+# 4. EDIT cluster-specific paths in scripts/job_sweep.slurm:
+#    PROJECT_DIR, CONDA_ENV, --mail-user, --exclude
+```
+
+Launching:
+
+```bash
+# Submit the sweeps (each call creates a wandb sweep + a SLURM array)
+./scripts/launch_sweep.sh configs/sweeps/ppo_gru_map_sizes.yaml
+./scripts/launch_sweep.sh configs/sweeps/dreamer_size_x_map.yaml
+
+# Override SLURM resources / parallelism:
+./scripts/launch_sweep.sh configs/sweeps/dreamer_size_x_map.yaml \
+  -n 16 -r 2 -t 12:00:00 -m 48G
+```
+
+Each run carries `algo=<…>`, `size=<…>`, `map=<…>` tags so the W&B
+workspace can filter and group the cross-condition charts.
 
 `viz_dreamer_trajectory.load_frozen(...)` returns the encoder, RSSM,
 decoder, actor, and critic *as apply-fns over a single params pytree*,

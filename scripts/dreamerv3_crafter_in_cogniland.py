@@ -174,9 +174,24 @@ class TrainOutput(NamedTuple):
     metrics: dict
 
 
+def _resolve_maps_path(cfg) -> Path:
+    """Default maps_path tracks map_size so a sweep over `--map-size`
+    doesn't reuse one stale dataset for every cell.
+
+    If `cfg['maps_path']` is None, we pick
+    ``data/crafter_in_cogniland/train_<map_size>x<map_size>_n<N>.pkl``.
+    """
+    if cfg.get("maps_path"):
+        return Path(cfg["maps_path"])
+    return Path(
+        f"data/crafter_in_cogniland/"
+        f"train_{cfg['map_size']}x{cfg['map_size']}_n{cfg['num_train_maps']}.pkl"
+    )
+
+
 def _make_env_params(cfg) -> EnvParams:
     """Load (or generate) the map dataset and wrap as EnvParams."""
-    maps_path = Path(cfg["maps_path"])
+    maps_path = _resolve_maps_path(cfg)
     if not maps_path.exists():
         print(f"[setup] generating {cfg['num_train_maps']} maps → {maps_path}", flush=True)
         arrays = generate_map_dataset(
@@ -651,7 +666,7 @@ def _default_cfg() -> dict:
     return {
         # env
         "env_id": "crafter_in_cogniland",
-        "maps_path": "data/crafter_in_cogniland/train_256.pkl",
+        "maps_path": None,           # resolved from map_size when missing
         "num_train_maps": 256,
         "map_size": 64,
         "view_size": 21,
@@ -766,7 +781,12 @@ def main():
             name=run_id,
             mode=cfg["wandb_mode"],
             config=cfg,
-            tags=[f"size={args.size}", "algo=dreamerv3", f"env={cfg['env_id']}"],
+            tags=[
+                f"size={args.size}",
+                f"map={cfg['map_size']}",
+                "algo=dreamerv3",
+                f"env={cfg['env_id']}",
+            ],
             settings=wandb.Settings(_disable_stats=True),
         )
 

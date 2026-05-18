@@ -354,7 +354,11 @@ def main():
         config=vars(args),
         mode=args.wandb_mode,
         save_code=True,
-        tags=["algo=ppo_gru", "env=cogniland_nav"],
+        tags=[
+            "algo=ppo_gru",
+            f"map={args.env_size}",
+            "env=cogniland_nav",
+        ],
     )
     device = torch.device(args.device)
     print(f"device={device}  run_name={run_name}")
