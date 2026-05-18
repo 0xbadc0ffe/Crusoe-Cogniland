@@ -329,7 +329,7 @@ def main():
     # infra
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--wandb-project", default="cogniland-nav")
+    parser.add_argument("--wandb-project", default="crafter_in_cogniland")
     parser.add_argument("--wandb-mode", default="online",
                         choices=("online", "offline", "disabled"))
     parser.add_argument("--run-name", default=None)
@@ -343,12 +343,18 @@ def main():
     run_name = args.run_name or (
         f"ppo_gru_size{args.env_size}_seed{args.seed}_{int(time.time())}"
     )
+    # tags are populated in the same key=value style as
+    # scripts/dreamerv3_crafter_in_cogniland.py so the cross-algo W&B
+    # workspace can filter them by "algo=" and "size=" identically.
+    # Size is populated after the policy is constructed (param count
+    # depends on env shape) and pushed through wandb.run.tags.
     wandb.init(
         project=args.wandb_project,
         name=run_name,
         config=vars(args),
         mode=args.wandb_mode,
         save_code=True,
+        tags=["algo=ppo_gru", "env=cogniland_nav"],
     )
     device = torch.device(args.device)
     print(f"device={device}  run_name={run_name}")
@@ -376,6 +382,10 @@ def main():
     n_params = sum(p.numel() for p in policy.parameters())
     print(f"policy params: {n_params:,}")
     wandb.config.update({"n_params": n_params}, allow_val_change=True)
+    # add a size tag once we know the param count (e.g. "size=1.4M")
+    if wandb.run is not None:
+        size_str = f"size={n_params / 1e6:.1f}M"
+        wandb.run.tags = list(wandb.run.tags or []) + [size_str]
 
     args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
@@ -573,32 +583,45 @@ def main():
                 break
 
         # -------- log ----------------------------------------------------
+        # Shared schema with scripts/dreamerv3_crafter_in_cogniland.py:
+        #   return/mean        — mean episode return
+        #   return/rolling100  — same, rolling over last 100 finished episodes
+        #   success/mean       — mean reach rate this iteration
+        #   success/rolling100 — rolling success rate
+        # These are the only keys the cross-algo W&B workspace plots,
+        # so keep them stable.
         sps = global_step / (time.time() - start_time)
         log_payload = {
-            "train/policy_loss": float(np.mean(pg_losses)),
-            "train/value_loss": float(np.mean(v_losses)),
-            "train/entropy": float(np.mean(ent_losses)),
+            "loss/policy": float(np.mean(pg_losses)),
+            "loss/value": float(np.mean(v_losses)),
+            "loss/entropy": float(np.mean(ent_losses)),
+            "loss/belief": float(np.mean(belief_losses)),
             "train/approx_kl": float(np.mean(kls)),
             "train/clipfrac": float(np.mean(clipfracs)),
             "train/lr": optimizer.param_groups[0]["lr"],
-            "train/belief_loss": float(np.mean(belief_losses)),
             "train/belief_mae": float(np.mean(belief_maes)),
             "train/iteration": iteration,
-            "train/sps": sps,
+            "perf/fps": sps,
             "train/early_stop": int(early_stop),
         }
         if ep_returns_recent:
+            ret_mean = float(np.mean(ep_returns_recent))
+            ret_rolling = float(np.mean(ep_returns_recent[-100:]))
+            succ_mean = float(np.mean(ep_reached))
+            succ_rolling = float(np.mean(ep_reached[-100:]))
             log_payload.update({
-                "charts/episode_return_mean": float(np.mean(ep_returns_recent)),
-                "charts/episode_length_mean": float(np.mean(ep_lengths_recent)),
-                "charts/reach_rate": float(np.mean(ep_reached)),
-                "charts/built_none_frac": (
+                "return/mean": ret_mean,
+                "return/rolling100": ret_rolling,
+                "success/mean": succ_mean,
+                "success/rolling100": succ_rolling,
+                "rollout/episode_length": float(np.mean(ep_lengths_recent)),
+                "rollout/built_none_frac": (
                     float(np.mean(none_obj)) if none_obj else 0.0
                 ),
-                "charts/built_wrong_frac": (
+                "rollout/built_wrong_frac": (
                     float(np.mean(wrong_obj)) if wrong_obj else 0.0
                 ),
-                "charts/built_correct_frac": (
+                "rollout/built_correct_frac": (
                     (sum(len(v) for v in match_obj.values()) /
                      max(1, len(ep_returns_recent)))
                 ),

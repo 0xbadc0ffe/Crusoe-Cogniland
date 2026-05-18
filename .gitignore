@@ -222,3 +222,5 @@ logs/
 sweep_artifacts/.claude/worktrees/
 data/maps/*.pt
 data/maps_classic/*.pt
+runs/
+data/crafter_in_cogniland/

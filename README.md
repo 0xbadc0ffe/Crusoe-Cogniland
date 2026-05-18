@@ -1,35 +1,47 @@
-# Cogniland Nav
+# crafter_in_cogniland
 
-A small, fast 2-D navigation environment with a one-shot build commitment
-(raft vs harness) — designed to study partially observable RL agents on a
-procedurally generated grid world. PyTorch-only, baselines include
-**PPO + GRU** and **DreamerV3**.
+A small, fast 2-D POMDP navigation environment with a one-shot
+**build commitment** (raft vs harness), shipped with two solid baselines:
 
-The agent always sees an *egocentric* RGB crop. It must reach a target
-while choosing which build item to commit to — raft makes water easy,
-harness makes rock easy, and neither helps on balanced maps. The build
-decision is permanent.
+* **DreamerV3 (JAX)** — `scripts/dreamerv3_crafter_in_cogniland.py`,
+  built on the in-tree `purejaxwm/` algorithm library.
+* **PPO + GRU (PyTorch)** — `scripts/train_ppo_gru.py`,
+  uses the gymnasium PyTorch env in `src/cogniland/nav/`.
+
+Both trainers log the *same* metric names (`success/mean`,
+`success/rolling100`, `return/mean`, `return/rolling100`, …) into a
+single W&B project (`crafter_in_cogniland` by default) so PPO and
+Dreamer runs sit on the same chart side by side.
 
 ## Layout
 
 ```
 src/cogniland/
-  nav/                         The environment
-    nav_env.py                 CognilandNavEnv (gymnasium)
-    mapgen.py                  procedural map generation
-    renderer.py                pygame / numpy sprite renderer
-    skills.py                  reward shaping + walkability + slip
-    tiles.py                   tile id constants
-    wrappers.py                TorchTensorWrapper (optional)
-  nav_dreamer_video.py         imagination-video helper for Dreamer
-  assets/sprites/              Crafter sprites used by the renderer
+  crafter_in_cogniland/         JAX env (Gymnax-style) — for Dreamer
+    constants.py                tile / action / object ids
+    state.py                    EnvState + EnvParams pytrees
+    dynamics.py                 step logic (pure JAX)
+    render.py                   tile-id minimap + scalars
+    env.py                      CrafterInCognilandEnv class
+    maps.py                     numpy mapgen helper (uses cogniland.nav)
+  nav/                          PyTorch env — for PPO + the demo
+  assets/sprites/               Crafter sprites (used by nav renderer)
+
+purejaxwm/                      DreamerV3 algorithm library (in-tree)
+  dreamerv3/                    RSSM, TwoHotDist, LaProp, RetNorm, …
+  commons/                      Gymnax wrappers, dtype helpers
 
 scripts/
-  train_dreamer.py             DreamerV3 trainer (paper hyperparameters)
-  train_ppo_gru.py             PPO + GRU trainer
-  play_cogniland.py            Playable pygame demo
-  play_ppo_gru.py              Evaluate / visualize a trained PPO policy
-  profile_dreamer.py           Per-component wallclock profiler
+  dreamerv3_crafter_in_cogniland.py    Train Dreamer (JAX)
+  viz_dreamer_trajectory.py            Roll out a frozen Dreamer checkpoint
+                                       and plot trajectories
+  train_ppo_gru.py                     Train PPO + GRU (PyTorch)
+  play_ppo_gru.py                      Visualise a trained PPO policy
+  play_cogniland.py                    Playable pygame demo
+
+tests/
+  test_nav_env.py + test_nav_mapgen.py  PyTorch nav env contract
+  purejaxwm/                            Algorithm library tests
 ```
 
 ## Setup
@@ -42,62 +54,87 @@ pip install -e .
 
 ## Quick start
 
-Play the env as a human:
+### DreamerV3
+
 ```bash
-python scripts/play_cogniland.py
+# Smoke test
+python scripts/dreamerv3_crafter_in_cogniland.py \
+  --size 12M --total-env-steps 50000 --num-envs 16 --train-ratio 16 \
+  --map-size 32 --view-size 11 --wandb-mode disabled
+
+# Real run (25M default, ~1M env-steps, ~30 min on RTX 4090)
+python scripts/dreamerv3_crafter_in_cogniland.py \
+  --size 25M --total-env-steps 1_000_000 \
+  --num-envs 32 --train-ratio 64 --wandb-mode online
 ```
 
-Train PPO + GRU:
+Size presets follow DreamerV3 paper Table 3:
+`12M | 25M | 50M | 100M | 200M | 400M`. The `size=...` value is added
+as a W&B tag automatically.
+
+### PPO + GRU
+
 ```bash
 python scripts/train_ppo_gru.py \
-  --total-timesteps 5_000_000 \
-  --num-envs 32 --num-steps 128 \
+  --total-timesteps 5_000_000 --num-envs 32 --num-steps 128 \
   --env-size 64 --view-size 21 --tile-px 8 \
-  --device cuda --wandb-project cogniland-nav
+  --device cuda --wandb-project crafter_in_cogniland
 ```
 
-Train DreamerV3 (25M params default, ~paper hyperparameters):
+PPO logs `size=X.YM` tag automatically based on its actual param count.
+
+### Inspect a trained Dreamer
+
 ```bash
-python scripts/train_dreamer.py \
-  --model-size medium \
-  --view-size 21 --tile-px 8 \
-  --total-env-steps 1_000_000 \
-  --num-envs 4 --batch-size 16 --batch-length 64 \
-  --train-ratio 4 --compile \
-  --device cuda --wandb-project cogniland-nav
+python scripts/viz_dreamer_trajectory.py \
+  --checkpoint runs/<run_id>/checkpoints/step_1000000 \
+  --maps-path data/crafter_in_cogniland/train_256.pkl \
+  --n-episodes 8
+# → runs/<run_id>/viz/trajectories.png, trajectories.json
 ```
 
-`--model-size small | medium | large | xlarge` selects 7M / 25M / 55M / 110M
-world-model presets. `--compile` turns on torch.compile of the RSSM step
-(~2x speedup, +20s compile time).
+`viz_dreamer_trajectory.load_frozen(...)` returns the encoder, RSSM,
+decoder, actor, and critic *as apply-fns over a single params pytree*,
+which is the intended entry point for mech-interp probes (residual
+streams, activations, etc.).
 
 ## Environment summary
 
-- **Map**: 32 / 64 / 96 / 128 grid sizes, biomes `random | lake | rocky | balanced`.
-- **Observation**: egocentric RGB crop (e.g. 21×21 tiles at tile_px=8 → 168×168).
-- **Actions**: `Dict(move=Discrete(5), build_scalar=Box(-1,1))`. Move is
-  up/down/left/right or build; build commits one item permanently —
-  `build_scalar ≥ 0` makes a raft, `< 0` a harness.
-- **Reward**: flat slack penalty + PBRS shaping over cost-to-go +
-  reach-target sparse bonus. See `src/cogniland/nav/skills.py`.
+- **Map**: pre-generated procedurally (numpy + simplex noise + Dijkstra
+  validation). 64×64 default. 3 biomes: `balanced` / `lake` / `rocky`.
+- **Action space**: `Discrete(6)` — up / down / left / right /
+  build_raft / build_harness. Build is committed once per episode.
+- **Observation (JAX env)**: `{minimap: (V,V) int8, scalars: (5,) float32}`
+  where the scalars are
+  `[compass_r, compass_c, active_obj/2, build_active, step/max]`.
+  Egocentric crop, OOB padded with `OOB=6`.
+- **Reward** (mirrors `cogniland.nav.skills`):
+  `-0.005` slack per step
+  `+ 0.01 · (ctg_prev - ctg_curr)` PBRS shaping
+  `+ 1.0` on stepping into the target tile.
+- **Slip**: water/rock slip with prob 0.9 unless you carry the matching
+  item; trees always slip 0.9; land slips 0.15 with any item carried.
 
-## DreamerV3 implementation notes
+## Shared W&B logging schema
 
-`train_dreamer.py` is a self-contained PyTorch port that follows the
-paper recipe closely (Hafner et al. 2023):
+Both trainers log into the same project. The cross-algo charts in the
+default W&B workspace key off these metric names:
 
-* **TwoHotDist** heads for reward and value (bounded, symlog-spaced bins
-  — prevents the value-target spiral the old code suffered from).
-* **Slow critic** with EMA + cross-entropy regularizer.
-* **Percentile-EMA RetNorm** for actor advantage scaling.
-* **RMSNorm + SiLU** activations, **AGC(0.3)** gradient clipping,
-  **LaProp(eps=1e-20)** optimizer.
-* **Discrete action space** internally (4 moves + build-raft + build-harness)
-  to eliminate the unbounded `Normal.log_prob` path.
-* **KL-balanced** dyn/rep losses with `free_nats=1`, `beta_rep=0.1`.
-* Paper defaults: `gamma=0.997`, `lambda=0.95`, `entropy=3e-4`, `unimix=1%`.
+| Key                  | Meaning                                  |
+|----------------------|------------------------------------------|
+| `success/mean`       | Mean reach-rate (this log interval)      |
+| `success/rolling100` | Rolling success rate over 100 episodes   |
+| `return/mean`        | Mean episode return                      |
+| `return/rolling100`  | Rolling mean over 100 episodes           |
+| `rollout/episode_length` | Mean episode length                  |
+| `perf/fps`           | Wallclock throughput                     |
 
-Run `scripts/profile_dreamer.py` to see the wallclock breakdown — on an
-RTX 4090 with the medium model the env stepping is ~7% of an outer tick
-and the dominant costs are the WM backward (≈37%), the 64-step Python
-RSSM rollout (≈14%), and the decoder forward (≈12%).
+Tags always include `algo=<dreamerv3|ppo_gru>` and `size=<X.YM>`.
+
+## Goals
+
+- **>80% success** on Dreamer (medium model, 1–3M env steps).
+- **Frozen checkpoints** that load deterministically for analysis
+  (`viz_dreamer_trajectory.load_frozen`).
+- **Trajectory + imagination plots** out of the box.
+- **One W&B workspace** comparing PPO and Dreamer on shared metrics.
