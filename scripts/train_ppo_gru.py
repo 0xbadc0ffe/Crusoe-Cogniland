@@ -652,7 +652,7 @@ def main():
                      max(1, len(ep_returns_recent)))
                 ),
             })
-            # ── Per-iteration skill-usage matrix ──
+            # ── Per-iteration skill-usage matrix (3x3 heatmap) ──
             # Row-normalise the count matrix so each row sums to 1 (or
             # zero if no episodes finished on that map type this iter).
             sm = iter_skill_counts.astype(np.float64)
@@ -662,16 +662,35 @@ def main():
                 out=np.zeros_like(sm), where=row_sums > 0,
             )
             norm_disp = norm[np.ix_(_ROW_PERM, _COL_PERM)]
+            row_counts = row_sums.flatten()[list(_ROW_PERM)]
+            # Per-cell scalars for line charts over time
             for i, row_lbl in enumerate(_ROW_LABELS):
                 for j, col_lbl in enumerate(_COL_LABELS):
                     log_payload[f"skill_usage/{row_lbl}/{col_lbl}"] = float(norm_disp[i, j])
+            # 3x3 heatmap image — wandb shows this directly in the panel
             try:
-                table = wandb.Table(columns=["map_type"] + list(_COL_LABELS))
-                for i, row_lbl in enumerate(_ROW_LABELS):
-                    table.add_data(
-                        row_lbl, *[float(norm_disp[i, j]) for j in range(3)]
-                    )
-                log_payload["skill_usage/table"] = table
+                import matplotlib.pyplot as plt
+                fig, ax = plt.subplots(figsize=(4.0, 3.6))
+                im = ax.imshow(norm_disp, cmap="viridis", vmin=0.0, vmax=1.0)
+                for i in range(3):
+                    for j in range(3):
+                        v = float(norm_disp[i, j])
+                        ax.text(j, i, f"{v:.2f}", ha="center", va="center",
+                                color="white" if v < 0.5 else "black",
+                                fontsize=11, fontweight="bold")
+                ax.set_xticks(range(3))
+                ax.set_yticks(range(3))
+                ax.set_xticklabels(_COL_LABELS, fontsize=10)
+                ax.set_yticklabels(
+                    [f"{lbl}\n(n={int(row_counts[i])})"
+                     for i, lbl in enumerate(_ROW_LABELS)], fontsize=10)
+                ax.set_xlabel("skill built", fontsize=10)
+                ax.set_ylabel("map type", fontsize=10)
+                ax.set_title(f"skill usage  ·  iter {iteration}", fontsize=11)
+                fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                fig.tight_layout()
+                log_payload["skill_usage/matrix"] = wandb.Image(fig)
+                plt.close(fig)
             except Exception:
                 pass
         wandb.log(log_payload, step=global_step)

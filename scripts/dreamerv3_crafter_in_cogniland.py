@@ -4,8 +4,11 @@ Mirrors ``purejaxwm/dreamerv3_cogniland.py`` 1:1; env-specific changes:
 
 * Env: ``cogniland.crafter_in_cogniland`` (a JAX port of
   ``cogniland.nav.CognilandNavEnv``).
-* Obs: dict ``{minimap: (V,V) int8, scalars: (5,) float32}`` →
-  flattened to ``(V*V + 5,)`` float32 vector through ``FlattenObsWrapper``.
+* Obs: dict ``{minimap: (V,V) int8, scalars: (4,) float32}`` →
+  flattened to ``(V*V + 4,)`` float32 vector through ``FlattenObsWrapper``.
+  Scalars are ``[compass_r, compass_c, build_active, step/max]`` —
+  note that *which* item the agent has built is intentionally not in
+  the obs; the agent has to remember it via the RSSM recurrent state.
 * Encoder/decoder: MLP (paper-aligned 4-block stack); the minimap is
   symbolic so a CNN would be wasted compute.
 * Score: ``score/success`` = success-rate (mean(reached) over recent
@@ -93,7 +96,7 @@ class FlattenObsWrapper(GymnaxWrapper):
     def __init__(self, env, view_size: int):
         super().__init__(env)
         self.view_size = view_size
-        self.flat_dim = view_size * view_size + 5
+        self.flat_dim = view_size * view_size + 4
 
     def _flatten(self, obs: dict) -> jax.Array:
         mm = obs["minimap"].astype(jnp.float32) / float(C.NUM_TERRAIN_TILES)
@@ -209,7 +212,7 @@ def _make_env_params(cfg) -> EnvParams:
 
 def make_train(cfg, log_cb=None):
     env_params = _make_env_params(cfg)
-    flat_dim = cfg["view_size"] * cfg["view_size"] + 5
+    flat_dim = cfg["view_size"] * cfg["view_size"] + 4
     base_env = CrafterInCognilandEnv(default_params=env_params)
     env = BatchEnvWrapper(
         AutoResetEnvWrapper(LogWrapper(FlattenObsWrapper(base_env, cfg["view_size"]))),
@@ -855,16 +858,35 @@ def main():
         )
         # apply display permutation
         norm_disp = norm[np.ix_(_ROW_PERM, _COL_PERM)]
-        # log every cell as a scalar so line charts work over time
+        row_counts = row_sums.flatten()[list(_ROW_PERM)]
+        # Per-cell scalars (line charts over time)
         for i, row_lbl in enumerate(_ROW_LABELS):
             for j, col_lbl in enumerate(_COL_LABELS):
                 payload[f"skill_usage/{row_lbl}/{col_lbl}"] = float(norm_disp[i, j])
-        # also log the matrix as a wandb.Table for the dashboard view
+        # 3x3 heatmap image so the wandb panel shows the matrix directly
         try:
-            table = wandb.Table(columns=["map_type"] + list(_COL_LABELS))
-            for i, row_lbl in enumerate(_ROW_LABELS):
-                table.add_data(row_lbl, *[float(norm_disp[i, j]) for j in range(3)])
-            payload["skill_usage/table"] = table
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots(figsize=(4.0, 3.6))
+            im = ax.imshow(norm_disp, cmap="viridis", vmin=0.0, vmax=1.0)
+            for i in range(3):
+                for j in range(3):
+                    v = float(norm_disp[i, j])
+                    ax.text(j, i, f"{v:.2f}", ha="center", va="center",
+                            color="white" if v < 0.5 else "black",
+                            fontsize=11, fontweight="bold")
+            ax.set_xticks(range(3))
+            ax.set_yticks(range(3))
+            ax.set_xticklabels(_COL_LABELS, fontsize=10)
+            ax.set_yticklabels(
+                [f"{lbl}\n(n={int(row_counts[i])})"
+                 for i, lbl in enumerate(_ROW_LABELS)], fontsize=10)
+            ax.set_xlabel("skill built", fontsize=10)
+            ax.set_ylabel("map type", fontsize=10)
+            ax.set_title(f"skill usage  ·  step {step}", fontsize=11)
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            fig.tight_layout()
+            payload["skill_usage/matrix"] = wandb.Image(fig)
+            plt.close(fig)
         except Exception:
             pass
 

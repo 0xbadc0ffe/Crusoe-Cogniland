@@ -47,12 +47,18 @@ def compass_unit_vector(state: EnvState, params: EnvParams) -> jax.Array:
 
 
 def scalars_obs(state: EnvState, params: EnvParams) -> jax.Array:
-    """(5,) float32 — [compass_r, compass_c, active_obj/2, build_active, step/max]."""
+    """(4,) float32 — [compass_r, compass_c, build_active, step/max].
+
+    NOTE: the *identity* of the active object is intentionally NOT
+    observable — only the binary ``build_active`` flag is. The agent
+    has to remember which item it committed to (raft vs harness) from
+    the build action it took, which is a partial-observability problem
+    that requires recurrent memory to solve.
+    """
     compass = compass_unit_vector(state, params)
-    obj_norm = state.active_object.astype(jnp.float32) / 2.0
     build_active = (state.active_object != C.OBJ_NONE).astype(jnp.float32)
     step_norm = state.step_count.astype(jnp.float32) / float(params.max_steps)
-    return jnp.concatenate([compass, jnp.stack([obj_norm, build_active, step_norm])])
+    return jnp.concatenate([compass, jnp.stack([build_active, step_norm])])
 
 
 def build_obs(state: EnvState, params: EnvParams) -> dict:
@@ -60,7 +66,7 @@ def build_obs(state: EnvState, params: EnvParams) -> dict:
 
     Keys:
         minimap : int8  (V, V)
-        scalars : float (5,)
+        scalars : float (4,)
     """
     return {
         "minimap": egocentric_minimap(state, params),

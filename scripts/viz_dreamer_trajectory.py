@@ -82,7 +82,7 @@ def load_frozen(ckpt_dir: Path, cfg: dict):
     ``critic``, ``params``. Apply-fns take ``(input,)`` only — params are
     closed over for ergonomic mech-interp inspection.
     """
-    flat_dim = cfg["view_size"] * cfg["view_size"] + 5
+    flat_dim = cfg["view_size"] * cfg["view_size"] + 4
     encoder = _Encoder(cfg["enc_hidden"], cfg["enc_layers"], cfg["wm_hidden"])
     decoder = _Decoder(cfg["enc_hidden"], cfg["enc_layers"], flat_dim)
     rssm = RSSM(

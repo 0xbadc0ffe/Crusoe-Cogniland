@@ -60,7 +60,7 @@ class CrafterInCognilandEnv(environment.Environment[EnvState, EnvParams]):
                 low=0, high=C.NUM_TERRAIN_TILES - 1,
                 shape=(V, V), dtype=jnp.int8,
             ),
-            "scalars": spaces.Box(low=-1.0, high=1.0, shape=(5,), dtype=jnp.float32),
+            "scalars": spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=jnp.float32),
         })
 
     def state_space(self, params: EnvParams) -> spaces.Dict:
