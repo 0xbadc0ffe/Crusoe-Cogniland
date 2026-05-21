@@ -1,0 +1,43 @@
+# Dreamer-V3 with REACH_BONUS=+1.0 re-enabled (see
+# crafter_in_cogniland/constants.py). 12M / 25M models on 64×64 maps.
+# Two runs — directly tests whether the missing terminal cliff explains
+# the oscillation-near-target behaviour observed in the previous sweep.
+#
+# Submit:
+#   ./scripts/launch_sweep.sh configs/sweeps/dreamer_reach_64.yaml
+
+program: scripts/dreamerv3_crafter_in_cogniland.py
+project: crafter_in_cogniland
+method: grid
+metric:
+  name: success/rolling100
+  goal: maximize
+
+parameters:
+  size:
+    values: ["12M", "25M"]
+  map-size:
+    value: 64
+  # Fixed training budget + infra (mirrors dreamer_size_x_map.yaml so
+  # the wandb workspace charts can compare apples-to-apples).
+  seed:
+    value: 0
+  total-env-steps:
+    value: 1_500_000
+  num-envs:
+    value: 32
+  train-ratio:
+    value: 64
+  view-size:
+    value: 21
+  wandb-project:
+    value: crafter_in_cogniland
+  wandb-mode:
+    value: online
+
+command:
+  - ${env}
+  - python
+  - -u
+  - ${program}
+  - ${args}

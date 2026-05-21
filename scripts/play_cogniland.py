@@ -11,7 +11,7 @@ Now a small state-machine app with a main menu:
 
 * **MAIN_MENU** — "Play as Human" (H) or "Play as AI" (A); Q/Esc to quit.
 * **PICK_WEIGHTS** — scrollable list of every ``.pt`` found under
-  ``checkpoints/`` and ``runs/``; arrows + Enter to pick, B/Esc back.
+  ``runs/``; arrows + Enter to pick, B/Esc back.
 * **PICK_MAP** — 4×3 grid of the 12 ``data/demo_maps/`` thumbnails;
   arrows + Enter to pick, B/Esc back to PICK_WEIGHTS.
 * **PLAYING_HUMAN** — the original demo, keys unchanged.
@@ -65,7 +65,7 @@ FACING_NAMES = {0: "up", 1: "down", 2: "left", 3: "right"}
 
 # Demo-maps dataset produced by ``scripts/generate_demo_maps.py``.
 DEMO_MAP_DIR = Path("data/demo_maps")
-CKPT_SEARCH_DIRS = (Path("checkpoints"), Path("runs"))
+CKPT_SEARCH_DIRS = (Path("runs"),)
 
 
 # ============================================================ helpers (shared)
@@ -301,7 +301,7 @@ def _draw_gameplay_frame(
 # ====================================================== filesystem discovery
 
 def _list_checkpoints() -> list[Path]:
-    """Find every ``.pt`` under ``checkpoints/`` and ``runs/`` (recursive)."""
+    """Find every ``.pt`` under ``runs/`` (recursive)."""
     out: list[Path] = []
     for d in CKPT_SEARCH_DIRS:
         if not d.exists():
@@ -371,7 +371,7 @@ def _draw_pick_weights(win, font, small_font, big_font,
     win.blit(sub, (40, 24 + title.get_height() + 6))
 
     if not ckpts:
-        msg = font.render("No .pt files found in checkpoints/ or runs/", True, (240, 120, 120))
+        msg = font.render("No .pt files found under runs/", True, (240, 120, 120))
         win.blit(msg, (40, 120))
         pygame.display.flip()
         return

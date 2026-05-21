@@ -10,7 +10,7 @@ and annotated with the chosen object.
 Usage
 -----
     python scripts/play_ppo_gru.py \\
-        --checkpoint checkpoints/<run_name>/final.pt \\
+        --checkpoint runs/<run_name>/checkpoints/final.pt \\
         --num-episodes 4 \\
         --out-dir rollouts/ppo_gru_main
 

@@ -40,14 +40,17 @@ OBJ_RAFT    = 1
 OBJ_HARNESS = 2
 NUM_OBJECTS = 3
 
-# ── reward constants (mirror skills.py) ───────────────────────────────
-# Reach bonus is OFF: with PBRS shaping providing the gradient toward
-# target and a non-trivial slack per step, the agent is pushed toward
-# the SHORTEST path. Without the +1 cliff at the target, returns keep
-# improving as the trajectory tightens, which is what we want.
+# ── reward constants ──────────────────────────────────────────────────
+# Reach bonus restored to give Dreamer's reward head a distinctive
+# terminal signal (without it, the target tile is indistinguishable
+# from any other ctg=0 cell in the reward stream — only the continue
+# head can mark termination, which under-trains on sparse target visits
+# and causes oscillation near goal). PPO doesn't need this since GAE
+# uses real terminations directly. NOTE: nav/skills.py (the PyTorch
+# env used by PPO + the play_cogniland demo) still has REACH_BONUS=0.
 SLACK_PENALTY = -0.02
 SHAPING_COEF = 0.01
-REACH_BONUS = 0.0
+REACH_BONUS = 1.0
 
 # ── slip mechanic (mirror skills.py) ──────────────────────────────────
 SLIP_PROB_DEFAULT = 0.75    # water/rock without the matching item; trees

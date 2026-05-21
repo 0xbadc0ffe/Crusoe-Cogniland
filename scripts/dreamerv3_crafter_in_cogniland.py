@@ -738,6 +738,12 @@ def _default_cfg() -> dict:
         "wandb_project": "crafter_in_cogniland",
         "wandb_mode": "online",
         "wandb_log_interval": 50,
+        # Skill-usage matrix logs less often than scalar metrics so each
+        # matrix snapshot accumulates enough finished episodes to be
+        # statistically meaningful (otherwise the matrix can show
+        # only 1 sample early in training). Reset happens at the same
+        # cadence.
+        "wandb_matrix_log_interval": 500,
     }
 
 
@@ -858,46 +864,51 @@ def main():
             if tot_n > 0:
                 payload["return/rolling100"] = wsum / tot_n
 
-        # Row-normalised skill-usage matrix (rows = map type, cols = skill).
-        # Each row sums to 1; rows with zero episodes show 0 across.
-        row_sums = _skill_matrix.sum(axis=1, keepdims=True)
-        norm = np.divide(
-            _skill_matrix, row_sums,
-            out=np.zeros_like(_skill_matrix), where=row_sums > 0,
-        )
-        # apply display permutation
-        norm_disp = norm[np.ix_(_ROW_PERM, _COL_PERM)]
-        row_counts = row_sums.flatten()[list(_ROW_PERM)]
-        # Per-cell scalars (line charts over time)
-        for i, row_lbl in enumerate(_ROW_LABELS):
-            for j, col_lbl in enumerate(_COL_LABELS):
-                payload[f"skill_usage/{row_lbl}/{col_lbl}"] = float(norm_disp[i, j])
-        # 3x3 heatmap image so the wandb panel shows the matrix directly
-        try:
-            import matplotlib.pyplot as plt
-            fig, ax = plt.subplots(figsize=(4.0, 3.6))
-            im = ax.imshow(norm_disp, cmap="viridis", vmin=0.0, vmax=1.0)
-            for i in range(3):
-                for j in range(3):
-                    v = float(norm_disp[i, j])
-                    ax.text(j, i, f"{v:.2f}", ha="center", va="center",
-                            color="white" if v < 0.5 else "black",
-                            fontsize=11, fontweight="bold")
-            ax.set_xticks(range(3))
-            ax.set_yticks(range(3))
-            ax.set_xticklabels(_COL_LABELS, fontsize=10)
-            ax.set_yticklabels(
-                [f"{lbl}\n(n={int(row_counts[i])})"
-                 for i, lbl in enumerate(_ROW_LABELS)], fontsize=10)
-            ax.set_xlabel("skill built", fontsize=10)
-            ax.set_ylabel("map type", fontsize=10)
-            ax.set_title(f"skill usage  ·  step {step}", fontsize=11)
-            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            fig.tight_layout()
-            payload["skill_usage/matrix"] = wandb.Image(fig)
-            plt.close(fig)
-        except Exception:
-            pass
+        # Skill-usage matrix fires on its own (coarser) cadence so each
+        # snapshot accumulates enough finished episodes to be meaningful.
+        if step % cfg["wandb_matrix_log_interval"] == 0:
+            # Row-normalised skill-usage matrix (rows = map type, cols = skill).
+            # Each row sums to 1; rows with zero episodes show 0 across.
+            row_sums = _skill_matrix.sum(axis=1, keepdims=True)
+            norm = np.divide(
+                _skill_matrix, row_sums,
+                out=np.zeros_like(_skill_matrix), where=row_sums > 0,
+            )
+            # apply display permutation
+            norm_disp = norm[np.ix_(_ROW_PERM, _COL_PERM)]
+            row_counts = row_sums.flatten()[list(_ROW_PERM)]
+            # Per-cell scalars (line charts over time)
+            for i, row_lbl in enumerate(_ROW_LABELS):
+                for j, col_lbl in enumerate(_COL_LABELS):
+                    payload[f"skill_usage/{row_lbl}/{col_lbl}"] = float(norm_disp[i, j])
+            # 3x3 heatmap image so the wandb panel shows the matrix directly
+            try:
+                import matplotlib.pyplot as plt
+                fig, ax = plt.subplots(figsize=(4.0, 3.6))
+                im = ax.imshow(norm_disp, cmap="viridis", vmin=0.0, vmax=1.0)
+                for i in range(3):
+                    for j in range(3):
+                        v = float(norm_disp[i, j])
+                        ax.text(j, i, f"{v:.2f}", ha="center", va="center",
+                                color="white" if v < 0.5 else "black",
+                                fontsize=11, fontweight="bold")
+                ax.set_xticks(range(3))
+                ax.set_yticks(range(3))
+                ax.set_xticklabels(_COL_LABELS, fontsize=10)
+                ax.set_yticklabels(
+                    [f"{lbl}\n(n={int(row_counts[i])})"
+                     for i, lbl in enumerate(_ROW_LABELS)], fontsize=10)
+                ax.set_xlabel("skill built", fontsize=10)
+                ax.set_ylabel("map type", fontsize=10)
+                ax.set_title(f"skill usage  ·  step {step}", fontsize=11)
+                fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                fig.tight_layout()
+                payload["skill_usage/matrix"] = wandb.Image(fig)
+                plt.close(fig)
+            except Exception:
+                pass
+            # reset only when the matrix is actually logged
+            _skill_matrix[...] = 0.0
 
         now = time.time()
         dt = now - _last["time"]
@@ -906,8 +917,6 @@ def main():
             payload["perf/fps"] = ds / dt
         _last["step"] = step; _last["time"] = now
         wandb.log(payload, step=step)
-        # reset the matrix so the next log shows only its interval's data
-        _skill_matrix[...] = 0.0
 
     live_cb = log_cb if wandb_active else None
     init_carry_fn, run_chunk_fn, chunk_updates = make_train(cfg, log_cb=live_cb)

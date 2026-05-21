@@ -62,6 +62,11 @@ def _ctg_for_object(
     params: EnvParams, state: EnvState, active_object: jax.Array
 ) -> jax.Array:
     """Return (H, W) ctg array for the agent's current map under ``active_object``."""
+    # TODO: ctg_none / ctg_raft / ctg_harness are currently byte-identical
+    # because nav.skills.unit_cost_grid ignores `obj`. Either collapse to a
+    # single ctg array (3× memory + dispatch saved), or switch shaping to
+    # expected_attempts_grid so Δctg actually rewards building the correct
+    # item (would address the always-harness bias).
     none = params.ctg_none[state.map_idx]
     raft = params.ctg_raft[state.map_idx]
     harn = params.ctg_harness[state.map_idx]

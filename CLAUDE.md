@@ -28,8 +28,10 @@ purejaxwm/                      DreamerV3 algorithm library (vendored)
 scripts/
   dreamerv3_crafter_in_cogniland.py  JAX Dreamer trainer
   viz_dreamer_trajectory.py          Roll out + visualise a frozen ckpt
+  plot_dreamer_on_demo_maps.py       Dreamer trajectories on the 12 demo maps
   train_ppo_gru.py                   PyTorch PPO trainer
   play_ppo_gru.py                    Visualise a trained PPO policy
+  plot_ppo_on_demo_maps.py           PPO trajectories on the 12 demo maps
   play_cogniland.py                  Playable pygame demo
 
 tests/
@@ -57,14 +59,43 @@ python scripts/dreamerv3_crafter_in_cogniland.py \
 python scripts/train_ppo_gru.py --total-timesteps 5_000_000 \
   --num-envs 32 --num-steps 128 --device cuda
 
-# Inspect a frozen Dreamer checkpoint
+# Inspect a frozen Dreamer checkpoint (random eval-set rollouts)
 python scripts/viz_dreamer_trajectory.py \
   --checkpoint runs/<run_id>/checkpoints/step_1000000 \
   --maps-path data/crafter_in_cogniland/train_256.pkl
 
+# Dreamer trajectories on the 12 demo maps (4 maps × 3 biomes grid)
+python scripts/plot_dreamer_on_demo_maps.py \
+  --checkpoint runs/<run_id>/checkpoints/step_1000000
+
+# PPO equivalent for cross-algo comparison
+python scripts/plot_ppo_on_demo_maps.py \
+  --checkpoint runs/<run_name>/checkpoints/final.pt
+
 # Play
 python scripts/play_cogniland.py
 ```
+
+## On-disk layout
+
+Both trainers write under a single ``runs/`` parent (per
+``OUTPUT_PROTOCOL.md``). Run-id slugs carry the algo prefix so the tree
+self-disambiguates:
+
+```
+runs/
+  dreamerv3_<env>_size<S>_seed<N>_<ts>/
+    config.json
+    checkpoints/step_<env_step>/    (orbax pytree, params only)
+    viz/                            (viz_dreamer_trajectory.py output)
+    viz_demo_maps/                  (plot_dreamer_on_demo_maps.py output)
+  ppo_gru_size<S>_seed<N>_<ts>/
+    checkpoints/{iter<N>.pt, final.pt}
+```
+
+``scripts/play_cogniland.py`` scans only ``runs/`` for ``.pt`` files in
+the AI-weights picker; the dreamer demo-map plotter still has no hookup
+in the pygame demo (PPO-only — see ``_play_ai`` in play_cogniland.py).
 
 ## Environment mechanics
 
