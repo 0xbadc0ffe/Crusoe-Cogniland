@@ -24,9 +24,20 @@ import pickle
 import sys
 from pathlib import Path
 
+# macOS: PyTorch (libomp/MKL) + SDL/OpenBLAS double-load segfaults. Pin threads
+# and allow the duplicate libomp BEFORE importing any native lib. Importing torch
+# here (in a controlled order, before pygame) makes libomp load once up front.
+for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+           "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import numpy as np
+try:
+    import torch
+    torch.set_num_threads(1)
+except Exception:
+    torch = None
 import pygame
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -271,9 +282,8 @@ def main():
     p.add_argument("--main-px", type=int, default=600, help="target pixel size of the main play view")
     args = p.parse_args()
 
-    import torch
     from train_ppo_zebra import PPOGRUPolicy
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if (torch is not None and torch.cuda.is_available()) else "cpu")
 
     pygame.init()
     W0, H0, PANEL = 920, 740, 300
@@ -310,7 +320,12 @@ def main():
         return ZebraNavEnv(max_steps=max_steps, **ekw)
 
     def build_map_grid(cfg):
-        S["recs"] = _map_set(cfg, 9)
+        # Natural maps need scipy/opensimplex to generate; reuse the curated
+        # validation set instead (no heavy imports, and it == the eval maps).
+        if cfg.get("orientation") == "natural" and _VAL_MAPS.exists():
+            S["recs"] = pickle.load(open(_VAL_MAPS, "rb"))["records"][:9]
+        else:
+            S["recs"] = _map_set(cfg, 9)
         S["thumbs"] = [_terrain_surface(r.terrain, 6) for r in S["recs"]] + [None]
         S["labels"] = [f"map {i}" for i in range(len(S["recs"]))] + ["random"]
         S["map"] = 0
