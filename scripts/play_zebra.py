@@ -320,11 +320,21 @@ def main():
         return ZebraNavEnv(max_steps=max_steps, **ekw)
 
     def build_map_grid(cfg):
-        # Natural maps need scipy/opensimplex to generate; reuse the curated
-        # validation set instead (no heavy imports, and it == the eval maps).
-        if cfg.get("orientation") == "natural" and _VAL_MAPS.exists():
-            S["recs"] = pickle.load(open(_VAL_MAPS, "rb"))["records"][:9]
+        # NATURAL maps are generated with opensimplex, which segfaults on some
+        # machines (macOS/arm) — so the demo NEVER generates them: it always
+        # uses the curated, pre-pickled validation set (== the eval maps).
+        # Diagonal/vertical are pure numpy, so they're generated on the fly.
+        S["natural"] = cfg.get("orientation") == "natural"
+        if S["natural"]:
+            if not _VAL_MAPS.exists():
+                raise SystemExit(
+                    "natural demo needs data/zebra_nav/val_maps.pkl — "
+                    "generate it once on a machine where opensimplex works: "
+                    "python scripts/make_zebra_val_maps.py")
+            S["val_pool"] = pickle.load(open(_VAL_MAPS, "rb"))["records"]
+            S["recs"] = S["val_pool"][:9]
         else:
+            S["val_pool"] = None
             S["recs"] = _map_set(cfg, 9)
         S["thumbs"] = [_terrain_surface(r.terrain, 6) for r in S["recs"]] + [None]
         S["labels"] = [f"map {i}" for i in range(len(S["recs"]))] + ["random"]
@@ -343,7 +353,13 @@ def main():
 
     def new_episode():
         env = S["env"]
-        env._fixed_record = S["recs"][S["map"]] if S["map"] < len(S["recs"]) else None
+        if S["map"] < len(S["recs"]):
+            env._fixed_record = S["recs"][S["map"]]
+        elif S.get("natural"):            # "random" on natural → a random val map (never generate)
+            pool = S.get("val_pool") or S["recs"]
+            env._fixed_record = pool[int(S["rng"].integers(len(pool)))]
+        else:                             # "random" on diagonal/vertical → fresh numpy map
+            env._fixed_record = None
         S["obs"], _ = env.reset()
         if S["policy"] is not None:
             S["hidden"] = torch.zeros(1, 1, S["policy"].gru_hidden, device=device)
