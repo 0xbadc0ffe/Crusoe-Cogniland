@@ -2,10 +2,12 @@
 permanent build choice.
 
 The agent always sees an RGB local crop centred on itself and a single
-binary scalar telling it whether *any* object has been built. The agent
-**does not see which object** was built — that secret is its own to
-remember. The build decision is committed once: subsequent build actions
-are noops but still incur the build cost.
+``skill_active`` scalar telling it **which** item is active:
+``0`` = none, ``1`` = harness, ``2`` = raft. The build choice is two
+discrete actions (``build_raft`` / ``build_harness``) and is committed
+once: subsequent build actions are noops but still incur the build cost.
+(The *map identity* — lake vs rocky — remains hidden; recognising it from
+the local crop is still the agent's burden.)
 """
 
 from __future__ import annotations
@@ -30,8 +32,14 @@ _MOVE_DELTAS = {
     3: (0, +1),   # right
 }
 _FACING_NAMES = {0: "up", 1: "down", 2: "left", 3: "right"}
-BUILD_ACTION = 4
-NUM_ACTIONS = 5  # up/down/left/right/build
+BUILD_RAFT = 4
+BUILD_HARNESS = 5
+NUM_ACTIONS = 6  # up/down/left/right/build_raft/build_harness
+
+# ``skill_active`` observation encoding: which item is currently active.
+# 0 = none, 1 = harness, 2 = raft (distinct from the internal object ids,
+# which are NONE=0, RAFT=1, HARNESS=2 in skills.py).
+_OBS_SKILL = {sk.NONE: 0.0, sk.HARNESS: 1.0, sk.RAFT: 2.0}
 
 
 class CognilandNavEnv(gym.Env):
@@ -57,6 +65,13 @@ class CognilandNavEnv(gym.Env):
         pygame window on first ``render()`` call.
     max_steps:
         Episode truncation length. Default is ``4 * size``.
+    generator:
+        Map generator(s) used by ``reset()`` when no fixed ``map_record`` is
+        given. ``"simplex"`` (default) is the legacy Crafter-style noise
+        terrain used for training; ``"composed"`` / ``"components"`` are the
+        structured generators. Pass a comma-separated string
+        (``"simplex,components"``) or a list/tuple to **mix** generators —
+        one is sampled uniformly per reset.
     """
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
@@ -73,6 +88,7 @@ class CognilandNavEnv(gym.Env):
         render_mode: str | None = None,
         max_steps: int | None = None,
         map_record: MapRecord | None = None,
+        generator: str | tuple[str, ...] | list[str] = "simplex",
     ) -> None:
         super().__init__()
         if view_size % 2 == 0 or view_size < 3:
@@ -84,6 +100,25 @@ class CognilandNavEnv(gym.Env):
         self.view_size = int(view_size)
         self.tile_px = int(tile_px)
         self.obs_mode = obs_mode
+        # Map generator(s) used by reset() when no fixed map_record is supplied.
+        # Default ``"simplex"`` is the legacy noise terrain. Pass a comma-
+        # separated string (``"simplex,components"``) or a list/tuple to mix
+        # multiple generators — one is sampled uniformly per reset, which is
+        # how we build augmented training distributions while keeping
+        # ``composed`` (or ``components``) as a held-out test set.
+        if isinstance(generator, str):
+            gens = tuple(g.strip() for g in generator.split(",") if g.strip())
+        else:
+            gens = tuple(generator)
+        if not gens:
+            raise ValueError("generator must be a non-empty string or sequence")
+        valid = {"simplex", "components", "composed"}
+        bad = [g for g in gens if g not in valid]
+        if bad:
+            raise ValueError(f"unknown generator(s): {bad}; valid={sorted(valid)}")
+        self.generators: tuple[str, ...] = gens
+        # legacy attribute (single label) — first entry for back-compat
+        self.generator = gens[0] if len(gens) == 1 else ",".join(gens)
         # Legacy: include_semantic=True forces semantic into the obs even in rgb mode
         if include_semantic is True and obs_mode == "rgb":
             self.obs_mode = "both"
@@ -96,16 +131,12 @@ class CognilandNavEnv(gym.Env):
         self._sprites: SpriteSheet | None = None  # lazy
         self._window = None  # pygame Surface (lazy)
 
-        self.action_space = spaces.Dict(
-            {
-                "move": spaces.Discrete(NUM_ACTIONS),
-                "build_scalar": spaces.Box(
-                    low=-1.0, high=1.0, shape=(1,), dtype=np.float32
-                ),
-            }
-        )
+        # Discrete(6): up/down/left/right + build_raft + build_harness. The
+        # build object is chosen by the action itself — no continuous scalar.
+        self.action_space = spaces.Discrete(NUM_ACTIONS)
         obs_dict: dict[str, spaces.Space] = {
-            "skill_active": spaces.Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32),
+            # which item is active: 0=none, 1=harness, 2=raft
+            "skill_active": spaces.Box(low=0.0, high=2.0, shape=(1,), dtype=np.float32),
         }
         if self.obs_mode in ("symbolic", "both"):
             obs_dict["semantic"] = spaces.Box(
@@ -122,7 +153,6 @@ class CognilandNavEnv(gym.Env):
         self._pos: tuple[int, int] = (0, 0)
         self._target: tuple[int, int] = (0, 0)
         self._active_object: int = sk.NONE
-        self._last_build_scalar: float = float("nan")
         self._step_count: int = 0
         self._episode_return: float = 0.0
         self._facing: int = 1  # down by default
@@ -138,10 +168,16 @@ class CognilandNavEnv(gym.Env):
             self._record = self._fixed_record
         else:
             map_seed = int(self._rng.integers(0, 2**31))
+            # sample one generator per reset (no-op if a single one is set)
+            gen = (
+                self.generators[0] if len(self.generators) == 1
+                else str(self._rng.choice(self.generators))
+            )
             self._record = generate_map(
                 size=self.size,
                 map_type=self.map_type,
                 seed=map_seed,
+                generator=gen,
             )
         rec = self._record
         # Fill ctg arrays if not already present (e.g. injected fixed_record).
@@ -149,7 +185,6 @@ class CognilandNavEnv(gym.Env):
         self._pos = (int(rec.spawn[0]), int(rec.spawn[1]))
         self._target = (int(rec.target[0]), int(rec.target[1]))
         self._active_object = sk.NONE
-        self._last_build_scalar = float("nan")
         self._step_count = 0
         self._episode_return = 0.0
         self._facing = 1
@@ -198,8 +233,6 @@ class CognilandNavEnv(gym.Env):
         rec = self._record
 
         move = self._extract_move(action)
-        build_scalar_arr = self._extract_build_scalar(action)
-        build_scalar = float(np.clip(build_scalar_arr[0], -1.0, 1.0))
 
         # Every action pays the flat slack penalty up-front.
         reward = float(sk.SLACK_PENALTY)
@@ -209,14 +242,13 @@ class CognilandNavEnv(gym.Env):
         slipped = False
         terminated = False
 
-        if move == BUILD_ACTION:
+        if move in (BUILD_RAFT, BUILD_HARNESS):
             # Build is a pure slack-only action — no shaping (unit-cost ctg
             # is identical across skills now that water/rock are universally
             # walkable). The benefit of the right skill shows up later via
-            # the slip mechanic.
+            # the slip mechanic. The action itself names the object.
             if self._active_object == sk.NONE:
-                self._active_object = sk.object_from_scalar(build_scalar)
-                self._last_build_scalar = build_scalar
+                self._active_object = sk.RAFT if move == BUILD_RAFT else sk.HARNESS
             else:
                 invalid_build = True
         elif move in _MOVE_DELTAS:
@@ -240,6 +272,8 @@ class CognilandNavEnv(gym.Env):
                         delta = self._delta_ctg(
                             self._ctg(self._active_object), old_pos, self._pos
                         )
+                        if sk.CLIP_NEG_SHAPING and delta < 0.0:
+                            delta = 0.0
                         reward += sk.SHAPING_COEF * delta
                         if tile == TARGET:
                             reward += sk.REACH_BONUS
@@ -312,24 +346,16 @@ class CognilandNavEnv(gym.Env):
     # -------------------------------------------------------------- helpers
 
     def _extract_move(self, action: Any) -> int:
-        if isinstance(action, dict):
+        if isinstance(action, dict):           # legacy {"move": ...} dict
             return int(action["move"])
-        if isinstance(action, (tuple, list)) and len(action) == 2:
+        if isinstance(action, (tuple, list)):
             return int(action[0])
-        return int(action)  # fall back: treat as raw move
-
-    def _extract_build_scalar(self, action: Any) -> np.ndarray:
-        if isinstance(action, dict):
-            return np.asarray(action.get("build_scalar", [0.0]), dtype=np.float32).reshape(-1)
-        if isinstance(action, (tuple, list)) and len(action) == 2:
-            return np.asarray(action[1], dtype=np.float32).reshape(-1)
-        return np.zeros((1,), dtype=np.float32)
+        return int(action)  # Discrete action: a raw int move
 
     def _make_obs(self) -> dict[str, np.ndarray]:
         assert self._record is not None
-        skill_active = np.array(
-            [1.0 if self._active_object != sk.NONE else 0.0], dtype=np.float32
-        )
+        # 0=none, 1=harness, 2=raft — tells the agent *which* item is active.
+        skill_active = np.array([_OBS_SKILL[self._active_object]], dtype=np.float32)
         obs: dict[str, np.ndarray] = {"skill_active": skill_active}
         if self.obs_mode in ("symbolic", "both"):
             obs["semantic"] = self._semantic_crop()
@@ -375,7 +401,6 @@ class CognilandNavEnv(gym.Env):
             "target": self._target,
             "active_object": sk.OBJECT_NAMES[self._active_object],
             "skill_active": 1 if self._active_object != sk.NONE else 0,
-            "last_build_scalar": self._last_build_scalar,
             "map_type": rec.map_type,
             "correct_object": sk.OBJECT_NAMES[rec.correct_object],
             "step": self._step_count,

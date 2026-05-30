@@ -1,33 +1,30 @@
 #!/usr/bin/env python3
 """PPO + GRU for the Cogniland navigation env, with W&B logging.
 
-Why not vanilla stable-baselines3?
----------------------------------
-The env has a *hybrid* action space:
+Action space + policy heads
+---------------------------
+The env action space is ``Discrete(6)``: up/down/left/right plus two
+terminal build actions, ``build_raft`` and ``build_harness``. The build
+object is chosen by the action itself (not a continuous scalar). This
+script implements the exact PPO algorithm SB3 uses (clipped surrogate
+objective, GAE, multi-epoch minibatch updates, value clipping skipped,
+advantage normalisation per minibatch) on a small custom GRU policy:
 
-    {"move": Discrete(5),  "build_scalar": Box(-1, 1, (1,))}
-
-SB3 (and `sb3_contrib.RecurrentPPO`) only accept `Discrete`,
-`MultiDiscrete`, `MultiBinary`, or `Box` action spaces — there is no clean
-way to drive a categorical move *and* a continuous tanh scalar from the
-same policy out of the box. This script implements the exact PPO algorithm
-SB3 uses (clipped surrogate objective, GAE, multi-epoch minibatch updates,
-value clipping skipped, advantage normalisation per minibatch) on top of a
-small custom policy with **both heads**:
-
-  CNN trunk → linear → GRU(128) → ┬─ Categorical over 5 moves
-                                  ├─ tanh-squashed Gaussian scalar (μ from
-                                  │   tanh(linear), shared learned log_std)
+  CNN trunk → linear → GRU(128) → ┬─ Categorical over 6 moves (actor)
+                                  ├─ belief head: tanh scalar in [-1, 1]
                                   └─ value head
 
-The build_scalar is sampled every step and stored, but the env only
-*consumes* it on build actions; the policy learns through policy gradient
-to bias positive (raft) on lake maps and negative (harness) on rocky
-maps, because the build action's downstream reward depends on the sign.
+The **belief** head is an auxiliary map-recognition probe: a tanh scalar
+read off the GRU hidden state and supervised by an MSE loss against the
+privileged map_type label (+1 lake, -1 rocky, 0 balanced). It is *not* an
+action and is never sent to the env — it only trains the recurrent state
+to encode which map the agent is on. The agent still has to commit to the
+right build via the categorical move head, learning it through the slip
+reward downstream.
 
 `obs["skill_active"]` is the only signal the agent gets that it has
-already built — exactly what you asked for: the observable flips from 0
-to 1 the moment the build action fires.
+already built — the observable flips from 0 to 1 the moment a build action
+fires.
 
 How to run on an RTX 4090
 -------------------------
@@ -62,7 +59,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.distributions import Categorical, Normal
+from torch.distributions import Categorical
 
 import wandb
 
@@ -98,14 +95,10 @@ class VecCognilandEnv:
         self.ep_lengths[:] = 0
         return self._stack(obses)
 
-    def step(self, moves: np.ndarray, scalars: np.ndarray):
+    def step(self, moves: np.ndarray):
         next_obs, rewards, dones, infos = [], [], [], []
         for i, env in enumerate(self.envs):
-            action = {
-                "move": int(moves[i]),
-                "build_scalar": np.array([float(scalars[i])], np.float32),
-            }
-            o, r, term, trunc, info = env.step(action)
+            o, r, term, trunc, info = env.step(int(moves[i]))
             done = bool(term or trunc)
             self.ep_returns[i] += r
             self.ep_lengths[i] += 1
@@ -151,8 +144,63 @@ def _layer_init(layer, std: float = np.sqrt(2), bias_const: float = 0.0):
     return layer
 
 
+class GRUMagnitudePruner:
+    """One-shot **magnitude pruning** of the GRU weight matrices.
+
+    This is the PyTorch equivalent of jaxpruner's ``MagnitudePruning``. We
+    prune only the two recurrent weight matrices ``weight_ih_l0`` (input→gate)
+    and ``weight_hh_l0`` (state→gate); biases are left dense.
+
+    *How it works.* At ``prune()`` we rank each weight by ``|w|`` and build a
+    binary mask that keeps the top ``(1 - sparsity)`` fraction (the largest-
+    magnitude weights — the ones contributing most to the activations) and
+    zeros the rest. The mask is then re-applied (``apply()``) after **every**
+    optimizer step for the remainder of training, so the pruned weights stay
+    at exactly zero while the surviving weights keep adapting. The masked
+    entries receive gradients but are immediately re-zeroed, so the GRU
+    "heals" around the sparse skeleton — that fine-tuning is what lets a 90%-
+    sparse GRU recover most of its dense performance.
+    """
+
+    def __init__(self, gru: nn.GRU, sparsity: float):
+        self.gru = gru
+        self.sparsity = float(sparsity)
+        self.param_names = ["weight_ih_l0", "weight_hh_l0"]
+        self.masks: dict[str, torch.Tensor] = {}
+        self.active = False
+
+    @torch.no_grad()
+    def prune(self) -> None:
+        for name in self.param_names:
+            w = getattr(self.gru, name)
+            flat = w.abs().flatten()
+            n_keep = int(round((1.0 - self.sparsity) * flat.numel()))
+            mask = torch.zeros_like(flat)
+            if n_keep > 0:
+                keep_idx = torch.topk(flat, n_keep, largest=True).indices
+                mask[keep_idx] = 1.0
+            self.masks[name] = mask.view_as(w)
+        self.active = True
+        self.apply()
+
+    @torch.no_grad()
+    def apply(self) -> None:
+        if not self.active:
+            return
+        for name, mask in self.masks.items():
+            getattr(self.gru, name).mul_(mask)
+
+    def sparsity_now(self) -> float:
+        total = zero = 0
+        for name in self.param_names:
+            w = getattr(self.gru, name)
+            total += w.numel()
+            zero += int((w == 0).sum().item())
+        return zero / max(total, 1)
+
+
 class PPOGRUPolicy(nn.Module):
-    """Tile-embed → CNN → MLP → GRU → (Categorical move, tanh-Gaussian scalar, value).
+    """Tile-embed → CNN → MLP → GRU → (Categorical move, belief scalar, value).
 
     Inputs come as a Dict with either ``semantic`` (int8 [view, view] tile
     ids, default) or ``image`` (uint8 [3, H, W] RGB). The symbolic path
@@ -206,13 +254,13 @@ class PPOGRUPolicy(nn.Module):
                 nn.init.constant_(p, 0.0)
 
         self.actor = _layer_init(nn.Linear(gru_hidden, num_move_actions), std=0.01)
-        # ``belief`` replaces the old (scalar_mean, scalar_log_std) Gaussian.
-        # It is a *deterministic* tanh-bounded estimate of which item the
-        # agent should build (+1 raft on lake, -1 harness on rocky, 0 on
-        # balanced) and is supervised by an MSE aux loss using the privileged
-        # map_type label. At inference the env reads only this scalar, so
-        # there's no information leak — the policy still has to infer the
-        # belief from the local observation.
+        # ``belief`` is an auxiliary map-recognition probe, NOT an action: a
+        # deterministic tanh-bounded estimate of which map the agent is on
+        # (+1 lake, -1 rocky, 0 balanced), supervised by an MSE aux loss using
+        # the privileged map_type label. It is never sent to the env — it only
+        # trains the GRU hidden state to encode the map identity. The build
+        # itself is committed via the categorical move head (build_raft /
+        # build_harness), learned through the slip reward downstream.
         self.belief_head = _layer_init(nn.Linear(gru_hidden, 1), std=0.01)
         self.critic = _layer_init(nn.Linear(gru_hidden, 1), std=1.0)
         self.gru_hidden = gru_hidden
@@ -298,6 +346,11 @@ def main():
     parser.add_argument("--env-size", type=int, default=64, choices=(32, 64, 96, 128))
     parser.add_argument("--map-type", default="random",
                         choices=("random", "lake", "rocky", "balanced"))
+    parser.add_argument("--generator", default="simplex",
+                        help="map generator(s) sampled per reset. One of "
+                             "{simplex,components,composed}, or a "
+                             "comma-separated mix (e.g. 'simplex,components') "
+                             "for an augmented training distribution.")
     parser.add_argument("--view-size", type=int, default=21)
     parser.add_argument("--tile-px", type=int, default=8,
                         help="render resolution per tile (only used in rgb mode)")
@@ -318,6 +371,21 @@ def main():
     parser.add_argument("--gae-lambda", type=float, default=0.95)
     parser.add_argument("--clip-coef", type=float, default=0.2)
     parser.add_argument("--ent-coef", type=float, default=0.01)
+    # reward-shaping overrides (applied to cogniland.nav.skills module globals,
+    # which the env reads dynamically) — exposed so a sweep can tune the reward.
+    parser.add_argument("--slack-penalty", type=float, default=None,
+                        help="flat per-step penalty (default: skills.SLACK_PENALTY)")
+    parser.add_argument("--shaping-coef", type=float, default=None,
+                        help="PBRS shaping coefficient (default: skills.SHAPING_COEF)")
+    parser.add_argument("--reach-bonus", type=float, default=None,
+                        help="terminal reach bonus (default: skills.REACH_BONUS)")
+    parser.add_argument("--grass-slip-noskill", type=float, default=None,
+                        help="grass slip prob while NO skill is committed "
+                             "(default: skills.SLIP_PROB_GRASS_NOSKILL = 0.0)")
+    parser.add_argument("--clip-neg-shaping", action="store_true",
+                        help="clip Δctg at 0 in PBRS shaping; backward steps "
+                             "pay only the flat slack, no asymmetric "
+                             "−SHAPING penalty.")
     parser.add_argument("--vf-coef", type=float, default=0.5)
     parser.add_argument("--belief-coef", type=float, default=0.5,
                         help="weight for the supervised belief MSE aux loss")
@@ -326,6 +394,12 @@ def main():
     # network
     parser.add_argument("--gru-hidden", type=int, default=128)
     parser.add_argument("--embed-dim", type=int, default=256)
+    # --- GRU weight pruning (magnitude, one-shot) -----------------------
+    parser.add_argument("--pruning-step", type=int, default=None,
+                        help="env-step at which to magnitude-prune the GRU "
+                             "weights to --sparsity. None = no pruning.")
+    parser.add_argument("--sparsity", type=float, default=0.9,
+                        help="target fraction of GRU weights set to zero")
     # infra
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -337,6 +411,19 @@ def main():
                         help="parent dir; each run writes into "
                              "<checkpoint-dir>/<run_name>/{iter<N>.pt,final.pt}")
     parser.add_argument("--save-every-iters", type=int, default=300)
+    parser.add_argument("--config", type=Path, default=None,
+                        help="YAML file of hyperparameters (arg names with "
+                             "underscores); explicit CLI flags still override it")
+    # Two-pass parse so a --config YAML sets defaults but CLI flags win.
+    args, _ = parser.parse_known_args()
+    if args.config is not None:
+        import yaml
+        with open(args.config) as f:
+            cfg = yaml.safe_load(f) or {}
+        unknown = set(cfg) - {a.dest for a in parser._actions}
+        if unknown:
+            raise SystemExit(f"--config {args.config}: unknown keys {sorted(unknown)}")
+        parser.set_defaults(**cfg)
     args = parser.parse_args()
 
     assert args.num_envs % args.num_minibatches == 0, \
@@ -365,6 +452,23 @@ def main():
     device = torch.device(args.device)
     print(f"device={device}  run_name={run_name}")
 
+    # Apply reward-shaping overrides to the skills module globals (the env reads
+    # them dynamically each step), so they take effect for every env instance.
+    from cogniland.nav import skills as _sk
+    if args.slack_penalty is not None:
+        _sk.SLACK_PENALTY = float(args.slack_penalty)
+    if args.shaping_coef is not None:
+        _sk.SHAPING_COEF = float(args.shaping_coef)
+    if args.reach_bonus is not None:
+        _sk.REACH_BONUS = float(args.reach_bonus)
+    if args.grass_slip_noskill is not None:
+        _sk.SLIP_PROB_GRASS_NOSKILL = float(args.grass_slip_noskill)
+    if args.clip_neg_shaping:
+        _sk.CLIP_NEG_SHAPING = True
+    print(f"reward: slack={_sk.SLACK_PENALTY} shaping={_sk.SHAPING_COEF} "
+          f"reach={_sk.REACH_BONUS}  grass_slip_noskill={_sk.SLIP_PROB_GRASS_NOSKILL}  "
+          f"clip_neg_shaping={_sk.CLIP_NEG_SHAPING}")
+
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
@@ -378,13 +482,20 @@ def main():
         obs_mode=args.obs_mode,
         max_steps=args.max_steps,
         seed=args.seed,
+        generator=args.generator,
     )
     policy = PPOGRUPolicy(
         vec.single_observation_space,
+        num_move_actions=vec.single_action_space.n,
         gru_hidden=args.gru_hidden,
         embed_dim=args.embed_dim,
     ).to(device)
     optimizer = optim.Adam(policy.parameters(), lr=args.learning_rate, eps=1e-5)
+    # GRU magnitude pruner (no-op unless --pruning-step is set). We keep our
+    # own masks rather than torch.nn.utils.prune so the optimizer's parameter
+    # references stay valid (prune reparametrises params into *_orig/*_mask).
+    pruner = (GRUMagnitudePruner(policy.gru, args.sparsity)
+              if args.pruning_step is not None else None)
     n_params = sum(p.numel() for p in policy.parameters())
     print(f"policy params: {n_params:,}")
     wandb.config.update({"n_params": n_params}, allow_val_change=True)
@@ -477,6 +588,11 @@ def main():
 
         for step in range(args.num_steps):
             global_step += args.num_envs
+            # One-shot GRU magnitude pruning once we cross --pruning-step.
+            if pruner is not None and not pruner.active and global_step >= args.pruning_step:
+                pruner.prune()
+                print(f"[prune] GRU magnitude-pruned to {pruner.sparsity_now():.1%} "
+                      f"sparsity at step {global_step}")
             for k in obs_buf:
                 obs_buf[k][step] = next_obs_t[k]
             dones_buf[step] = next_done
@@ -490,10 +606,10 @@ def main():
             logprobs_buf[step] = log_prob
             values_buf[step] = value
 
-            # env consumes the belief in [-1, 1] as build_scalar.
+            # build is a discrete move now (build_raft / build_harness); the
+            # belief is aux-only (map-recognition probe), never sent to the env.
             np_moves = action.cpu().numpy()
-            np_scalars = belief.detach().cpu().numpy()  # already in [-1, 1] via tanh
-            next_obs, reward, done, infos = vec.step(np_moves, np_scalars)
+            next_obs, reward, done, infos = vec.step(np_moves)
 
             rewards_buf[step] = torch.from_numpy(reward).to(device)
             next_obs_t = _to_device(next_obs, device)
@@ -600,6 +716,9 @@ def main():
                 loss.backward()
                 nn.utils.clip_grad_norm_(policy.parameters(), args.max_grad_norm)
                 optimizer.step()
+                # re-zero the pruned GRU weights after the optimizer update
+                if pruner is not None:
+                    pruner.apply()
 
                 pg_losses.append(pg_loss.item())
                 v_losses.append(v_loss.item())
@@ -635,6 +754,8 @@ def main():
             "perf/fps": sps,
             "train/early_stop": int(early_stop),
         }
+        if pruner is not None:
+            log_payload["prune/gru_sparsity"] = pruner.sparsity_now()
         if ep_returns_recent:
             ret_mean = float(np.mean(ep_returns_recent))
             ret_rolling = float(np.mean(ep_returns_recent[-100:]))

@@ -19,8 +19,9 @@ from cogniland.nav.tiles import GRASS, TARGET, WATER
 SIZES = (32, 64, 96, 128)
 
 
-def _action(move: int, scalar: float = 0.0):
-    return {"move": move, "build_scalar": np.array([scalar], np.float32)}
+def _action(move: int):
+    # Discrete action space: a raw int move. 4 = build_raft, 5 = build_harness.
+    return int(move)
 
 
 def _make_env(cached_map, size: int, map_type: str = "lake", **kwargs):
@@ -63,44 +64,47 @@ def test_both_obs_mode_returns_both(cached_map):
 def test_build_raft_then_persists(cached_map):
     env = _make_env(cached_map, 32, map_type="lake")
     env.reset()
-    obs, r, term, trunc, info = env.step(_action(4, +0.5))
-    assert obs["skill_active"][0] == 1.0
+    obs, r, term, trunc, info = env.step(_action(4))   # build_raft
+    assert obs["skill_active"][0] == 2.0               # 2 = raft
     assert info["active_object"] == "raft"
     # Build pays SLACK_PENALTY only (no shaping, unit-ctg unchanged).
     assert r == pytest.approx(sk.SLACK_PENALTY, abs=1e-6)
     obs, _, _, _, info = env.step(_action(0))
     assert info["active_object"] == "raft"
-    assert obs["skill_active"][0] == 1.0
+    assert obs["skill_active"][0] == 2.0
 
 
-def test_build_harness_with_negative_scalar(cached_map):
+def test_build_harness_action(cached_map):
     env = _make_env(cached_map, 32, map_type="rocky")
     env.reset()
-    obs, _, _, _, info = env.step(_action(4, -0.5))
+    obs, _, _, _, info = env.step(_action(5))          # build_harness
     assert info["active_object"] == "harness"
-    assert obs["skill_active"][0] == 1.0
+    assert obs["skill_active"][0] == 1.0               # 1 = harness
 
 
 def test_second_build_is_noop_with_penalty(cached_map):
     env = _make_env(cached_map, 32)
     env.reset()
-    _, r1, *_, info1 = env.step(_action(4, +0.9))
+    _, r1, *_, info1 = env.step(_action(4))            # build_raft
     assert info1["active_object"] == "raft"
-    _, r2, *_, info2 = env.step(_action(4, -0.9))
+    _, r2, *_, info2 = env.step(_action(5))            # build_harness → ignored
     assert info2["invalid_build"] is True
     assert info2["active_object"] == "raft"
     assert r2 == pytest.approx(sk.SLACK_PENALTY, abs=1e-6)
 
 
-def test_obs_hides_object_identity(cached_map):
+def test_skill_active_encodes_object_but_crop_does_not(cached_map):
+    # The crop (map) is identical regardless of what was built — only the
+    # skill_active scalar reveals the active item (1=harness, 2=raft).
     env_a = _make_env(cached_map, 32)
     env_b = _make_env(cached_map, 32)
     obs_a0, _ = env_a.reset()
     obs_b0, _ = env_b.reset()
     np.testing.assert_array_equal(obs_a0["semantic"], obs_b0["semantic"])
-    obs_a, *_ = env_a.step(_action(4, +0.7))
-    obs_b, *_ = env_b.step(_action(4, -0.7))
-    assert obs_a["skill_active"][0] == obs_b["skill_active"][0] == 1.0
+    obs_a, *_ = env_a.step(_action(4))                 # raft  → 2
+    obs_b, *_ = env_b.step(_action(5))                 # harness → 1
+    assert obs_a["skill_active"][0] == 2.0
+    assert obs_b["skill_active"][0] == 1.0
     np.testing.assert_array_equal(obs_a["semantic"], obs_b["semantic"])
 
 

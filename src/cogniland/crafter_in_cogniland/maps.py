@@ -34,8 +34,12 @@ def generate_map_dataset(
     size: int = 64,
     map_types: Iterable[Literal["balanced", "lake", "rocky"]] = ("balanced", "lake", "rocky"),
     seed: int = 0,
+    generator: str = "composed",
 ) -> dict:
     """Generate ``n_maps`` validated maps spread across ``map_types``.
+
+    ``generator`` selects the terrain recipe in ``cogniland.nav.mapgen``
+    (``"components"`` | ``"composed"`` | ``"simplex"``).
 
     Returns a dict of stacked numpy arrays ready for ``EnvParams.from_map_arrays``.
     """
@@ -48,13 +52,15 @@ def generate_map_dataset(
         for k in range(per_type):
             s = int(rng.integers(0, 2**31 - 1))
             try:
-                rec = generate_map(size=size, map_type=mt, seed=s, max_retries=200)
+                rec = generate_map(size=size, map_type=mt, seed=s, max_retries=200,
+                                   generator=generator)
             except Exception:
                 # try a few more seeds on rare gen failures
                 for _ in range(20):
                     s = int(rng.integers(0, 2**31 - 1))
                     try:
-                        rec = generate_map(size=size, map_type=mt, seed=s, max_retries=200)
+                        rec = generate_map(size=size, map_type=mt, seed=s, max_retries=200,
+                                           generator=generator)
                         break
                     except Exception:
                         continue

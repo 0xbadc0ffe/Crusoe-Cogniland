@@ -7,11 +7,14 @@ Mirrors src/cogniland/nav/nav_env.py + skills.py. The reward is
       + REACH_BONUS · [reached target]
 
 Walkability: water/rock/tree are always walkable but high-slip; lava and
-OOB are blocked. Slip semantics:
-    - water  : 0.90 unless agent carries raft       (raft → 0.0)
-    - rock   : 0.90 unless agent carries harness    (harness → 0.0)
-    - tree   : always 0.90
-    - land   : 0.15 if carrying anything (the "weight tax"); 0.0 if NONE
+OOB are blocked. Slip semantics (2026-05-28 hard-land weight tax):
+    - water  : 0.75 unless agent carries raft       (raft → 0.0)
+    - rock   : 0.75 unless agent carries harness    (harness → 0.0)
+    - tree   : always 0.75
+    - sand   : 0.75 if any skill is committed; 0.30 bare-handed
+    - dirt   : 0.75 if any skill is committed; 0.30 bare-handed
+    - grass  : 0.75 if any skill is committed; SLIP_PROB_GRASS_NOSKILL bare-handed (sweep knob)
+    - target : never slips
 """
 from __future__ import annotations
 
@@ -45,13 +48,24 @@ def _is_walkable(tile: jax.Array) -> jax.Array:
 
 
 def _slip_chance(active_object: jax.Array, tile: jax.Array) -> jax.Array:
-    """Probability that a move onto ``tile`` slips (stays in place)."""
-    p_water = jnp.where(active_object == C.OBJ_RAFT, 0.0, C.SLIP_PROB_DEFAULT)
+    """Probability that a move onto ``tile`` slips (stays in place).
+
+    Mirror of ``nav/skills.py``: RAFT zeroes water, HARNESS zeroes rock; trees
+    always slip 75 %%. **Hard-land weight tax (2026-05-28):** when ANY skill
+    is committed, grass / sand / dirt all slip at ``SLIP_PROB_LAND_WITH_SKILL``
+    (75 %%). Bare-handed: sand/dirt slip at ``SLIP_PROB_MINOR`` (30 %%),
+    grass at 0 %%. The target tile never slips.
+    """
+    has_skill = active_object != C.OBJ_NONE
+    p_water = jnp.where(active_object == C.OBJ_RAFT,    0.0, C.SLIP_PROB_DEFAULT)
     p_rock  = jnp.where(active_object == C.OBJ_HARNESS, 0.0, C.SLIP_PROB_DEFAULT)
-    # land slip (any tile other than water/rock/tree): 0.15 if carrying
-    # anything, 0 otherwise.
-    p_land  = jnp.where(active_object != C.OBJ_NONE, C.SLIP_WEIGHT_LAND, 0.0)
-    p = p_land
+    p_grass = jnp.where(has_skill, C.SLIP_PROB_LAND_WITH_SKILL, 0.0)
+    p_sand  = jnp.where(has_skill, C.SLIP_PROB_LAND_WITH_SKILL, C.SLIP_PROB_MINOR)
+    p_dirt  = jnp.where(has_skill, C.SLIP_PROB_LAND_WITH_SKILL, C.SLIP_PROB_MINOR)
+    p = jnp.zeros_like(p_water)  # target / anything else — never slips
+    p = jnp.where(tile == C.GRASS, p_grass, p)
+    p = jnp.where(tile == C.SAND,  p_sand,  p)
+    p = jnp.where(tile == C.DIRT,  p_dirt,  p)
     p = jnp.where(tile == C.WATER, p_water, p)
     p = jnp.where(tile == C.ROCK,  p_rock,  p)
     p = jnp.where(tile == C.TREE,  C.SLIP_PROB_DEFAULT, p)

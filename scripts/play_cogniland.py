@@ -23,8 +23,8 @@ Now a small state-machine app with a main menu:
 Human controls
 --------------
   arrow keys / WASD     move (up / down / left / right)
-  B                     build with build_scalar=+1  → Raft
-  V                     build with build_scalar=-1  → Harness
+  B                     build_raft   (action 4)
+  V                     build_harness (action 5)
   N                     new map (same size + map_type)
   1 / 2 / 3 / 4         set size to 32 / 64 / 96 / 128, then new map
   M                     cycle map_type: random → lake → rocky → random
@@ -455,19 +455,19 @@ def _draw_pick_map(win, font, small_font, big_font,
 
 # ============================================================ play loops
 
-def _action_from_keydown(key: int) -> dict | None:
+def _action_from_keydown(key: int) -> int | None:
     if key in (pygame.K_UP, pygame.K_w):
-        return {"move": 0, "build_scalar": np.array([0.0], np.float32)}
+        return 0
     if key in (pygame.K_DOWN, pygame.K_s):
-        return {"move": 1, "build_scalar": np.array([0.0], np.float32)}
+        return 1
     if key in (pygame.K_LEFT, pygame.K_a):
-        return {"move": 2, "build_scalar": np.array([0.0], np.float32)}
+        return 2
     if key in (pygame.K_RIGHT, pygame.K_d):
-        return {"move": 3, "build_scalar": np.array([0.0], np.float32)}
+        return 3
     if key == pygame.K_b:
-        return {"move": 4, "build_scalar": np.array([+1.0], np.float32)}
+        return 4   # build_raft
     if key == pygame.K_v:
-        return {"move": 4, "build_scalar": np.array([-1.0], np.float32)}
+        return 5   # build_harness
     return None
 
 

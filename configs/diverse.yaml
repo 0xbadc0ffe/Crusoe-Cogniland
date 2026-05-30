@@ -1,0 +1,36 @@
+# PICK B — diverse stochastic PPO-GRU agent.
+# Visibly more variable trajectories (sweep e0mkqeye: best ent>=0.9 run had
+# occupancy-entropy ~6.5 nats / across-traj JSD ~2.0 vs ~5.6 / ~1.1 for PICK A),
+# while still solving — given the FULL 1000-step budget (it wanders, so it needs
+# the budget; at 200 steps it under-reaches).
+#
+# Differs from efficient.yaml ONLY in the diversity levers:
+#   ent_coef 0.03 (vs 0.01), shaping_coef 0.015 (vs 0.02),
+#   num_steps 256 (vs 128), learning_rate 3e-4 (vs 5e-4).
+#
+# Run:  python scripts/train_ppo_gru.py --config configs/diverse.yaml
+run_name: ppo_diverse
+env_size: 64
+map_type: random
+max_steps: 1000              # full episode budget
+total_timesteps: 3000000
+
+num_envs: 16
+num_steps: 256
+num_minibatches: 4
+update_epochs: 2
+learning_rate: 0.0003
+anneal_lr: true
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+
+ent_coef: 0.03              # higher entropy → diverse stochastic policy
+shaping_coef: 0.015         # weaker shaping keeps entropy from collapsing
+slack_penalty: -0.01
+vf_coef: 0.5
+belief_coef: 0.3
+
+device: cuda
+wandb_project: crafter_in_cogniland
+wandb_mode: online

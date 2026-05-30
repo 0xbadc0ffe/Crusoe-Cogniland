@@ -78,8 +78,11 @@ python scripts/play_cogniland.py
   `-0.005` slack per step
   `+ 0.01 · (ctg_prev − ctg_curr)` PBRS shaping (cells, unit-cost)
   `+ 1.0` on stepping into the target tile.
-- **Slip**: water/rock slip with prob 0.9 unless you carry the matching
-  item; trees always slip 0.9; land slips 0.15 if carrying anything.
+- **Slip** (land weight tax, 2026-05-28): water/rock slip 0.75 unless you
+  carry the matching item; trees always slip 0.75; when **any** skill is
+  committed, grass/sand/dirt all slip 0.50 (the weight tax). Bare-handed:
+  sand/dirt slip 0.30, grass slips `SLIP_PROB_GRASS_NOSKILL` (default 0,
+  sweep knob); the target never slips.
 
 ## Dreamer implementation notes
 
@@ -152,7 +155,11 @@ cross-algo workspace charts are filtered correctly.
   numpy + torch).
 - Trainers never import each other or share state — single-file scripts.
 - Map generation is numpy + deterministic by seed. The dataset is
-  pickled once at startup if the file doesn't exist.
+  pickled once at startup if the file doesn't exist. Training uses the
+  legacy `simplex` noise generator (the `CognilandNavEnv` default, and
+  `train_ppo_gru.py --generator simplex`); the structured `composed` /
+  `components` generators are held out as a test set (passed explicitly,
+  e.g. in the trajectory-grid eval scripts).
 - Final checkpoints are orbax pytrees with the *params only* (not opt
   state) — enough to load and analyse, not enough to resume training.
 

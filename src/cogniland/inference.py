@@ -20,12 +20,14 @@ any future change to the policy automatically flows through to inference.
 
 Notes / assumptions
 -------------------
-* The policy was recently refactored: the ``build_scalar`` head is now a
-  *deterministic* ``tanh(linear)`` (``policy.belief_head``), so even in
-  the non-greedy path we can read it directly without sampling. We still
-  expose ``greedy=`` for the move head — argmax vs Categorical sample.
-* ``act`` returns the action in the dict shape the env expects:
-  ``{"move": int, "build_scalar": np.array([scalar], np.float32)}``.
+* The build is a discrete move now (``build_raft`` / ``build_harness`` are
+  two of the 6 actions of the categorical move head). The ``belief_head``
+  (``tanh(linear)``) is a *deterministic* auxiliary map-recognition probe,
+  not an action; ``act`` returns it alongside the move for inspection but
+  never feeds it to the env. ``greedy=`` toggles the move head between
+  argmax and Categorical sampling.
+* ``act`` returns ``({"move": int, "belief": float}, hidden)``. The env
+  only reads ``"move"`` (it also accepts a raw int move).
 * This adapter is intentionally CPU/GPU agnostic — pass ``device=`` at
   load time and obs tensors are moved there inside :meth:`act`.
 """
@@ -108,10 +110,15 @@ class PPOAgent:
             seed=int(ckpt_args.get("seed", 0)),
         )
 
+        # action space is now Discrete(6) (build folded into the move axis);
+        # fall back to the legacy Dict("move") layout for old checkpoints.
+        aspace = env.action_space
+        n_actions = aspace.n if hasattr(aspace, "n") else aspace["move"].n
+
         tp = _load_ppo_gru_module()
         policy = tp.PPOGRUPolicy(
             env.observation_space,
-            num_move_actions=env.action_space["move"].n,
+            num_move_actions=n_actions,
             gru_hidden=ckpt_args.get("gru_hidden", 128),
             embed_dim=ckpt_args.get("embed_dim", 256),
         ).to(dev)
@@ -146,13 +153,11 @@ class PPOAgent:
         """Step the policy once and return ``(action_dict, new_hidden)``.
 
         ``obs`` is a single-env numpy dict (the same shape ``env.reset()``
-        returns). With ``greedy=True`` the move is ``argmax`` of the logits
-        and the build scalar is taken directly from the deterministic
-        ``belief_head`` output (no sampling needed — the head is
-        ``tanh(linear)``). With ``greedy=False`` the move is sampled from
-        the Categorical distribution; the build scalar is still
-        deterministic since the policy no longer parameterises a Gaussian
-        for it.
+        returns). With ``greedy=True`` the move is ``argmax`` of the logits;
+        with ``greedy=False`` it is sampled from the Categorical. The build
+        is just one of the 6 moves (``build_raft`` / ``build_harness``). The
+        returned ``belief`` is the deterministic ``belief_head`` output (a
+        map-recognition probe) — informational only, not sent to the env.
         """
         obs_t = self._to_tensor_obs(obs)
         if isinstance(done, bool):
@@ -175,11 +180,8 @@ class PPOAgent:
             from torch.distributions import Categorical
             move = int(Categorical(logits=logits).sample().item())
 
-        scalar = float(belief.squeeze().item())
-        action_dict: dict[str, Any] = {
-            "move": move,
-            "build_scalar": np.array([scalar], dtype=np.float32),
-        }
+        belief_val = float(belief.squeeze().item())
+        action_dict: dict[str, Any] = {"move": move, "belief": belief_val}
         return action_dict, h_new
 
 

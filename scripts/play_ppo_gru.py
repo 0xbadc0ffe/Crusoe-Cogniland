@@ -5,7 +5,8 @@ Loads a ``.pt`` checkpoint saved by ``scripts/train_ppo_gru.py``, rolls out
 N episodes of ``CognilandNavEnv`` using the trained policy, and writes one
 PNG per episode showing the terrain + the agent's path. The step where the
 agent commits to a build (raft or harness) is highlighted with a red 'X'
-and annotated with the chosen object.
+and annotated with the chosen object plus the policy's belief scalar at
+that step (the aux map-recognition probe).
 
 Usage
 -----
@@ -14,8 +15,9 @@ Usage
         --num-episodes 4 \\
         --out-dir rollouts/ppo_gru_main
 
-Add ``--greedy`` to take argmax over moves and the mean of the build
-scalar (otherwise both are sampled, matching training).
+Add ``--greedy`` to take argmax over moves (otherwise moves are sampled,
+matching training). The build is a discrete move (build_raft/build_harness);
+the belief scalar is deterministic either way.
 """
 
 from __future__ import annotations
@@ -61,7 +63,7 @@ def _build_env(ckpt_args: dict, seed: int) -> CognilandNavEnv:
 def _build_policy(env: CognilandNavEnv, ckpt_args: dict, device: torch.device) -> PPOGRUPolicy:
     policy = PPOGRUPolicy(
         env.observation_space,
-        num_move_actions=env.action_space["move"].n,
+        num_move_actions=env.action_space.n,
         gru_hidden=ckpt_args.get("gru_hidden", 128),
         embed_dim=ckpt_args.get("embed_dim", 256),
     ).to(device)
@@ -76,9 +78,9 @@ def _to_tensor_obs(obs: dict, device: torch.device) -> dict:
 @torch.no_grad()
 def _select_action(policy: PPOGRUPolicy, obs_t: dict, hidden: torch.Tensor,
                    done: torch.Tensor, greedy: bool):
-    # New policy heads return (logits, belief, value). The belief is already
-    # deterministic (tanh of a linear projection) so greedy == stochastic
-    # for the build_scalar.
+    # Policy heads return (logits, belief, value). ``belief`` is the aux
+    # map-recognition probe (deterministic tanh) — returned only for viz,
+    # never used to drive the env (the build is a discrete move).
     if not greedy:
         action, belief, _, _, _, h_new = policy.get_action_and_value(obs_t, hidden, done)
         return int(action.item()), float(belief.squeeze().item()), h_new
@@ -95,7 +97,7 @@ def _rollout(policy: PPOGRUPolicy, env: CognilandNavEnv, device: torch.device,
     obs, info = env.reset()
     positions = [tuple(info["position"])]
     move_actions: list[int] = []
-    build_scalars: list[float] = []
+    beliefs: list[float] = []
     commit_step: int | None = None
     committed_object: str | None = None
     correct_object = info["correct_object"]
@@ -107,19 +109,15 @@ def _rollout(policy: PPOGRUPolicy, env: CognilandNavEnv, device: torch.device,
     reached = False
     while True:
         obs_t = _to_tensor_obs(obs, device)
-        move, scalar, hidden = _select_action(policy, obs_t, hidden, done_t, greedy)
+        move, belief, hidden = _select_action(policy, obs_t, hidden, done_t, greedy)
 
-        step_action = {
-            "move": int(move),
-            "build_scalar": np.array([float(scalar)], dtype=np.float32),
-        }
-        obs, r, term, trunc, info = env.step(step_action)
+        obs, r, term, trunc, info = env.step(int(move))
         ep_return += float(r)
         step += 1
 
         positions.append(tuple(info["position"]))
         move_actions.append(move)
-        build_scalars.append(scalar)
+        beliefs.append(belief)
 
         if commit_step is None and info["skill_active"] == 1:
             commit_step = step
@@ -136,7 +134,7 @@ def _rollout(policy: PPOGRUPolicy, env: CognilandNavEnv, device: torch.device,
         "target": tuple(info["target"]),
         "positions": positions,
         "move_actions": move_actions,
-        "build_scalars": build_scalars,
+        "beliefs": beliefs,
         "commit_step": commit_step,
         "committed_object": committed_object,
         "correct_object": correct_object,
@@ -174,11 +172,11 @@ def _plot_trajectory(traj: dict, out_path: Path, title: str) -> None:
     cs = traj["commit_step"]
     if cs is not None:
         cr, cc = traj["positions"][cs]
-        scalar = traj["build_scalars"][cs - 1]
+        belief = traj["beliefs"][cs - 1]
         ax.scatter([cc], [cr], marker="X", s=240, facecolor="red",
                    edgecolor="black", linewidth=1.4, zorder=5)
         ax.annotate(
-            f"commit @ step {cs}\nbuilt: {traj['committed_object']}  (s={scalar:+.2f})",
+            f"commit @ step {cs}\nbuilt: {traj['committed_object']}  (belief={belief:+.2f})",
             xy=(cc, cr),
             xytext=(8, -12), textcoords="offset points",
             color="white",
@@ -207,7 +205,7 @@ def main() -> None:
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--out-dir", type=Path, default=Path("rollouts"))
     ap.add_argument("--greedy", action="store_true",
-                    help="argmax move + mean build_scalar (deterministic)")
+                    help="argmax move (deterministic); belief is always deterministic")
     ap.add_argument("--map-type", default=None,
                     help="override the training map_type (lake/rocky/balanced/random)")
     args = ap.parse_args()

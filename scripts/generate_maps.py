@@ -33,6 +33,9 @@ def main():
     p.add_argument("--out-dir", default="data/crafter_in_cogniland")
     p.add_argument("--map-types", nargs="+",
                    default=["balanced", "lake", "rocky"])
+    p.add_argument("--generator", default="composed",
+                   choices=["components", "composed", "simplex"],
+                   help="terrain recipe (see cogniland.nav.mapgen)")
     p.add_argument("--force", action="store_true",
                    help="re-generate even if the .pkl already exists")
     args = p.parse_args()
@@ -47,10 +50,11 @@ def main():
             continue
         t = time.time()
         print(f"[gen ] {path} ({size}x{size}, n={args.num_maps}, "
-              f"types={args.map_types}) …", flush=True)
+              f"types={args.map_types}, gen={args.generator}) …", flush=True)
         arrays = generate_map_dataset(
             n_maps=args.num_maps, size=size,
             map_types=tuple(args.map_types), seed=args.seed,
+            generator=args.generator,
         )
         save_map_arrays(arrays, path)
         print(f"[done] {path}  ({time.time() - t:.1f}s)", flush=True)

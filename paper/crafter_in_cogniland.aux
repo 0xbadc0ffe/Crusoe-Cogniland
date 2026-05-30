@@ -1,0 +1,28 @@
+\relax 
+\@writefile{toc}{\contentsline {section}{\numberline {1}Environment at a glance}{1}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Tile vocabulary and the slip mechanic (slip columns: none\,/\,raft\,/\,harness). Each skill zeroes \emph  {two} terrains (\textbf  {bold}): raft $\to $ \texttt  {water}+\texttt  {sand}, harness $\to $ \texttt  {dirt}+\texttt  {rock}. Major barriers slip $0.75$, minor aprons $0.30$; \texttt  {grass}/\texttt  {target} never slip.}}{2}{}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{tab:tiles}{{1}{2}{}{}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Procedural maps: a compositional generator}{2}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Terrain atoms (rows) $\times $ noisy variations (columns). Every atom is an analytic field placed by rotation/translation; \texttt  {ridge} and \texttt  {river} are \emph  {corner-anchored} --- one end pinned to the target ($\star $) corner --- while \texttt  {lake} and \texttt  {round\_mountain} are free-floating blobs. High-frequency simplex noise ragged-ifies each boundary; water gets a \texttt  {sand} beach, rock a \texttt  {dirt} skirt.}}{3}{}\protected@file@percent }
+\newlabel{fig:components}{{1}{3}{}{}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Map scale $\times $ biome. Rows are side length ($32/64/96/128$); columns are biome (\texttt  {balanced}, \texttt  {rocky}, \texttt  {lake}). Spawn (\textcolor {green!60!black}{$\bullet $}) sits bottom-left, target (\textcolor {yellow!80!black}{$\star $}) top-right. Blue is \texttt  {water}, grey is \texttt  {rock}; \texttt  {balanced} keeps both scarce.}}{4}{}\protected@file@percent }
+\newlabel{fig:sizebiome}{{2}{4}{}{}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Seed diversity at $64\times 64$. Rows are biome (\texttt  {balanced}/\texttt  {rocky}/\texttt  {lake}); columns are different generation seeds. Each seed yields fresh barrier geometry, so within a biome the agent cannot memorise a layout --- it must read the local terrain online.}}{5}{}\protected@file@percent }
+\newlabel{fig:seeds}{{3}{5}{}{}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Agents}{5}{}\protected@file@percent }
+\newlabel{sec:agents}{{3}{5}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Recurrent PPO baseline (the released checkpoints)}{5}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces PPO-GRU policy. The \emph  {belief} head outputs the \texttt  {inference\_scalar}, a deterministic $\tanh $ map-recognition probe; it is \emph  {not} consumed by the env (the build is a discrete action). The actor now has $6$ move logits (incl.\ \textsf  {build\_raft}, \textsf  {build\_harness}).}}{5}{}\protected@file@percent }
+\newlabel{fig:ppo}{{4}{5}{}{}{}}
+\@writefile{toc}{\contentsline {paragraph}{The inference scalar, and how it is trained.}{5}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}DreamerV3 world model (high level)}{6}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces High-level DreamerV3. The RSSM rolls forward in latent space; the actor--critic is optimised on imagined trajectories with $\lambda $-returns and a slow (EMA) critic.}}{7}{}\protected@file@percent }
+\newlabel{fig:dreamer}{{5}{7}{}{}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces DreamerV3 components (paper-aligned). The discrete build action folds the PPO belief scalar into two terminal actions (\textsf  {build\_raft}, \textsf  {build\_harness}).}}{7}{}\protected@file@percent }
+\newlabel{tab:dreamer}{{2}{7}{}{}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Behaviour: 100 stochastic rollouts per map}{7}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Trajectory + skill grid (\texttt  {slip}$=0.75$, map seed $42$). Rows are biome (\texttt  {balanced}/\texttt  {rocky}/\texttt  {lake}); columns are the PPO-GRU checkpoint, each on the map size it was trained on (\,$32/64/96$; the $128$ model is omitted). Trajectory colour = active skill (no skill = dark blue, raft = orange, harness = yellow); spawn = \textcolor {green!70!black}{$\bullet $}, target = $\star $, inset = successes/$100$. Bottom row: skill-choice matrix, row-normalised fraction of trials (with raw counts), \texttt  {viridis} scale at right.}}{8}{}\protected@file@percent }
+\newlabel{fig:traj}{{6}{8}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Measuring path diversity}{8}{}\protected@file@percent }
+\gdef \@abspage@last{9}

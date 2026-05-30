@@ -26,16 +26,19 @@ Per-action arithmetic:
 
 Walkability + slip
 ------------------
-Every terrain except trees / lava / out-of-map is *walkable* — including
-water and rock. The skill mechanic is purely a slip-rate modifier:
+Every terrain except lava / out-of-map is *walkable* — including water and
+rock. The skill mechanic is purely a slip-rate modifier; each skill owns two
+terrains (RAFT → water + sand, HARNESS → dirt + rock):
 
-  default ``slip_chance(NONE, water) = 0.90``    (with raft → ``0``)
-  default ``slip_chance(NONE, rock)  = 0.90``    (with harness → ``0``)
-  slip_chance on land               = ``0`` for all objects
+  ``slip_chance(*, water)`` = 0.75, RAFT → 0
+  ``slip_chance(*, rock)``  = 0.75, HARNESS → 0
+  ``slip_chance(*, sand)``  = 0.30, RAFT → 0
+  ``slip_chance(*, dirt)``  = 0.30, HARNESS → 0
+  ``slip_chance(*, tree)``  = 0.75 always; grass/target = 0
 
-A 90 %% slip means the agent can in principle wade across a lake without
-a raft — it just takes ~10 attempts per cell — so the env is always
-solvable, but building the correct skill is far more efficient.
+Slip never blocks: the agent can wade across the wrong terrain, it just takes
+more attempts per cell — so the env is always solvable, but the matching skill
+is far more efficient.
 """
 
 from __future__ import annotations
@@ -59,9 +62,12 @@ SLACK_PENALTY = -0.02     # flat per-action cost (was -0.005; raised so
                           # length-of-path dominates the return, pushing
                           # the policy to keep tightening the route)
 SHAPING_COEF = +0.01      # × Δctg (positive = closer)
-REACH_BONUS = +0.0        # disabled — PBRS shaping is the sole positive
-                          # signal; eliminates the value-fn cliff at the
-                          # target and removes the "any-route-wins" plateau
+REACH_BONUS = +1.0        # sparse terminal reward for reaching the target
+CLIP_NEG_SHAPING = False  # if True, clip Δctg at 0 in the env's PBRS shaping
+                          # so backward steps (Δctg < 0) get only the flat
+                          # slack penalty, never the asymmetric -SHAPING*1
+                          # penalty. Removes the "always move toward top-right"
+                          # bias while keeping uniform per-step time pressure.
 
 # Legacy names kept for any external callers — the env uses SLACK_PENALTY now.
 STEP_COST = SLACK_PENALTY
@@ -69,15 +75,27 @@ BUILD_COST = SLACK_PENALTY
 COLLISION_PENALTY = 0.0   # already folded into the flat slack
 
 # ── Slip mechanic ─────────────────────────────────────────────────────────
-SLIP_PROB_DEFAULT = 0.75   # on water/rock without the matching item.
-                           # Lowered from 0.90 so that going *around* a
-                           # small lake/rocky patch (4× attempts/cell
-                           # without skill, was 10×) competes with
-                           # committing to raft/harness — drives the
-                           # policy to use no-skill when shape allows.
-SLIP_WEIGHT_LAND = 0.30    # carrying any item slips this often on plain land
-                           # — the "weight" tax that makes the wrong skill
-                           # strictly worse than carrying nothing.
+# Each skill specialises in two terrains: RAFT → {water, sand}, HARNESS →
+# {dirt, rock}. The matching skill drops slip to 0 on its two terrains; the
+# wrong/no skill slips at the terrain's base rate.
+SLIP_PROB_DEFAULT = 0.75   # major barriers (water, rock, tree) without the
+                           # matching item.
+SLIP_PROB_MINOR = 0.30     # bare-handed sand/dirt — fixed apron tax for the
+                           # no-skill agent (skill-active sand/dirt rises to
+                           # SLIP_PROB_LAND_WITH_SKILL).
+SLIP_PROB_LAND_WITH_SKILL = 0.50
+                           # Land weight tax (2026-05-28, lowered from 0.75):
+                           # grass / sand / dirt all slip at 50 %% whenever ANY
+                           # skill is committed. Carrying a raft/harness still
+                           # makes land notably slippery, but the gap to a
+                           # truly impassable barrier (0.75) is reserved for
+                           # water/rock/tree.
+SLIP_PROB_GRASS_NOSKILL = 0.0   # grass slip while NO skill is committed
+                           # (bare-handed). Default 0 — swept in the
+                           # grass-slip experiment to probe how baseline
+                           # ground friction shapes the bare-handed policy.
+SLIP_PROB_GRASS = SLIP_PROB_LAND_WITH_SKILL  # deprecated alias (pre-2026-05-28)
+SLIP_WEIGHT_LAND = SLIP_PROB_MINOR   # deprecated alias (old "weight tax" name)
 
 # ── Sentinel ──────────────────────────────────────────────────────────────
 BLOCKED = math.inf
@@ -101,15 +119,26 @@ def walkable(obj: int, tile: int) -> bool:
 
 
 def slip_chance(obj: int, tile: int) -> float:
-    """Probability that a move onto ``tile`` slips (stays in place)."""
+    """Probability that a move onto ``tile`` slips (stays in place).
+
+    RAFT zeroes water; HARNESS zeroes rock; trees always slip 75 %%.
+    **Hard-land weight tax (2026-05-28):** when ANY skill is committed, grass
+    / sand / dirt all slip at ``SLIP_PROB_LAND_WITH_SKILL`` (75 %%). With no
+    skill: sand/dirt slip at ``SLIP_PROB_MINOR`` (30 %%) and grass slips at
+    ``SLIP_PROB_GRASS_NOSKILL`` (default 0 %%, sweep knob). The target tile
+    never slips.
+    """
     if tile == WATER:
         return 0.0 if obj == RAFT else SLIP_PROB_DEFAULT
     if tile == ROCK:
         return 0.0 if obj == HARNESS else SLIP_PROB_DEFAULT
+    if tile == SAND or tile == DIRT:
+        return SLIP_PROB_LAND_WITH_SKILL if obj != NONE else SLIP_PROB_MINOR
     if tile == TREE:
         return SLIP_PROB_DEFAULT
-    # Plain land — slips only if the agent is carrying something (weight tax).
-    return SLIP_WEIGHT_LAND if obj != NONE else 0.0
+    if tile == GRASS:
+        return SLIP_PROB_LAND_WITH_SKILL if obj != NONE else SLIP_PROB_GRASS_NOSKILL
+    return 0.0  # target — the goal tile never slips
 
 
 def object_from_scalar(s: float) -> int:
@@ -140,20 +169,8 @@ def unit_cost_grid(obj: int, terrain: np.ndarray) -> np.ndarray:
 def expected_attempts_grid(obj: int, terrain: np.ndarray) -> np.ndarray:
     """``1 / (1 − slip_chance(obj, tile))`` per walkable cell, ``inf`` else."""
     out = np.full(terrain.shape, BLOCKED, dtype=np.float32)
-    walk = _walk_mask(terrain)
-    # Base land cost: 1 if no item, slightly more if carrying one (weight tax).
-    land_cost = 1.0 if obj == NONE else 1.0 / (1.0 - SLIP_WEIGHT_LAND)
-    out[walk] = land_cost
-    big = 1.0 / (1.0 - SLIP_PROB_DEFAULT)
-    if obj != RAFT:
-        out[terrain == WATER] = big
-    else:
-        out[terrain == WATER] = 1.0  # raft: water no-slip
-    if obj != HARNESS:
-        out[terrain == ROCK] = big
-    else:
-        out[terrain == ROCK] = 1.0  # harness: rock no-slip
-    out[terrain == TREE] = big  # trees always slip
+    for t in _WALKABLE_TILES:
+        out[terrain == t] = 1.0 / (1.0 - slip_chance(obj, t))
     return out
 
 

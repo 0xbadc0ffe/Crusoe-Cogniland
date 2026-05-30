@@ -2,7 +2,7 @@
 
 from . import skills, tiles
 from .mapgen import MapGenError, MapRecord, generate_map, shortest_path_cost
-from .nav_env import BUILD_ACTION, NUM_ACTIONS, CognilandNavEnv
+from .nav_env import BUILD_HARNESS, BUILD_RAFT, NUM_ACTIONS, CognilandNavEnv
 from .renderer import SpriteSheet
 
 
@@ -14,7 +14,8 @@ def __getattr__(name):  # PEP 562 — lazy import for optional torch wrapper
 
 
 __all__ = [
-    "BUILD_ACTION",
+    "BUILD_HARNESS",
+    "BUILD_RAFT",
     "CognilandNavEnv",
     "MapGenError",
     "MapRecord",

@@ -118,7 +118,7 @@ def main() -> None:
     p.add_argument("--out-dir", type=Path, default=None)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--greedy", action="store_true", default=True,
-                   help="argmax move + tanh-mean build_scalar (default on)")
+                   help="argmax move (default on); belief is always deterministic")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
 

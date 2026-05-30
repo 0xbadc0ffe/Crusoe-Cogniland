@@ -55,37 +55,46 @@ def test_oracle_costs_all_finite(cached_map, size: int, map_type: str):
     assert math.isfinite(rec.harness_cost)
 
 
-@pytest.mark.parametrize("size", SIZES)
-def test_lake_inequality(cached_map, size: int):
-    rec = cached_map(size, "lake", 0)
-    margin = 0.05 * rec.no_skill_cost
-    assert rec.raft_cost < rec.no_skill_cost - margin
-    assert rec.correct_object == sk.RAFT
+# Generator semantics (composed): each map is a structured composition — a
+# corner-anchored barrier + a secondary feature, NO cost-inequality validation
+# (the env is a POMDP). The barrier is a sparse analytic feature, not dominant
+# fill, but the biome still decides which material the *main* barrier is:
+# lake → water barrier (river), rocky → rock barrier (ridge), balanced → a mix.
+from cogniland.nav.tiles import ROCK, WATER
+
+
+def _fracs(terrain):
+    n = terrain.size
+    return (terrain == WATER).sum() / n, (terrain == ROCK).sum() / n
 
 
 @pytest.mark.parametrize("size", SIZES)
-def test_rocky_inequality(cached_map, size: int):
-    rec = cached_map(size, "rocky", 0)
-    margin = 0.05 * rec.no_skill_cost
-    assert rec.harness_cost < rec.no_skill_cost - margin
-    assert rec.raft_cost > rec.no_skill_cost + margin
-    assert rec.correct_object == sk.HARNESS
+def test_lake_is_water_dominant(cached_map, size: int):
+    water, rock = _fracs(cached_map(size, "lake", 0).terrain)
+    assert water > rock
+    assert water > 0.04            # the barrier (a river) is genuinely present
 
 
 @pytest.mark.parametrize("size", SIZES)
-def test_lake_full_ordering(cached_map, size: int):
-    rec = cached_map(size, "lake", 0)
-    margin = 0.05 * rec.no_skill_cost
-    assert rec.harness_cost > rec.no_skill_cost + margin
+def test_rocky_is_rock_dominant(cached_map, size: int):
+    water, rock = _fracs(cached_map(size, "rocky", 0).terrain)
+    assert rock > water
+    assert rock > 0.04             # the barrier (a ridge) is genuinely present
 
 
 @pytest.mark.parametrize("size", SIZES)
-def test_balanced_no_skill_is_best(cached_map, size: int):
-    rec = cached_map(size, "balanced", 0)
-    margin = 0.05 * rec.no_skill_cost
-    assert rec.raft_cost > rec.no_skill_cost + margin
-    assert rec.harness_cost > rec.no_skill_cost + margin
-    assert rec.correct_object == sk.NONE
+def test_balanced_has_both_terrains(cached_map, size: int):
+    water, rock = _fracs(cached_map(size, "balanced", 0).terrain)
+    assert water > 0.02 and rock > 0.02
+
+
+@pytest.mark.parametrize("size", SIZES)
+@pytest.mark.parametrize("map_type", ("lake", "rocky", "balanced"))
+def test_costs_finite_and_label_valid(cached_map, size: int, map_type: str):
+    rec = cached_map(size, map_type, 0)
+    assert all(math.isfinite(x) for x in
+               (rec.no_skill_cost, rec.raft_cost, rec.harness_cost))
+    assert rec.correct_object in (sk.NONE, sk.RAFT, sk.HARNESS)
 
 
 def test_oracle_matches_dijkstra_recompute(cached_map):
