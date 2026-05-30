@@ -181,11 +181,12 @@ def main():
         policy.load_state_dict(ck["policy"]); policy.eval()
 
     pygame.init()
+    map_h, map_w = args.env_size, args.env_width      # env not reset yet → use config dims
     tp = max(14, args.main_px // args.view_size)            # main-view tile px
     main_px = tp * args.view_size
-    cell = max(3, min(6, (main_px - 40) // max(env._terrain.shape)))  # minimap cell px
+    cell = max(3, min(6, (main_px - 40) // max(map_h, map_w)))  # minimap cell px
     W = main_px + _PANEL_W
-    Hpx = max(main_px, env._terrain.shape[0] * cell + 220)
+    Hpx = max(main_px, map_h * cell + 220)
     screen = pygame.display.set_mode((W, Hpx))
     pygame.display.set_caption("zebra_nav")
     sprites = _load_sprites(tp)

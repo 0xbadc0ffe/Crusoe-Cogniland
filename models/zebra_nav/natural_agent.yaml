@@ -6,7 +6,6 @@
 #   python scripts/train_ppo_zebra.py --config models/zebra_nav/natural_agent.yaml \
 #       --run-name natural_repro --wandb-mode disabled
 orientation: natural
-action_mode: absolute
 env_size: 32
 env_width: 64
 view_size: 21
