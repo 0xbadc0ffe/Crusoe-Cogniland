@@ -1,0 +1,72 @@
+# W&B sweep for PPO-GRU on the NATURAL zebra_nav maps (32×64, 21×21 view).
+#
+# Open procedural terrain: lakes (bridge), mountains/ridges (mine), impassable
+# tree patches (must walk around). Spawn = centre-left, goal = touch the right
+# wall. The agent should learn the cross-vs-detour decision *purely from
+# minimising episode length*: build_cost is 0 (each PLACE/MINE is already an
+# action counted by the slack penalty), and the PBRS potential is the true
+# min-ACTION cost-to-go (entering water/rock costs 2 = build+move, grass 1), so
+# maximising shaped return == minimising actions. Small obstacles ⇒ walk around;
+# wide-but-thin obstacles ⇒ build/mine across — emerges from the step budget.
+#
+# Goal: high success rate first; efficiency (short episodes) follows from the
+# reward. Metric = success/rolling100; ties broken post-hoc by episode length.
+program: scripts/train_ppo_zebra.py
+project: zebra_nav
+entity: crusoe
+method: bayes
+metric:
+  name: success/rolling100
+  goal: maximize
+command:
+  - /home/filippo/miniconda3/envs/crusoe/bin/python
+  - ${program}
+  - --orientation=natural
+  - --env-size=32
+  - --env-width=64
+  - --view-size=21
+  - --water-frac=0.14
+  - --rock-frac=0.14
+  - --tree-frac=0.03
+  - --build-cost=0.0
+  - --reach-bonus=3.0
+  - --max-steps=800
+  - --num-envs=32
+  - --num-minibatches=4
+  - --total-timesteps=2000000
+  - --device=cuda
+  - --anneal-lr
+  - --anneal-ent          # explore early, sharpen late → crisp greedy policy
+  - --wandb-project=zebra_nav
+  - --wandb-mode=online
+  - --checkpoint-dir=checkpoints/zebra_natural
+  - ${args}
+parameters:
+  ent-coef:
+    distribution: log_uniform_values
+    min: 0.005
+    max: 0.02
+  learning-rate:
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.0004
+  gamma:
+    distribution: uniform
+    min: 0.990
+    max: 0.999
+  gae-lambda:
+    distribution: uniform
+    min: 0.92
+    max: 0.97
+  num-steps:
+    values: [128, 256]
+  update-epochs:
+    values: [3, 4]
+  shaping-coef:
+    distribution: log_uniform_values
+    min: 0.005
+    max: 0.02
+  slack-penalty:
+    distribution: uniform
+    min: -0.02
+    max: -0.005

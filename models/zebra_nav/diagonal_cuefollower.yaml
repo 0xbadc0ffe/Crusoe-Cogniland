@@ -1,0 +1,36 @@
+# Reproduces `diagonal_cuefollower.pt` — a 100%-success / 100%-thin-side cue
+# follower on the DIAGONAL zebra maps (BL→TR, 32×32, 4 obsidian walls each with
+# a water + rock crossing window; agent reads the cue and threads the thin one).
+#
+#   python scripts/train_ppo_zebra.py --config checkpoints/zebra_agents/diagonal_cuefollower.yaml \
+#       --run-name diagonal_repro --wandb-mode disabled
+#
+# Original run trained 3M steps; 2M is plenty (converges ~1M). Seed 0 + these
+# hyperparameters reliably reproduce a cue-following agent (diagonal is unimodal).
+orientation: diagonal
+env_size: 32
+n_stripes: 4
+view_size: 11
+max_steps: 1000
+thick_half: 3
+thin_half: 1
+obsidian_half: 1
+seed: 0
+num_envs: 32
+num_steps: 256
+num_minibatches: 4
+total_timesteps: 2000000
+learning_rate: 0.0003
+gamma: 0.99
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.004
+vf_coef: 0.5
+update_epochs: 4
+max_grad_norm: 0.5
+slack_penalty: -0.01
+shaping_coef: 0.015
+reach_bonus: 2.0
+build_cost: 0.03
+gru_hidden: 128
+embed_dim: 256

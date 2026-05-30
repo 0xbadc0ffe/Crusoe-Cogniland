@@ -1,0 +1,41 @@
+# Reproduces `vertical_cuefollower.pt` — a 100%-success / 100%-thin-side cue
+# follower on the VERTICAL zebra maps (mid-L→mid-R, 32×64, 4 full-height walls,
+# water-top / rock-bottom with a central obsidian divider; agent reads the cue
+# and threads the thin window). Best run of sweep crusoe/zebra_nav/liw667h7.
+#
+#   python scripts/train_ppo_zebra.py --config checkpoints/zebra_agents/vertical_cuefollower.yaml \
+#       --run-name vertical_repro --wandb-mode disabled
+#
+# Original run trained 4M steps; 2M is plenty (converges <1M). NOTE: the vertical
+# task is bimodal — these hyperparameters land on the cue-following optimum
+# (thin-side 1.0) for some seeds and on the equally-successful "ignore-cue"
+# optimum (~0.5) for others. Seed 0 with this config reproduces the cue-follower;
+# if a re-run lands at ~0.5 thin-side, try a couple of seeds or raise build_cost.
+orientation: vertical
+env_size: 32
+env_width: 64
+n_stripes: 4
+view_size: 11
+max_steps: 1000
+thick_half: 3
+thin_half: 1
+obsidian_half: 1
+seed: 0
+num_envs: 32
+num_steps: 128
+num_minibatches: 4
+total_timesteps: 2000000
+learning_rate: 0.00023402070755907333
+gamma: 0.9916122563114016
+gae_lambda: 0.9452662744673352
+clip_coef: 0.2
+ent_coef: 0.008464869482897874
+vf_coef: 0.5
+update_epochs: 4
+max_grad_norm: 0.5
+slack_penalty: -0.00897066358780477
+shaping_coef: 0.026689115104352647
+reach_bonus: 2.21485145512278
+build_cost: 0.01007689733666896
+gru_hidden: 128
+embed_dim: 256

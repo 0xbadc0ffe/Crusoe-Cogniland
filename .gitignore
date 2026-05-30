@@ -224,3 +224,7 @@ data/maps/*.pt
 data/maps_classic/*.pt
 runs/
 data/crafter_in_cogniland/
+
+# zebra_nav scratch
+mapgen_preview/
+sweep_logs/
