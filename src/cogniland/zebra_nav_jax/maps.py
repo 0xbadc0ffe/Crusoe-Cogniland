@@ -25,7 +25,9 @@ from cogniland.zebra_nav.mapgen import MapRecord, generate_zebra_map, is_reachab
 from cogniland.zebra_nav.tiles import TARGET
 
 
-# natural_agent.yaml task config — the canonical task the PPO agent trained on.
+# Canonical natural task. The goal is the ENTIRE right wall (goal_half=None);
+# this is the default environment. (A positive goal_half would instead carve a
+# central door — the earlier central-door variant.)
 NATURAL_KWARGS = dict(
     size=32,
     width=64,
@@ -33,7 +35,7 @@ NATURAL_KWARGS = dict(
     water_frac=0.14,
     rock_frac=0.14,
     tree_frac=0.03,
-    goal_half=4,
+    goal_half=None,
 )
 
 

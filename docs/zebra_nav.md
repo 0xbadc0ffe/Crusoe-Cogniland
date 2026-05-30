@@ -4,6 +4,9 @@ A small, self-contained Crafter-style **navigation POMDP** with a build/mine
 decision, plus PPO+GRU training, evaluation, a pygame demo, and released agents.
 This doc is the map of *what is where*.
 
+> For the **whole-repo** map (all clusters, dependency diagrams, and a
+> keep/legacy/remove inventory), see [`codebase_map.md`](codebase_map.md).
+
 ```
 src/cogniland/zebra_nav/        the environment package (pure numpy + gymnasium)
   tiles.py                      tile ids, colours, walkability (grass/water/rock/
