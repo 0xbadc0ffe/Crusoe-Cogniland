@@ -40,14 +40,14 @@ _FACE_DELTA = {0: (-1, 0), 1: (1, 0), 2: (0, -1), 3: (0, 1)}
 
 
 @torch.no_grad()
-def batched_rollout(policy, rec, n_traj, view_size, max_steps, device, action_mode="absolute"):
+def batched_rollout(policy, rec, n_traj, view_size, max_steps, device):
     """Roll ``n_traj`` stochastic rollouts on one fixed map in lockstep. Returns
     (trajectories, reached[bool], thin_correct, thin_total, mine_pts, bridge_pts)
     where mine_pts / bridge_pts are the cells where a MINE (rock→grass) or PLACE
     (water→wood) succeeded, aggregated over all rollouts."""
     H, W = rec.terrain.shape
     envs = [ZebraNavEnv(map_record=rec, size=H, width=W, view_size=view_size,
-                        max_steps=max_steps, action_mode=action_mode) for _ in range(n_traj)]
+                        max_steps=max_steps) for _ in range(n_traj)]
     obs = [e.reset()[0] for e in envs]
     h = torch.zeros(1, n_traj, policy.gru_hidden, device=device)
     done = torch.zeros(n_traj, device=device)
@@ -105,11 +105,9 @@ def main():
     env_width = cargs.get("env_width") or env_size
     view_size = cargs.get("view_size", 11)
     orientation = cargs.get("orientation", "diagonal")
-    action_mode = cargs.get("action_mode", "absolute")
     device = torch.device(args.device)
 
-    dummy = ZebraNavEnv(size=env_size, width=env_width, view_size=view_size,
-                        action_mode=action_mode)
+    dummy = ZebraNavEnv(size=env_size, width=env_width, view_size=view_size)
     dummy.reset()
     n_tiles = int(ckpt["policy"]["tile_embed.weight"].shape[0])   # match training-time NUM_TILES
     n_act = int(ckpt["policy"]["actor.weight"].shape[0])
@@ -138,7 +136,7 @@ def main():
                                  obsidian_half=cargs.get("obsidian_half", 1),
                                  orientation=orientation)
         trajs, reached, tc, tt, mine_pts, bridge_pts = batched_rollout(
-            policy, rec, args.n_traj, view_size, args.max_steps, device, action_mode)
+            policy, rec, args.n_traj, view_size, args.max_steps, device)
         succ = float(reached.mean())
         all_succ.append(succ); all_tc += tc; all_tt += tt
 

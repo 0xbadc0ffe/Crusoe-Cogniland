@@ -1,26 +1,19 @@
 #!/usr/bin/env python3
 """Playable pygame demo for the zebra_nav env — human or trained AI.
 
-Works with the current maps (diagonal / vertical / natural) and both action
-modes (absolute 4-move, or relative turn/forward). Renders the full map (the
-agent itself only sees the egocentric crop, drawn as a white box), the agent
-with a facing arrow, and short **mining** (rock → rubble → grass) and
-**bridge-building** (water → planks + ripple) animations.
+Crafter-sprite egocentric main view (left) + small pixel minimap (right), in the
+style of play_cogniland.py. Starts on a menu where you pick Human/AI and the map
+(a curated validation map, or Random), then plays with mining / bridge-building
+animations.
 
-Human controls
---------------
-  absolute mode : ↑ ↓ ← →  move/face,  B = build (place on water),  M = mine
-  relative mode : ← → turn,  ↑ forward,  B = build,  M = mine
-  common        : R = new map,  Q/Esc = quit
-AI controls (when --checkpoint is given)
-  A = toggle AI auto-play,  Space = single AI step,  + / - = AI speed
-
-    python scripts/play_zebra.py --orientation natural --env-width 64 --view-size 21
-    python scripts/play_zebra.py --checkpoint checkpoints/zebra_agents/vertical_cuefollower.pt
+    python scripts/play_zebra.py            # uses models/zebra_nav/natural_agent.pt
+                                            # + data/zebra_nav/val_maps.pkl if present
+    python scripts/play_zebra.py --checkpoint models/zebra_nav/vertical_cuefollower.pt
 """
 from __future__ import annotations
 
 import argparse
+import pickle
 import sys
 from pathlib import Path
 
@@ -32,19 +25,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cogniland.zebra_nav.env import (  # noqa: E402
     ZebraNavEnv, _FACE_DELTA, F_UP, F_DOWN, F_LEFT, F_RIGHT,
     A_UP, A_DOWN, A_LEFT, A_RIGHT, A_PLACE, A_MINE,
-    R_TURN_LEFT, R_TURN_RIGHT, R_FORWARD, R_PLACE, R_MINE,
 )
-from cogniland.zebra_nav import tiles as T  # noqa: E402
+from cogniland.zebra_nav import generate_zebra_map, tiles as T  # noqa: E402
+
+_SPRITE_DIR = Path(__file__).resolve().parents[1] / "src/cogniland/assets/sprites"
+# zebra tile -> (base sprite, optional overlay sprite)
+_BASE = {T.GRASS: "grass", T.WATER: "water", T.ROCK: "stone", T.WOOD: "path",
+         T.OBSIDIAN: "lava", T.TREE: "tree", T.SAND: "sand", T.DIRT: "path",
+         T.TARGET: "grass", T.CUE_WATER_THIN: "grass", T.CUE_ROCK_THIN: "grass"}
+_OVERLAY = {T.TARGET: "flag", T.CUE_WATER_THIN: "diamond", T.CUE_ROCK_THIN: "diamond"}
+_FACE_SPRITE = {F_UP: "player-up", F_DOWN: "player-down",
+                F_LEFT: "player-left", F_RIGHT: "player-right"}
+_PANEL_W = 280
 
 
-def _facing_cell(env):
-    dr, dc = _FACE_DELTA[env._facing]
-    return env._pos[0] + dr, env._pos[1] + dc
+def _load_sprites(tp):
+    names = ["grass", "water", "stone", "sand", "tree", "lava", "path", "flag",
+             "diamond", "player", "player-up", "player-down", "player-left", "player-right"]
+    out = {}
+    for n in names:
+        img = pygame.image.load(str(_SPRITE_DIR / f"{n}.png")).convert_alpha()
+        out[n] = pygame.transform.scale(img, (tp, tp))
+    return out
 
 
 class Effect:
-    """A short cell animation (mining rubble or bridge planks + ripple)."""
-    DUR = 12
+    """Short cell animation in world coords: mine (yellow burst) / place (ripple)."""
+    DUR = 11
 
     def __init__(self, cell, kind):
         self.cell, self.kind, self.t = cell, kind, 0
@@ -52,91 +59,95 @@ class Effect:
     def alive(self):
         return self.t < self.DUR
 
-    def draw(self, surf, px):
-        r, c = self.cell
-        x, y, f = c * px, r * px, self.t / self.DUR
-        cx, cy = x + px // 2, y + px // 2
+    def draw(self, surf, cx, cy, tp):
+        f = self.t / self.DUR
         if self.kind == "mine":
-            # grey rubble chunks flying outward, fading
-            rng = np.random.default_rng(r * 131 + c)
             for k in range(6):
-                ang = 2 * np.pi * k / 6 + rng.uniform(0, 1)
-                d = f * px * 0.6
-                rx, ry = int(cx + np.cos(ang) * d), int(cy + np.sin(ang) * d)
-                s = max(1, int(px * 0.22 * (1 - f)))
-                pygame.draw.rect(surf, (90, 90, 90), (rx - s, ry - s, 2 * s, 2 * s))
-        else:  # place: expanding ripple ring + wood plank growing in
-            ring = int(f * px * 0.7)
+                a = 2 * np.pi * k / 6
+                d = f * tp * 0.7
+                s = max(1, int(tp * 0.16 * (1 - f)))
+                pygame.draw.rect(surf, (235, 215, 70),
+                                 (int(cx + np.cos(a) * d) - s, int(cy + np.sin(a) * d) - s, 2 * s, 2 * s))
+        else:
+            ring = int(f * tp * 0.8)
             if ring > 0:
-                col = (200, 220, 255)
-                pygame.draw.circle(surf, col, (cx, cy), ring, max(1, int(px * 0.08)))
-            w = int(px * 0.7 * f)
-            if w > 0:
-                pygame.draw.rect(surf, (140, 90, 50),
-                                 (cx - w // 2, cy - px // 4, w, px // 2))
+                pygame.draw.circle(surf, (235, 70, 70), (cx, cy), ring, max(1, tp // 8))
         self.t += 1
 
 
-def _draw(screen, env, px, effects, font, mode_txt, ai_on, status):
-    H, W = env._terrain.shape
-    # base tiles (effect cells are drawn by the effect instead)
-    eff_cells = {e.cell for e in effects}
-    img = T.TILE_COLORS[env._terrain]
-    for r in range(H):
-        for c in range(W):
-            if (r, c) in eff_cells:
-                pygame.draw.rect(screen, (110, 173, 86), (c * px, r * px, px, px))  # grass base
-                continue
-            screen.fill(tuple(int(v) for v in img[r, c]), (c * px, r * px, px, px))
-    for e in effects:
-        e.draw(screen, px)
-    # egocentric view box
-    v = env.view_size // 2
+def _draw_main(win, env, sprites, tp, effects):
+    """Egocentric sprite view; player centred with facing sprite."""
+    V = env.view_size
+    crop = env._egocentric_crop()
+    for vr in range(V):
+        for vc in range(V):
+            t = int(crop[vr, vc]); x, y = vc * tp, vr * tp
+            if t == T.OOB:
+                win.fill((0, 0, 0), (x, y, tp, tp)); continue
+            win.blit(sprites[_BASE.get(t, "grass")], (x, y))
+            if t in _OVERLAY:
+                win.blit(sprites[_OVERLAY[t]], (x, y))
+    win.blit(sprites[_FACE_SPRITE[env._facing]], (V // 2 * tp, V // 2 * tp))
+    # animations (world cell → view cell relative to the centred agent)
     ar, ac = env._pos
-    pygame.draw.rect(screen, (255, 255, 255),
-                     ((ac - v) * px, (ar - v) * px, env.view_size * px, env.view_size * px), 1)
-    # agent + facing arrow
-    cx, cy = ac * px + px // 2, ar * px + px // 2
-    pygame.draw.circle(screen, (20, 20, 20), (cx, cy), max(2, px // 2 - 1))
-    pygame.draw.circle(screen, (255, 255, 255), (cx, cy), max(2, px // 2 - 1), 1)
-    dr, dc = _FACE_DELTA[env._facing]
-    pygame.draw.line(screen, (255, 80, 80), (cx, cy),
-                     (cx + dc * px // 2, cy + dr * px // 2), max(2, px // 5))
-    if font:
-        txt = f"{mode_txt} | {'AI' if ai_on else 'HUMAN'} | {status}"
-        screen.blit(font.render(txt, True, (255, 255, 255), (0, 0, 0)), (4, 4))
+    for e in effects:
+        er, ec = e.cell
+        vr, vc = er - ar + V // 2, ec - ac + V // 2
+        if 0 <= vr < V and 0 <= vc < V:
+            e.draw(win, vc * tp + tp // 2, vr * tp + tp // 2, tp)
+
+
+def _draw_minimap(win, env, ox, oy, cell):
+    H, W = env._terrain.shape
+    img = T.TILE_COLORS[env._terrain]
+    surf = pygame.surfarray.make_surface(np.transpose(img, (1, 0, 2)))
+    surf = pygame.transform.scale(surf, (W * cell, H * cell))
+    pygame.draw.rect(win, (70, 70, 80), (ox - 2, oy - 2, W * cell + 4, H * cell + 4), 1)
+    win.blit(surf, (ox, oy))
+    ar, ac = env._pos
+    pygame.draw.rect(win, (255, 255, 255), (ox + ac * cell - 1, oy + ar * cell - 1, cell + 2, cell + 2))
+    v = env.view_size // 2
+    pygame.draw.rect(win, (255, 255, 0),
+                     (ox + (ac - v) * cell, oy + (ar - v) * cell, env.view_size * cell, env.view_size * cell), 1)
+    return H * cell
+
+
+def _text(win, font, lines, x, y, color=(235, 235, 235)):
+    for i, ln in enumerate(lines):
+        win.blit(font.render(ln, True, color), (x, y + i * (font.get_height() + 2)))
+
+
+# ───────────────────────────── AI helper ──────────────────────────────────
+
+def _ai_action(policy, obs, state, device, deterministic=False):
+    import torch
+    with torch.no_grad():
+        mm = torch.from_numpy(obs["minimap"])[None][None].to(device)
+        sc = torch.from_numpy(obs["scalars"])[None][None].to(device)
+        gout, h = policy._gru_forward({"minimap": mm, "scalars": sc},
+                                      torch.zeros(1, 1, device=device), state["hidden"])
+        state["hidden"] = h
+        logits, _ = policy._heads(gout.squeeze(0))
+        if deterministic:
+            return int(torch.argmax(logits, -1))
+        return int(torch.distributions.Categorical(logits=logits).sample())
 
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--orientation", default="natural",
-                   choices=("diagonal", "vertical", "natural"))
+    p.add_argument("--checkpoint", type=Path, default=Path("models/zebra_nav/natural_agent.pt"))
+    p.add_argument("--maps", type=Path, default=Path("data/zebra_nav/val_maps.pkl"))
+    p.add_argument("--orientation", default="natural", choices=("diagonal", "vertical", "natural"))
     p.add_argument("--env-size", type=int, default=32)
     p.add_argument("--env-width", type=int, default=64)
     p.add_argument("--view-size", type=int, default=21)
     p.add_argument("--max-steps", type=int, default=1500)
-    p.add_argument("--action-mode", default="relative", choices=("absolute", "relative"))
-    p.add_argument("--tile-px", type=int, default=16)
-    p.add_argument("--checkpoint", type=Path, default=None)
-    p.add_argument("--maps", type=Path, default=None,
-                   help="pickled validation-map set (from make_zebra_val_maps.py); the "
-                        "demo cycles through these fixed maps instead of random ones")
-    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--main-px", type=int, default=600, help="target pixel size of the main view")
     args = p.parse_args()
 
-    # fixed validation/demo map set (so the demo plays exactly the validation maps)
-    val_records = None
-    if args.maps is not None:
-        import pickle
-        with open(args.maps, "rb") as f:
-            blob = pickle.load(f)
-        val_records = blob["records"]
-        args.orientation = blob.get("orientation", args.orientation)
-        H, W = val_records[0].terrain.shape
-        args.env_size, args.env_width = H, W
-
-    policy = device = None
-    if args.checkpoint is not None:
+    # optional checkpoint (AI) — its config drives env shape / orientation / actions
+    policy = device = ca = None
+    if args.checkpoint and args.checkpoint.exists():
         import torch
         from train_ppo_zebra import PPOGRUPolicy
         ck = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
@@ -145,24 +156,21 @@ def main():
         args.env_size = ca.get("env_size", args.env_size)
         args.env_width = ca.get("env_width") or args.env_size
         args.view_size = ca.get("view_size", args.view_size)
-        args.action_mode = ca.get("action_mode", "absolute")
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # optional fixed validation map set
+    val = None
+    if args.maps and args.maps.exists():
+        with open(args.maps, "rb") as f:
+            blob = pickle.load(f)
+        val = blob["records"]
+        args.orientation = blob.get("orientation", args.orientation)
+        args.env_size, args.env_width = val[0].terrain.shape
+
     env = ZebraNavEnv(size=args.env_size, width=args.env_width, view_size=args.view_size,
-                      orientation=args.orientation, max_steps=args.max_steps,
-                      action_mode=args.action_mode, seed=args.seed)
-    map_idx = [0]
+                      orientation=args.orientation, max_steps=args.max_steps)
 
-    def _load_next_map():
-        """If a fixed validation set is given, cycle through it; else random."""
-        if val_records:
-            env._fixed_record = val_records[map_idx[0] % len(val_records)]
-            map_idx[0] += 1
-        return env.reset()[0]
-
-    obs = _load_next_map()
-
-    if args.checkpoint is not None:
+    if policy is None and args.checkpoint and args.checkpoint.exists():
         import torch
         n_tiles = int(ck["policy"]["tile_embed.weight"].shape[0])
         n_act = int(ck["policy"]["actor.weight"].shape[0])
@@ -171,58 +179,62 @@ def main():
                               embed_dim=ca.get("embed_dim", 256),
                               num_tile_classes=n_tiles).to(device)
         policy.load_state_dict(ck["policy"]); policy.eval()
-        hidden = torch.zeros(1, 1, policy.gru_hidden, device=device)
 
     pygame.init()
-    H, W = env._terrain.shape
-    px = args.tile_px
-    screen = pygame.display.set_mode((W * px, H * px))
+    tp = max(14, args.main_px // args.view_size)            # main-view tile px
+    main_px = tp * args.view_size
+    cell = max(3, min(6, (main_px - 40) // max(env._terrain.shape)))  # minimap cell px
+    W = main_px + _PANEL_W
+    Hpx = max(main_px, env._terrain.shape[0] * cell + 220)
+    screen = pygame.display.set_mode((W, Hpx))
     pygame.display.set_caption("zebra_nav")
-    font = pygame.font.SysFont("monospace", max(10, px))
+    sprites = _load_sprites(tp)
+    font = pygame.font.SysFont("monospace", max(13, tp // 2))
+    big = pygame.font.SysFont("monospace", max(20, tp), bold=True)
     clock = pygame.time.Clock()
-    effects = []
-    rel = args.action_mode == "relative"
-    S = {"obs": obs, "status": "go!", "ai_on": policy is not None, "period": 6}
-    if policy is not None:
-        S["hidden"] = hidden
-    KEYMAP_ABS = {pygame.K_UP: A_UP, pygame.K_DOWN: A_DOWN, pygame.K_LEFT: A_LEFT,
-                  pygame.K_RIGHT: A_RIGHT, pygame.K_b: A_PLACE, pygame.K_m: A_MINE}
-    KEYMAP_REL = {pygame.K_LEFT: R_TURN_LEFT, pygame.K_RIGHT: R_TURN_RIGHT,
-                  pygame.K_UP: R_FORWARD, pygame.K_b: R_PLACE, pygame.K_m: R_MINE}
 
-    def reset_episode():
-        S["obs"] = _load_next_map()
+    KEYMAP = {pygame.K_UP: A_UP, pygame.K_DOWN: A_DOWN, pygame.K_LEFT: A_LEFT,
+              pygame.K_RIGHT: A_RIGHT, pygame.K_b: A_PLACE, pygame.K_m: A_MINE}
+
+    # menu options
+    n_maps = len(val) if val else 0
+    map_choices = ([f"validation #{i}" for i in range(n_maps)] + ["random"]) if val else ["random"]
+    menu = {"mode": 1 if policy is not None else 0,   # 0 Human, 1 AI
+            "map": 0, "row": 0}
+    MODE_LABELS = ["Human", "AI" + ("" if policy else " (no checkpoint)")]
+    rows = ["Mode", "Map", "▶ Start"]
+    state = {"screen": "menu", "obs": None, "hidden": None, "status": "", "effects": [],
+             "ai_play": True, "period": 6}
+
+    def start_episode():
+        if val and menu["map"] < n_maps:
+            env._fixed_record = val[menu["map"]]
+        else:
+            env._fixed_record = None
+        state["obs"], _ = env.reset()
         if policy is not None:
             import torch
-            S["hidden"] = torch.zeros(1, 1, policy.gru_hidden, device=device)
-        effects.clear()
+            state["hidden"] = torch.zeros(1, 1, policy.gru_hidden, device=device)
+        state["effects"] = []
+        state["status"] = "playing"
+        state["screen"] = "play"
 
     def do_action(a):
-        fcell = _facing_cell(env)
+        fr, fc = env._pos[0] + _FACE_DELTA[env._facing][0], env._pos[1] + _FACE_DELTA[env._facing][1]
         o, r, term, trunc, info = env.step(a)
-        S["obs"] = o
+        state["obs"] = o
         if info["mined"]:
-            effects.append(Effect(fcell, "mine"))
+            state["effects"].append(Effect((fr, fc), "mine"))
         if info["placed"]:
-            effects.append(Effect(fcell, "place"))
-        S["status"] = f"step {info['step']}  ret {info['episode_return']:+.2f}"
+            state["effects"].append(Effect((fr, fc), "place"))
+        state["status"] = f"step {info['step']}  return {info['episode_return']:+.2f}"
         if term or trunc:
-            S["status"] = ("REACHED!" if term else "timeout") + " — new map"
-            reset_episode()
+            state["status"] = "REACHED! → menu" if term else "timeout → menu"
+            state["screen"] = "menu"
 
-    def ai_step():
-        import torch
-        with torch.no_grad():
-            mm = torch.from_numpy(S["obs"]["minimap"])[None][None].to(device)
-            sc = torch.from_numpy(S["obs"]["scalars"])[None][None].to(device)
-            gout, h = policy._gru_forward({"minimap": mm, "scalars": sc},
-                                          torch.zeros(1, 1, device=device), S["hidden"])
-            S["hidden"] = h
-            logits, _ = policy._heads(gout.squeeze(0))
-            a = int(torch.distributions.Categorical(logits=logits).sample())
-        do_action(a)
-
-    running, frame = True, 0
+    is_ai = lambda: policy is not None and menu["mode"] == 1
+    frame = 0
+    running = True
     while running:
         frame += 1
         for ev in pygame.event.get():
@@ -230,29 +242,80 @@ def main():
                 running = False
             elif ev.type == pygame.KEYDOWN:
                 if ev.key in (pygame.K_q, pygame.K_ESCAPE):
-                    running = False
-                elif ev.key == pygame.K_r:
-                    reset_episode()
-                elif ev.key == pygame.K_a and policy is not None:
-                    S["ai_on"] = not S["ai_on"]
-                elif ev.key == pygame.K_SPACE and policy is not None:
-                    ai_step()
-                elif ev.key in (pygame.K_PLUS, pygame.K_EQUALS):
-                    S["period"] = max(1, S["period"] - 1)
-                elif ev.key == pygame.K_MINUS:
-                    S["period"] += 1
-                elif not (policy is not None and S["ai_on"]):
-                    km = KEYMAP_REL if rel else KEYMAP_ABS
-                    if ev.key in km:
-                        do_action(km[ev.key])
+                    if state["screen"] == "play":
+                        state["screen"] = "menu"
+                    else:
+                        running = False
+                elif state["screen"] == "menu":
+                    if ev.key in (pygame.K_UP, pygame.K_w):
+                        menu["row"] = (menu["row"] - 1) % len(rows)
+                    elif ev.key in (pygame.K_DOWN, pygame.K_s):
+                        menu["row"] = (menu["row"] + 1) % len(rows)
+                    elif ev.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                        d = 1 if ev.key == pygame.K_RIGHT else -1
+                        if menu["row"] == 0 and policy is not None:
+                            menu["mode"] = (menu["mode"] + d) % 2
+                        elif menu["row"] == 1:
+                            menu["map"] = (menu["map"] + d) % len(map_choices)
+                    elif ev.key == pygame.K_RETURN:
+                        if menu["row"] == 2:
+                            start_episode()
+                        elif menu["row"] == 1:
+                            menu["map"] = (menu["map"] + 1) % len(map_choices)
+                        elif menu["row"] == 0 and policy is not None:
+                            menu["mode"] = (menu["mode"] + 1) % 2
+                else:  # play screen
+                    if ev.key == pygame.K_r:
+                        start_episode()
+                    elif ev.key == pygame.K_a and policy is not None:
+                        state["ai_play"] = not state["ai_play"]
+                    elif ev.key == pygame.K_SPACE and is_ai():
+                        do_action(_ai_action(policy, state["obs"], state, device))
+                    elif ev.key in (pygame.K_PLUS, pygame.K_EQUALS):
+                        state["period"] = max(1, state["period"] - 1)
+                    elif ev.key == pygame.K_MINUS:
+                        state["period"] += 1
+                    elif not is_ai() and ev.key in KEYMAP:
+                        do_action(KEYMAP[ev.key])
 
-        if policy is not None and S["ai_on"] and frame % S["period"] == 0:
-            ai_step()
+        if state["screen"] == "play" and is_ai() and state["ai_play"] and frame % state["period"] == 0:
+            do_action(_ai_action(policy, state["obs"], state, device))
 
-        screen.fill((0, 0, 0))
-        effects[:] = [e for e in effects if e.alive()]
-        _draw(screen, env, px, effects, font,
-              f"{args.orientation}/{args.action_mode}", S["ai_on"], S["status"])
+        screen.fill((18, 18, 22))
+        if state["screen"] == "menu":
+            _text(screen, big, ["zebra_nav"], 30, 30, (250, 230, 90))
+            opt = [f"Mode:  < {MODE_LABELS[menu['mode']]} >",
+                   f"Map:   < {map_choices[menu['map']]} >",
+                   "▶  Start  (Enter)"]
+            for i, line in enumerate(opt):
+                col = (255, 255, 120) if i == menu["row"] else (210, 210, 210)
+                _text(screen, big, [line], 40, 110 + i * 56, col)
+            _text(screen, font, [
+                "↑/↓ select   ←/→ change   Enter confirm",
+                "",
+                "In game:  arrows move,  B build,  M mine",
+                "          A toggle AI,  Space step,  +/- speed,  R new,  Esc menu",
+                "",
+                f"agent: {args.checkpoint.name if (policy is not None) else '(none — human only)'}",
+                f"task : {args.orientation}",
+            ], 40, 320, (180, 180, 190))
+        else:
+            _draw_main(screen, env, sprites, tp, state["effects"])
+            mmx, mmy = main_px + 16, 16
+            mmh = _draw_minimap(screen, env, mmx, mmy, cell)
+            _text(screen, font, [
+                f"{'AI' if is_ai() else 'HUMAN'}{' ▮▮' if (is_ai() and not state['ai_play']) else ''}",
+                f"map: {map_choices[menu['map']]}",
+                state["status"],
+            ], mmx, mmy + mmh + 14, (235, 235, 235))
+            _text(screen, font, [
+                "B build  M mine",
+                "arrows move",
+                "A=AI Space=step",
+                "+/- speed",
+                "R new  Esc menu",
+            ], mmx, mmy + mmh + 14 + 4 * (font.get_height() + 2) + 10, (170, 170, 180))
+            state["effects"][:] = [e for e in state["effects"] if e.alive()]
         pygame.display.flip()
         clock.tick(30)
     pygame.quit()

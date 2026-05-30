@@ -48,8 +48,8 @@ Three map **orientations** (`generate_zebra_map(orientation=...)`, env
   sand/dirt fringes. Goal = a **central door** on the right wall. Behaviour
   (cross-vs-detour) emerges from minimising episode length.
 
-Two **action modes** (`--action-mode`): `absolute` (4 moves + place + mine) or
-`relative` (turn-left/right + forward + place + mine; turns are free in reward).
+Actions: `Discrete(6)` — up / down / left / right (a move also sets `facing`) +
+PLACE (bridge water in front) + MINE (mine rock in front).
 
 ## Reward
 

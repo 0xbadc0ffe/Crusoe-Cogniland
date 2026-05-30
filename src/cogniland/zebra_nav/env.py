@@ -59,12 +59,6 @@ _FACE_DELTA = {
 }
 _MOVE_TO_FACING = {A_UP: F_UP, A_DOWN: F_DOWN, A_LEFT: F_LEFT, A_RIGHT: F_RIGHT}
 
-# relative ("turn/forward") action set: 5 actions. Turns are FREE (0 reward) so
-# the agent can curve without penalty; only FORWARD / PLACE / MINE cost reward.
-R_TURN_LEFT, R_TURN_RIGHT, R_FORWARD, R_PLACE, R_MINE = range(5)
-_CW = (F_UP, F_RIGHT, F_DOWN, F_LEFT)            # clockwise facing cycle
-_CW_INDEX = {f: i for i, f in enumerate(_CW)}
-
 
 class ZebraNavEnv(gym.Env):
     """Crafter-style 32×32 zebra-stripe navigation env.
@@ -98,7 +92,6 @@ class ZebraNavEnv(gym.Env):
         shaping_coef: float = 0.01,
         build_cost: float = 0.02,
         gamma: float = 0.99,
-        action_mode: str = "absolute",   # "absolute" (4 moves) | "relative" (turn/forward)
     ) -> None:
         super().__init__()
         if view_size % 2 == 0 or view_size < 3:
@@ -126,16 +119,12 @@ class ZebraNavEnv(gym.Env):
         self.shaping_coef = float(shaping_coef)
         self.build_cost = float(build_cost)   # extra penalty per successful PLACE/MINE
         self.gamma = float(gamma)
-        if action_mode not in ("absolute", "relative"):
-            raise ValueError(f"action_mode must be absolute|relative, got {action_mode!r}")
-        self.action_mode = action_mode
-        self.n_actions = 6 if action_mode == "absolute" else 5
         self._seed = int(seed)
         self._fixed_record = map_record
         self._rng = np.random.default_rng(self._seed)
 
         # spaces
-        self.action_space = spaces.Discrete(self.n_actions)
+        self.action_space = spaces.Discrete(NUM_ACTIONS)
         self.observation_space = spaces.Dict({
             "minimap": spaces.Box(low=0, high=NUM_TILES - 1,
                                   shape=(self.view_size, self.view_size),
@@ -190,8 +179,6 @@ class ZebraNavEnv(gym.Env):
     def step(self, action: int) -> tuple[dict, float, bool, bool, dict]:
         if self._terrain is None:
             raise RuntimeError("step() called before reset()")
-        if self.action_mode == "relative":
-            return self._step_relative(int(action))
         action = int(action)
         if not (0 <= action < NUM_ACTIONS):
             raise ValueError(f"action {action} out of range [0,{NUM_ACTIONS})")
@@ -235,61 +222,6 @@ class ZebraNavEnv(gym.Env):
         if self.shaping_coef != 0.0 and self._ctg is not None:
             ctg_curr = float(self._ctg[self._pos])
             reward += self.shaping_coef * (ctg_prev - self.gamma * ctg_curr)
-
-        self._step_count += 1
-        self._episode_return += reward
-        self._traj.append(self._pos)
-        terminated = reached
-        truncated = (not terminated) and (self._step_count >= self.max_steps)
-        info = self._make_info(reward=reward, mined=mined, placed=placed,
-                               blocked=blocked, reached=reached)
-        if terminated or truncated:
-            n_ok, n_tot = self._thin_side_accuracy()
-            info["thin_correct"] = n_ok
-            info["thin_total"] = n_tot
-        return self._make_obs(), float(reward), terminated, truncated, info
-
-    def _step_relative(self, action: int) -> tuple[dict, float, bool, bool, dict]:
-        """Turn/forward action set (5 actions). TURN_LEFT/RIGHT only rotate the
-        facing and cost **nothing** (0 reward, no shaping) — so the agent can
-        curve freely; only FORWARD / PLACE / MINE pay the slack (and PLACE/MINE
-        the build cost). Turns still advance the step counter (so the episode
-        still times out). This is meant to elicit curved paths through obstacles."""
-        if not (0 <= action < 5):
-            raise ValueError(f"action {action} out of range [0,5)")
-        mined = placed = blocked = reached = False
-        reward = 0.0
-
-        if action in (R_TURN_LEFT, R_TURN_RIGHT):       # free rotation, 0 reward
-            i = _CW_INDEX[self._facing]
-            self._facing = _CW[(i + (1 if action == R_TURN_RIGHT else -1)) % 4]
-        else:
-            reward = self.slack_penalty
-            ctg_prev = float(self._ctg[self._pos]) if self._ctg is not None else 0.0
-            dr, dc = _FACE_DELTA[self._facing]
-            fr, fc = self._pos[0] + dr, self._pos[1] + dc
-            in_bounds = 0 <= fr < self.height and 0 <= fc < self.width
-            if action == R_FORWARD:
-                if in_bounds and is_walkable(int(self._terrain[fr, fc])):
-                    self._pos = (fr, fc)
-                    if self._terrain[fr, fc] == TARGET:
-                        reward += self.reach_bonus
-                        reached = True
-                else:
-                    blocked = True
-            elif action == R_PLACE:
-                if in_bounds and self._terrain[fr, fc] == WATER:
-                    self._terrain[fr, fc] = WOOD
-                    placed = True
-                    reward -= self.build_cost
-            elif action == R_MINE:
-                if in_bounds and self._terrain[fr, fc] == ROCK:
-                    self._terrain[fr, fc] = GRASS
-                    mined = True
-                    reward -= self.build_cost
-            if self.shaping_coef != 0.0 and self._ctg is not None:
-                ctg_curr = float(self._ctg[self._pos])
-                reward += self.shaping_coef * (ctg_prev - self.gamma * ctg_curr)
 
         self._step_count += 1
         self._episode_return += reward
@@ -431,5 +363,4 @@ class ZebraNavEnv(gym.Env):
 
 
 __all__ = ["ZebraNavEnv", "NUM_ACTIONS", "A_UP", "A_DOWN", "A_LEFT", "A_RIGHT",
-           "A_PLACE", "A_MINE", "F_UP", "F_DOWN", "F_LEFT", "F_RIGHT",
-           "R_TURN_LEFT", "R_TURN_RIGHT", "R_FORWARD", "R_PLACE", "R_MINE"]
+           "A_PLACE", "A_MINE", "F_UP", "F_DOWN", "F_LEFT", "F_RIGHT"]

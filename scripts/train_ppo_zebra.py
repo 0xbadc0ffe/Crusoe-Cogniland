@@ -216,10 +216,6 @@ def main():
                         help="layout: diagonal (BL→TR) | vertical (midL→midR) | "
                              "natural (open lakes/mountains/trees, midL→right wall) | "
                              "mixed (random per episode)")
-    parser.add_argument("--action-mode", default="absolute",
-                        choices=("absolute", "relative"),
-                        help="absolute = 4 move actions; relative = turn-left/right + "
-                             "forward (+ place/mine), turns free in reward → curved paths")
     parser.add_argument("--water-frac", type=float, default=0.14, help="natural: water coverage")
     parser.add_argument("--rock-frac", type=float, default=0.14, help="natural: rock coverage")
     parser.add_argument("--tree-frac", type=float, default=0.03,
@@ -307,7 +303,6 @@ def main():
         shaping_coef=args.shaping_coef, reach_bonus=args.reach_bonus,
         build_cost=args.build_cost, gamma=args.gamma, seed=args.seed,
         water_frac=args.water_frac, rock_frac=args.rock_frac, tree_frac=args.tree_frac,
-        action_mode=args.action_mode,
         goal_half=(args.goal_half if args.goal_half >= 0 else None),
     )
     policy = PPOGRUPolicy(

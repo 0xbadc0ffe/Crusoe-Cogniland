@@ -18,15 +18,15 @@ the stochastic policy spread out → many distinct paths.
 ## See it play (pygame demo)
 
 ```bash
-# AI plays the natural agent on the curated validation maps
-python scripts/play_zebra.py --checkpoint models/zebra_nav/natural_agent.pt \
-    --maps data/zebra_nav/val_maps.pkl
-# or human-play the same maps (relative controls: ←/→ turn, ↑ forward, B build, M mine)
-python scripts/play_zebra.py --maps data/zebra_nav/val_maps.pkl --action-mode relative
+# defaults: AI plays natural_agent on the curated validation maps
+python scripts/play_zebra.py
+# or a specific agent
+python scripts/play_zebra.py --checkpoint models/zebra_nav/vertical_cuefollower.pt
 ```
-Keys: `A` toggle AI, `Space` single AI step, `+/-` speed, `R` next map, `Q` quit.
-The demo reads the map size / orientation / action-mode from the checkpoint, so
-no extra flags are needed for AI play.
+A start **menu** lets you pick Human/AI and the map (a validation map, or Random).
+In-game keys: arrows move, `B` build, `M` mine, `A` toggle AI, `Space` single AI
+step, `+/-` speed, `R` new map, `Esc` back to menu. The demo reads the map size /
+orientation from the checkpoint, so no extra flags are needed for AI play.
 
 ## Reproduce
 
