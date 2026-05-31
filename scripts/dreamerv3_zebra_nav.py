@@ -86,15 +86,24 @@ SCALAR_DIM = 5   # [facing one-hot (4), step/max]
 class FlattenObsWrapper(GymnaxWrapper):
     """Flattens ``{minimap, scalars}`` into one float32 vector."""
 
-    def __init__(self, env, view_size: int):
+    def __init__(self, env, view_size: int, decoder: str = "mse"):
         super().__init__(env)
         self.view_size = view_size
-        self.flat_dim = view_size * view_size + SCALAR_DIM
+        self.decoder = decoder
+        if decoder == "categorical":
+            self.flat_dim = view_size * view_size * C.NUM_TILES + SCALAR_DIM
+        else:
+            self.flat_dim = view_size * view_size + SCALAR_DIM
 
     def _flatten(self, obs: dict) -> jax.Array:
-        mm = obs["minimap"].astype(jnp.float32) / float(C.NUM_TILES)
+        if self.decoder == "categorical":
+            oh = jax.nn.one_hot(obs["minimap"].astype(jnp.int32), C.NUM_TILES)
+            mm = oh.reshape(*oh.shape[:-3], -1)        # (...,V,V,K) → (...,V*V*K)
+        else:
+            mm = (obs["minimap"].astype(jnp.float32) / float(C.NUM_TILES))
+            mm = mm.reshape(*mm.shape[:-2], -1)
         return jnp.concatenate([
-            mm.reshape(*mm.shape[:-2], -1),
+            mm,
             obs["scalars"].astype(jnp.float32),
         ], axis=-1)
 
@@ -199,10 +208,17 @@ def _make_env_params(cfg) -> EnvParams:
 
 def make_train(cfg, log_cb=None):
     env_params = _make_env_params(cfg)
-    flat_dim = cfg["view_size"] * cfg["view_size"] + SCALAR_DIM
+    decoder_mode = cfg.get("decoder", "mse")
+    V = cfg["view_size"]
+    K = C.NUM_TILES
+    if decoder_mode == "categorical":
+        flat_dim = V * V * K + SCALAR_DIM
+    else:
+        flat_dim = V * V + SCALAR_DIM
     base_env = ZebraNavJaxEnv(default_params=env_params)
     env = BatchEnvWrapper(
-        AutoResetEnvWrapper(LogWrapper(FlattenObsWrapper(base_env, cfg["view_size"]))),
+        AutoResetEnvWrapper(LogWrapper(
+            FlattenObsWrapper(base_env, cfg["view_size"], decoder=decoder_mode))),
         num_envs=cfg["num_envs"],
     )
     action_dim = C.NUM_ACTIONS
@@ -259,6 +275,17 @@ def make_train(cfg, log_cb=None):
         min_length_time_axis=max(cfg["buffer_min_size"] // cfg["num_envs"], cfg["seq_len"]),
         max_length_time_axis=max(cfg["buffer_capacity"] // cfg["num_envs"], cfg["seq_len"]),
     )
+
+    def _rec_loss_categorical(pred, target):    # both (N, V*V*K + SCALAR_DIM)
+        vvK = V * V * K
+        mlogit = pred[:, :vvK].reshape(-1, V * V, K)
+        mtarget = target[:, :vvK].reshape(-1, V * V, K)        # one-hot
+        logp = jax.nn.log_softmax(mlogit, axis=-1)
+        ce = -(mtarget * logp).sum(axis=-1).sum(axis=-1)       # (N,) sum over cells
+        s_mse = 0.5 * jnp.square(pred[:, vvK:] - target[:, vvK:]).sum(axis=-1)
+        return (ce + s_mse).mean()
+
+    rec_loss_fn = _rec_loss_categorical if decoder_mode == "categorical" else None
 
     num_updates = cfg["total_env_steps"] // cfg["num_envs"]
     ckpt_interval = cfg.get("ckpt_interval_updates") or num_updates
@@ -438,6 +465,7 @@ def make_train(cfg, log_cb=None):
                     "rep": cfg["loss_rep"],
                 },
                 free_nats=cfg["free_nats"],
+                rec_loss_fn=rec_loss_fn,
             )
             return total, aux
 
@@ -656,6 +684,9 @@ def _default_cfg() -> dict:
         "view_size": 21,
         "max_steps": 800,
         "map_gen_seed": 0,
+        # decoder reconstruction mode: "mse" (ordinal-scalar MSE, default) or
+        # "categorical" (per-cell softmax + cross-entropy on a one-hot minimap)
+        "decoder": "mse",
         "slack_penalty": -0.01,
         "reach_bonus": 3.0,
         "shaping_coef": 0.015,
@@ -733,6 +764,8 @@ def main():
     import argparse
     p = argparse.ArgumentParser()
     p.add_argument("--size", default="25M", choices=list(SIZE_PRESETS))
+    p.add_argument("--decoder", default=None, choices=("mse", "categorical"),
+                   help="obs reconstruction mode (default mse)")
     p.add_argument("--total-env-steps", type=int, default=None)
     p.add_argument("--num-envs", type=int, default=None)
     p.add_argument("--train-ratio", type=int, default=None)
@@ -746,12 +779,15 @@ def main():
     args = p.parse_args()
 
     cfg = _apply_size(_default_cfg(), args.size)
-    for k in ("total_env_steps", "num_envs", "train_ratio", "num_train_maps",
-              "wandb_project", "wandb_mode", "maps_path"):
+    for k in ("decoder", "total_env_steps", "num_envs", "train_ratio",
+              "num_train_maps", "wandb_project", "wandb_mode", "maps_path"):
         v = getattr(args, k)
         if v is not None:
             cfg[k] = v
     cfg["seed"] = args.seed
+    # persisted so the viz can reconstruct the decoder head + obs layout.
+    cfg["num_tiles"] = int(C.NUM_TILES)
+    cfg.setdefault("view_size", _default_cfg()["view_size"])
 
     run_id = args.run_name or f"dreamerv3_{cfg['env_id']}_size{args.size}_seed{cfg['seed']}_{int(time.time())}"
     run_dir = Path(args.run_dir) / run_id
@@ -839,8 +875,11 @@ def main():
         jax.block_until_ready(chunk_metrics["loss/rec"])
         dt = time.time() - t_chunk
         env_steps_done = (chunk_idx + 1) * chunk_updates * cfg["num_envs"]
+        rec = np.asarray(chunk_metrics["loss/rec"])
+        nz = rec[rec != 0.0]
+        rec_str = (f"  loss/rec {nz[0]:.3f}→{nz[-1]:.3f}" if nz.size else "")
         print(f"chunk {chunk_idx + 1}/{num_chunks}: {dt:.1f}s "
-              f"(~{env_steps_done} env steps)", flush=True)
+              f"(~{env_steps_done} env steps){rec_str}", flush=True)
 
     print(f"train complete in {time.time() - t_total:.1f}s", flush=True)
     _save_final_checkpoint(carry[0], run_dir, cfg["total_env_steps"])

@@ -170,11 +170,22 @@ class ZebraDecoder(nn.Module):
         return x.astype(jnp.float32)
 
 
+# Decoder mode for the loaded checkpoint; set from cfg in main(). "mse" or
+# "categorical". Threads through _flatten_obs / _decode_to_tiles so the viz
+# matches the trainer's FlattenObsWrapper exactly.
+_DECODER_MODE = "mse"
+
+
 def _flatten_obs(obs: dict) -> jax.Array:
-    """Matches FlattenObsWrapper._flatten."""
-    mm = obs["minimap"].astype(jnp.float32) / float(C.NUM_TILES)
+    """Matches FlattenObsWrapper._flatten (mse or categorical)."""
+    if _DECODER_MODE == "categorical":
+        oh = jax.nn.one_hot(obs["minimap"].astype(jnp.int32), C.NUM_TILES)
+        mm = oh.reshape(*oh.shape[:-3], -1)
+    else:
+        mm = obs["minimap"].astype(jnp.float32) / float(C.NUM_TILES)
+        mm = mm.reshape(*mm.shape[:-2], -1)
     return jnp.concatenate([
-        mm.reshape(*mm.shape[:-2], -1),
+        mm,
         obs["scalars"].astype(jnp.float32),
     ], axis=-1)
 
@@ -187,12 +198,19 @@ _NATURAL_PALETTE = np.arange(C.NUM_TILES, dtype=np.int64)
 
 
 def _decode_to_tiles(flat_pred: np.ndarray, view: int, palette=None) -> np.ndarray:
-    """Turn a decoded flat obs vector (V*V + 5,) into a (V,V) tile-id grid.
+    """Turn a decoded flat obs vector into a (V,V) tile-id grid.
 
-    The decoder regresses the *normalised* minimap (tile_id / NUM_TILES); undo the
-    scaling. With ``palette`` given, snap each cell's continuous prediction to the
-    nearest tile id that genuinely occurs (kills phantom obsidian/cue tiles);
-    otherwise round to nearest of all NUM_TILES ids."""
+    categorical: ``flat_pred`` holds V*V*K logits; argmax over the K axis gives
+    valid tile ids in [0, K-1] directly (no scaling, no palette snap — categorical
+    cannot produce out-of-vocab tiles).
+
+    mse: the decoder regresses the *normalised* minimap (tile_id / NUM_TILES); undo
+    the scaling. With ``palette`` given, snap each cell to the nearest tile id that
+    genuinely occurs; otherwise round to nearest of all NUM_TILES ids."""
+    if _DECODER_MODE == "categorical":
+        K = C.NUM_TILES
+        logits = np.asarray(flat_pred[: view * view * K]).reshape(view * view, K)
+        return logits.argmax(-1).reshape(view, view).astype(np.int64)
     raw = np.asarray(flat_pred[: view * view]).reshape(view, view) * float(C.NUM_TILES)
     if palette is not None:
         idx = np.argmin(np.abs(raw[..., None] - palette.astype(np.float64)), axis=-1)
@@ -203,7 +221,11 @@ def _decode_to_tiles(flat_pred: np.ndarray, view: int, palette=None) -> np.ndarr
 def _build_model(cfg: dict):
     compute_dtype = resolve_dtype(cfg.get("compute_dtype", "float32"))
     param_dtype = jnp.float32
-    flat_dim = cfg["view_size"] * cfg["view_size"] + SCALAR_DIM
+    V = cfg["view_size"]
+    if cfg.get("decoder", "mse") == "categorical":
+        flat_dim = V * V * C.NUM_TILES + SCALAR_DIM
+    else:
+        flat_dim = V * V + SCALAR_DIM
     encoder = ZebraEncoder(
         hidden=cfg["enc_hidden"], num_layers=cfg["enc_layers"],
         embed_dim=cfg["wm_hidden"], dtype=compute_dtype, param_dtype=param_dtype,
@@ -434,8 +456,10 @@ def main():
     ckpt_dir = args.checkpoint.resolve()
     cfg_path = ckpt_dir.parent.parent / "config.json"
     cfg = json.loads(cfg_path.read_text())
+    global _DECODER_MODE
+    _DECODER_MODE = cfg.get("decoder", "mse")
     print(f"[load] config     {cfg_path}")
-    print(f"[load] checkpoint {ckpt_dir}")
+    print(f"[load] checkpoint {ckpt_dir}  (decoder={_DECODER_MODE})")
 
     payload = ocp.PyTreeCheckpointer().restore(str(ckpt_dir))
     wm_params = jax.tree_util.tree_map(jnp.asarray, payload["wm_params"])

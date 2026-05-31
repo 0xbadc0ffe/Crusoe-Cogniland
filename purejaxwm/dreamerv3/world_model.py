@@ -383,6 +383,8 @@ def wm_loss(
     rng: jax.Array,
     loss_scales: dict,             # {'rec', 'rew', 'cont', 'dyn', 'rep'}
     free_nats: float,
+    rec_loss_fn=None,              # optional fn(rec_pred, obs_flat) → scalar rec loss;
+                                   # None → default 0.5 * sum-of-squares MSE (unchanged)
 ):
     """Compute WM loss over a (T, B) batch of trajectory sub-sequences.
 
@@ -403,11 +405,15 @@ def wm_loss(
     )
     feats = posteriors.features()                   # (T, B, F)
 
-    # decode posterior features → reconstruct observations (inline MSE)
+    # decode posterior features → reconstruct observations
     feats_flat = feats.reshape(T * B, -1)
     rec_pred = decoder_apply(wm_params["decoder"], feats_flat)
-    sq = jnp.square(rec_pred - obs_flat)
-    rec_loss = 0.5 * sq.sum(axis=tuple(range(1, sq.ndim))).mean()
+    if rec_loss_fn is None:
+        # default: inline 0.5 * sum-of-squares MSE
+        sq = jnp.square(rec_pred - obs_flat)
+        rec_loss = 0.5 * sq.sum(axis=tuple(range(1, sq.ndim))).mean()
+    else:
+        rec_loss = rec_loss_fn(rec_pred, obs_flat)
 
     # reward prediction (TwoHot cross-entropy)
     rew_dist = reward_apply(wm_params["reward"], feats_flat)
