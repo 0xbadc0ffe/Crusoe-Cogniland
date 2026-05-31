@@ -117,6 +117,42 @@ maps.}
 \label{fig:maps}
 \end{figure}
 
+\subsection{Generation algorithm}
+Each map is produced deterministically from a single integer seed
+(\code{generate\_zebra\_map(orientation="natural", seed)}); the steps are:
+\begin{enumerate}[leftmargin=1.4em, itemsep=2pt]
+\item \textbf{Domain-warped fractal heightmap.} A multi-octave OpenSimplex field
+$h_0$ (base frequency $\max(6,\max(H,W)/4.5)$, five octaves with weights
+$1,\tfrac12,\tfrac14,\tfrac18,\tfrac1{16}$) is \emph{domain-warped} by two further
+simplex fields (warp amplitude $0.10\max(H,W)$): $h(r,c)=h_0(r+a\,w_r,\,c+a\,w_c)$.
+The warp removes grid-aligned, blobby structure and yields organic coastlines.
+\item \textbf{Overlaid landforms.} $2$--$4$ lakes (subtract a height bump) and
+$2$--$4$ mountains (add one) are stamped, each a soft logistic \emph{disk} or a
+multi-lobe \emph{massif}; radii are drawn with a squared (small-biased)
+distribution so most features are small with a rare large one. A thin wiggly
+\emph{ridge} (capsule field) is added with probability $\tfrac12$.
+\item \textbf{Quantile thresholding.} The lowest \code{water\_frac}$=0.14$ fraction
+of $h$ becomes \code{WATER}, the highest \code{rock\_frac}$=0.14$ becomes
+\code{ROCK}, the rest \code{GRASS}. Thresholding by quantile makes obstacle
+coverage exact regardless of the noise realisation.
+\item \textbf{Cosmetic fringes.} A sparse one-cell \code{SAND} speckle is dilated
+around water and \code{DIRT} around rock (each kept with prob.\ $0.30$/$0.25$);
+both behave exactly like grass but visually mark shorelines/scree.
+\item \textbf{Edge bands \& endpoints.} The left/right $10$ columns are forced to
+\code{GRASS} (clean spawn/goal approaches). Spawn $=(H/2,0)$; the goal is the
+$3$-cell door $\{H/2{-}1,H/2,H/2{+}1\}$ on the right wall.
+\item \textbf{Edge-biased forests.} About \code{tree\_frac}$\cdot HW$ cells of
+impassable \code{TREE} are placed as radius-$1$--$2$ patches. Each patch row is
+sampled with a heavy edge bias --- distance-from-nearest-wall $d=\tfrac12 u^3$ with
+$u\!\sim\!\mathrm{U}(0,1)$, snapped to the top or bottom edge --- so most forest
+sits in the outer ${\sim}15\%$ of rows, leaving the vertical middle open. A
+breadth-first \textbf{reachability guard} removes any patch that would wall the
+goal off from the spawn.
+\item \textbf{Caching.} The dataset is generated once and pickled; the pure-JAX
+env additionally precomputes a Dijkstra cost-to-go field per map so its PBRS
+potential is a table lookup (and is identical to the PyTorch env by construction).
+\end{enumerate}
+
 \paragraph{Why this geometry.} An earlier variant used the \emph{whole} right wall
 as the goal; with a free top/bottom border the cheapest route is to hug an edge and
 sprint right, and both agents collapsed to wall-hugging with no obstacle crossing.
@@ -182,6 +218,16 @@ The forests pin the paths into a central corridor; within it the agents bridge
 isolates one clean rollout of each strategy from the PPO agent --- the three
 behaviours we want to find and manipulate internally.
 
+\paragraph{What counts as a crossing (strict).} We label a trajectory segment as
+\emph{bridging} or \emph{tunnelling} only when the path \textbf{enters an obstacle
+body and exits the other side}: a maximal run of consecutive path cells whose
+original terrain is \code{WATER} (resp.\ \code{ROCK}), with at least $2$ distinct
+cells \emph{and} distinct entry/exit land cells. Placing or mining a single block,
+or poking into a lake and backing out the same side, does \emph{not} count --- it
+is still ``avoid''. This is deliberately stricter than counting build/mine events,
+and it is exactly the segment-labelling rule we will use for the strategy labels in
+the activation dataset (\S\ref{sec:mechinterp}).
+
 \begin{figure}[H]
 \centering
 \begin{subfigure}{0.49\linewidth}\centering
@@ -201,10 +247,14 @@ forest-walled central corridor and cross obstacles there.}
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.95\linewidth]{figures/zebra_nav/strategy_examples.png}
-\caption{One stochastic rollout per strategy (PPO agent). \textbf{Avoid}: detours
-around a rock+lake (no build). \textbf{Bridge}: places wood to cross a lake.
-\textbf{Tunnel}: mines through rock. Across sampled rollouts the mix is roughly
-avoid:bridge:tunnel $\approx$ 1:1.6:0.9, so all three modes are well represented.}
+\caption{One stochastic rollout per strategy (PPO agent), under the strict
+crossing definition. The crossed lake/mountain body is shaded; the bold segment is
+the in$\to$out traversal (green \textbullet\ = entered the body, magenta $\star$ =
+exited the far side), the thin blue line is the rest of the path. \textbf{Avoid}
+traverses no obstacle body; \textbf{Bridge} crosses a multi-cell lake ($18$ water
+cells here); \textbf{Tunnel} crosses a mountain ($16$ rock cells). Over sampled
+reaching rollouts the mix is roughly avoid:bridge:tunnel $\approx 1\!:\!2\!:\!0.8$,
+so all three modes are well represented.}
 \label{fig:strat}
 \end{figure}
 
@@ -233,7 +283,7 @@ and the decoder \emph{regresses} it. Reconstructions are therefore blurry and
 per-cell softmax decoder with cross-entropy) would make tile beliefs a crisp probe
 target. The PPO agent already uses a proper tile \emph{embedding}.
 
-\section{Mechanistic-interpretability plan}
+\section{Mechanistic-interpretability plan}\label{sec:mechinterp}
 
 The agents above are the substrate. The intended programme:
 \begin{enumerate}[leftmargin=1.4em]
