@@ -39,7 +39,7 @@ def main():
     p.add_argument("--water-frac", type=float, default=0.14)
     p.add_argument("--rock-frac", type=float, default=0.14)
     p.add_argument("--tree-frac", type=float, default=0.03)
-    p.add_argument("--goal-half", type=int, default=-1, help="natural: central goal door half-height (<0 = whole right wall, the default)")
+    p.add_argument("--goal-half", type=int, default=1, help="natural: central goal door half-height (default 1 = 3-cell door; <0 = whole right wall)")
     p.add_argument("--out", type=Path, default=Path("data/zebra_nav/val_maps.pkl"))
     args = p.parse_args()
 

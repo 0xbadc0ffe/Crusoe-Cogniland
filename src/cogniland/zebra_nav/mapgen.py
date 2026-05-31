@@ -421,7 +421,14 @@ def _build_natural(H, W, seed, water_frac, rock_frac, tree_frac=0.06, edge_band=
     patches, placed, attempts = [], 0, 0
     while placed < target_trees and attempts < 100:
         attempts += 1
-        pr = int(rng.integers(2, H - 2))
+        # Bias tree rows toward the top & bottom edges (a *slight* U-shape) so the
+        # along-the-wall route gets clogged and edge-hugging is less effective on
+        # average. arcsine = U-shaped; blended 50/50 with uniform → mild bias.
+        u = rng.random()
+        arc = math.sin(math.pi / 2.0 * u) ** 2          # arcsine, dense near 0 and 1
+        frac = 0.5 * u + 0.5 * arc
+        pr = int(round(2 + frac * (H - 4)))
+        pr = min(max(pr, 2), H - 3)
         pc = int(rng.integers(eb, W - eb))
         rad = int(rng.integers(1, 3))               # small forests (radius 1–2)
         patch = (((rr - pr) ** 2 + (cc - pc) ** 2 <= rad * rad) & (terrain == GRASS)
