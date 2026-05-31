@@ -69,13 +69,63 @@ from purejaxwm.dreamerv3.world_model import MLPHead, RSSM  # noqa: E402
 from purejaxwm.dreamerv3.distributions import TwoHotDist  # noqa: E402
 from purejaxwm.commons import resolve_dtype  # noqa: E402
 
-# whole-wall natural-maps task kwargs (matches train_natural_wholewall dataset).
+# natural-maps task kwargs (matches the current default env: 3-cell centre door).
 NATURAL_KWARGS = dict(
     size=32, width=64, orientation="natural",
-    water_frac=0.14, rock_frac=0.14, tree_frac=0.03, goal_half=None,
+    water_frac=0.14, rock_frac=0.14, tree_frac=0.03, goal_half=1,
 )
 SCALAR_DIM = 5
 ACTION_NAMES = ["up", "down", "left", "right", "place", "mine"]
+
+# ── Crafter-sprite rendering (mirrors scripts/play_zebra.py) ───────────
+_SPRITE_DIR = _ROOT / "src/cogniland/assets/sprites"
+_BASE = {T.GRASS: "grass", T.WATER: "water", T.ROCK: "stone", T.WOOD: "path",
+         T.OBSIDIAN: "lava", T.TREE: "tree", T.SAND: "sand", T.DIRT: "path",
+         T.TARGET: "grass", T.CUE_WATER_THIN: "grass", T.CUE_ROCK_THIN: "grass"}
+_OVERLAY = {T.TARGET: "flag", T.CUE_WATER_THIN: "diamond", T.CUE_ROCK_THIN: "diamond"}
+# facing ids F_UP/F_DOWN/F_LEFT/F_RIGHT = 0/1/2/3 == move-action ids
+_FACE_SPRITE = {0: "player-up", 1: "player-down", 2: "player-left", 3: "player-right"}
+_BG = (18, 22, 30)
+
+
+def _load_sprite_imgs(tp: int) -> dict:
+    """Load the Crafter PNG sprites as PIL RGBA images scaled to ``tp`` px."""
+    from PIL import Image
+    names = ["grass", "water", "stone", "sand", "tree", "lava", "path", "flag",
+             "diamond", "player", "player-up", "player-down", "player-left", "player-right"]
+    return {n: Image.open(_SPRITE_DIR / f"{n}.png").convert("RGBA").resize(
+        (tp, tp), Image.NEAREST) for n in names}
+
+
+def _tiles_to_sprite_rgb(tiles: np.ndarray, sprites: dict, tp: int, facing: int) -> np.ndarray:
+    """Composite a (V,V) decoded tile-id grid into a Crafter-sprite RGB image,
+    with the player sprite drawn (facing) at the egocentric centre."""
+    from PIL import Image
+    V = tiles.shape[0]
+    canvas = Image.new("RGB", (V * tp, V * tp), _BG)
+    for r in range(V):
+        for c in range(V):
+            t = int(tiles[r, c])
+            if t == T.OOB:                       # off-map padding → leave dark
+                continue
+            base = sprites[_BASE.get(t, "grass")]
+            canvas.paste(base, (c * tp, r * tp), base)
+            if t in _OVERLAY:
+                ov = sprites[_OVERLAY[t]]
+                canvas.paste(ov, (c * tp, r * tp), ov)
+    pl = sprites[_FACE_SPRITE.get(facing, "player")]
+    cen = V // 2
+    canvas.paste(pl, (cen * tp, cen * tp), pl)
+    return np.asarray(canvas)
+
+
+def _frame_base_rgb(frame: dict, scale: int, sprites, sprite_px: int, facing: int) -> np.ndarray:
+    """Base image for a frame: Crafter sprites if ``sprites`` given, else the
+    flat tile-colour minimap upscaled by ``scale``."""
+    if sprites is not None:
+        return _tiles_to_sprite_rgb(frame["tiles"], sprites, sprite_px, facing)
+    rgb = T.TILE_COLORS[frame["tiles"]]
+    return np.repeat(np.repeat(rgb, scale, axis=0), scale, axis=1)
 
 
 # Exact copies of dreamerv3_zebra_nav.{ZebraEncoder,ZebraDecoder} so restored
@@ -274,13 +324,12 @@ def rollout_and_imagine(models, wm_params, ac_params, env, params, cfg,
     return frames
 
 
-def _frame_to_rgb(frame: dict, scale: int) -> np.ndarray:
-    """Render one frame dict → uint8 RGB array, nearest-upscaled by `scale`,
-    with a coloured banner (green=REAL, red=IMAGINED) and text overlay via
-    matplotlib so the labels burn into the pixels."""
-    tiles = frame["tiles"]
-    rgb = T.TILE_COLORS[tiles]                       # (V,V,3) uint8
-    big = np.repeat(np.repeat(rgb, scale, axis=0), scale, axis=1)
+def _frame_to_rgb(frame: dict, scale: int, sprites=None, sprite_px: int = 16,
+                  facing: int = 1) -> np.ndarray:
+    """Render one frame dict → uint8 RGB array (Crafter sprites if ``sprites``
+    given, else flat tile colours), with a coloured banner (green=REAL,
+    red=IMAGINED) and text overlay via matplotlib so the labels burn in."""
+    big = _frame_base_rgb(frame, scale, sprites, sprite_px, facing)
 
     # draw onto a matplotlib canvas for the title text + phase banner.
     H, W = big.shape[:2]
@@ -318,7 +367,8 @@ def _write_video(frames_rgb, base: Path, fps: int) -> tuple[Path, str]:
         return gif, "gif"
 
 
-def _write_strip(frames, base: Path, every: int) -> Path:
+def _write_strip(frames, base: Path, every: int, sprites=None, sprite_px: int = 16,
+                 facings=None) -> Path:
     sel = [(i, f) for i, f in enumerate(frames) if i % every == 0]
     if (len(frames) - 1) % every != 0:        # always include the last frame
         sel.append((len(frames) - 1, frames[-1]))
@@ -326,7 +376,8 @@ def _write_strip(frames, base: Path, every: int) -> Path:
     fig, axes = plt.subplots(1, n, figsize=(1.7 * n, 2.2))
     axes = np.atleast_1d(axes).ravel()
     for ax, (i, f) in zip(axes, sel):
-        ax.imshow(T.TILE_COLORS[f["tiles"]], interpolation="nearest")
+        fc = facings[i] if facings is not None else 1
+        ax.imshow(_frame_base_rgb(f, 1, sprites, sprite_px, fc), interpolation="nearest")
         col = "green" if f["phase"] == "REAL" else "red"
         ax.set_title(f"t{i} {f['phase'][:4]}\n{ACTION_NAMES[f['action']]} "
                      f"{f['reward']:+.2f}", fontsize=7, color=col)
@@ -351,9 +402,14 @@ def main():
     p.add_argument("--fps", type=int, default=4)
     p.add_argument("--scale", type=int, default=12)
     p.add_argument("--strip-every", type=int, default=4)
+    p.add_argument("--render", choices=("sprites", "tiles"), default="sprites",
+                   help="sprites = decode to Crafter PNG sprites (default); tiles = flat tile colours")
+    p.add_argument("--sprite-px", type=int, default=16, help="px per tile when --render sprites")
     p.add_argument("--out-dir", type=Path, default=Path("videos/dreamer_imagine"))
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
+
+    sprites = _load_sprite_imgs(args.sprite_px) if args.render == "sprites" else None
 
     ckpt_dir = args.checkpoint.resolve()
     cfg_path = ckpt_dir.parent.parent / "config.json"
@@ -388,11 +444,20 @@ def main():
         print(f"  imagined reward (head mean) sum={cum_imag_r:+.3f}  "
               f"max={max(f['reward'] for f in imag):+.3f}")
 
-        frames_rgb = [_frame_to_rgb(f, args.scale) for f in frames]
+        # facing per frame: carry last move direction (default right → goal).
+        facings, cur = [], 3
+        for f in frames:
+            if f["action"] < 4:
+                cur = f["action"]
+            facings.append(cur)
+
+        frames_rgb = [_frame_to_rgb(f, args.scale, sprites, args.sprite_px, fc)
+                      for f, fc in zip(frames, facings)]
         vid_base = args.out_dir / f"imagine_seed{seed}"
         vid_path, fmt = _write_video(frames_rgb, vid_base, args.fps)
         strip_path = _write_strip(
             frames, args.out_dir / f"imagine_strip_seed{seed}", args.strip_every,
+            sprites, args.sprite_px, facings,
         )
         print(f"  wrote {vid_path}  ({fmt})")
         print(f"  wrote {strip_path}")

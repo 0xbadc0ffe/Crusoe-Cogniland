@@ -129,12 +129,18 @@ def main():
     all_succ, all_tc, all_tt = [], 0, 0
     for j in range(args.n_maps):
         seed = args.eval_seed_start + j
+        _gh = cargs.get("goal_half")
         rec = generate_zebra_map(size=env_size, width=env_width, seed=seed,
                                  n_stripes=cargs.get("n_stripes", 4),
                                  thick_half=cargs.get("thick_half", 3),
                                  thin_half=cargs.get("thin_half", 1),
                                  obsidian_half=cargs.get("obsidian_half", 1),
-                                 orientation=orientation)
+                                 orientation=orientation,
+                                 # natural-only knobs — match the training config
+                                 water_frac=cargs.get("water_frac", 0.14),
+                                 rock_frac=cargs.get("rock_frac", 0.14),
+                                 tree_frac=cargs.get("tree_frac", 0.03),
+                                 goal_half=(_gh if (_gh is not None and _gh >= 0) else None))
         trajs, reached, tc, tt, mine_pts, bridge_pts = batched_rollout(
             policy, rec, args.n_traj, view_size, args.max_steps, device)
         succ = float(reached.mean())
