@@ -230,9 +230,80 @@ def _draw_play(win, env, sprites, tp, main_px, panel_x, cell, effects, font, lin
     _txt(win, font, lines, mx, my + mm.get_height() + 16)
 
 
+# ──────────────────────── action-distribution pad ─────────────────────────
+
+_ACT_LABEL = {A_PLACE: "build", A_MINE: "mine"}
+FLASH_DUR = 10                      # frames the chosen action blinks
+
+
+def _prob_color(p):
+    """Light gradient: dark slate (p=0) → bright cyan (p=1)."""
+    if p is None:
+        return (40, 46, 62)
+    p = max(0.0, min(1.0, float(p)))
+    lo, hi = (40, 46, 62), (95, 205, 255)
+    return tuple(int(lo[i] + (hi[i] - lo[i]) * p) for i in range(3))
+
+
+def _draw_arrow(win, rect, action, color):
+    cx, cy = rect.center
+    s = int(min(rect.w, rect.h) * 0.24)
+    if action == A_UP:
+        pts = [(cx, cy - s), (cx - s, cy + s), (cx + s, cy + s)]
+    elif action == A_DOWN:
+        pts = [(cx, cy + s), (cx - s, cy - s), (cx + s, cy - s)]
+    elif action == A_LEFT:
+        pts = [(cx - s, cy), (cx + s, cy - s), (cx + s, cy + s)]
+    else:                            # A_RIGHT
+        pts = [(cx + s, cy), (cx - s, cy - s), (cx - s, cy + s)]
+    pygame.draw.polygon(win, color, pts)
+
+
+def _pad_button(win, rect, action, prob, flash_on, small):
+    col = (255, 232, 64) if flash_on else _prob_color(prob)
+    pygame.draw.rect(win, col, rect, border_radius=7)
+    pygame.draw.rect(win, (255, 255, 255) if flash_on else (120, 140, 175),
+                     rect, 2 if flash_on else 1, border_radius=7)
+    lum = 0.299 * col[0] + 0.587 * col[1] + 0.114 * col[2]   # readable ink on any fill
+    ink = (20, 24, 32) if lum > 130 else (215, 222, 235)
+    if action in (A_UP, A_DOWN, A_LEFT, A_RIGHT):
+        _draw_arrow(win, rect, action, ink)
+    else:
+        lbl = small.render(_ACT_LABEL[action], True, ink)
+        win.blit(lbl, (rect.centerx - lbl.get_width() // 2, rect.centery - lbl.get_height()))
+    if prob is not None:
+        pt = small.render(f"{prob * 100:.0f}%", True, ink)
+        win.blit(pt, (rect.centerx - pt.get_width() // 2, rect.bottom - pt.get_height() - 3))
+
+
+def _draw_action_pad(win, x0, Wp, bottom_y, probs, flash, font, small):
+    """A 4-way d-pad + build/mine buttons, each shaded by its policy probability;
+    the most-recently-taken action blinks bright yellow."""
+    bs = max(40, min(64, Wp // 3 - 6))
+    cx0 = x0 + (Wp - 3 * bs) // 2
+    act_h = int(bs * 0.8)
+    total_h = 22 + 3 * bs + 10 + act_h
+    y0 = bottom_y - total_h
+    win.blit(font.render("policy  pi(a|s)", True, (175, 182, 200)), (x0, y0))
+    gy = y0 + 22
+    P = (lambda a: None) if probs is None else (lambda a: float(probs[a]))
+    on = lambda a: bool(flash) and flash["a"] == a and (flash["t"] // 2) % 2 == 0
+    cells = {A_UP:    pygame.Rect(cx0 + bs, gy, bs, bs),
+             A_LEFT:  pygame.Rect(cx0, gy + bs, bs, bs),
+             A_RIGHT: pygame.Rect(cx0 + 2 * bs, gy + bs, bs, bs),
+             A_DOWN:  pygame.Rect(cx0 + bs, gy + 2 * bs, bs, bs)}
+    for a, rc in cells.items():
+        _pad_button(win, rc, a, P(a), on(a), small)
+    ay, gap = gy + 3 * bs + 10, 8
+    aw = (Wp - gap) // 2
+    for i, a in enumerate((A_PLACE, A_MINE)):
+        _pad_button(win, pygame.Rect(x0 + i * (aw + gap), ay, aw, act_h), a, P(a), on(a), small)
+
+
 # ───────────────────────────── AI helper ──────────────────────────────────
 
 def _ai_action(policy, obs, state, device):
+    """Returns (sampled action, action-probability vector over the 6 actions)."""
     import torch
     with torch.no_grad():
         mm = torch.from_numpy(obs["minimap"])[None][None].to(device)
@@ -241,7 +312,9 @@ def _ai_action(policy, obs, state, device):
                                       torch.zeros(1, 1, device=device), state["hidden"])
         state["hidden"] = h
         logits, _ = policy._heads(gout.squeeze(0))
-        return int(torch.distributions.Categorical(logits=logits).sample())
+        probs = torch.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+        a = int(torch.distributions.Categorical(logits=logits).sample())
+        return a, probs
 
 
 # ───────────────────────────────── main ───────────────────────────────────
@@ -300,7 +373,7 @@ def main():
     S = {"state": "MENU", "mode": "ai", "agent": 0, "map": 0, "policy": None, "cfg": None,
          "thumbs": [], "labels": [], "recs": [], "env": None, "obs": None, "hidden": None,
          "status": "", "effects": [], "ai_play": True, "period": 6, "rng": np.random.default_rng(0),
-         "rects": None, "tp": 28, "main_px": 600, "cell": 4}
+         "rects": None, "tp": 28, "main_px": 600, "cell": 4, "probs": None, "flash": None}
 
     def cfg_of(i):
         y = agents[i]["path"].with_suffix(".yaml")
@@ -351,7 +424,7 @@ def main():
         S["obs"], _ = env.reset()
         if S["policy"] is not None:
             S["hidden"] = torch.zeros(1, 1, S["policy"].gru_hidden, device=device)
-        S["effects"] = []; S["status"] = "playing"
+        S["effects"] = []; S["status"] = "playing"; S["probs"] = None; S["flash"] = None
 
     def start_play():
         cfg = S["cfg"]; view = cfg.get("view_size", 11)
@@ -362,8 +435,11 @@ def main():
         S["sprites"] = _load_sprites(S["tp"])
         new_episode(); S["state"] = "PLAY"
 
-    def do_action(a):
+    def do_action(a, probs=None):
         env = S["env"]
+        S["flash"] = {"a": int(a), "t": FLASH_DUR}      # blink the chosen action
+        if probs is not None:
+            S["probs"] = probs
         fr = (env._pos[0] + _FACE_DELTA[env._facing][0], env._pos[1] + _FACE_DELTA[env._facing][1])
         o, r, term, trunc, info = env.step(a)
         S["obs"] = o
@@ -434,7 +510,8 @@ def main():
                     elif ev.key == pygame.K_a and S["policy"] is not None:
                         S["ai_play"] = not S["ai_play"]
                     elif ev.key == pygame.K_SPACE and is_ai():
-                        do_action(_ai_action(S["policy"], S["obs"], S, device))
+                        _a, _p = _ai_action(S["policy"], S["obs"], S, device)
+                        do_action(_a, _p)
                     elif ev.key in (pygame.K_PLUS, pygame.K_EQUALS):
                         S["period"] = max(1, S["period"] - 1)
                     elif ev.key == pygame.K_MINUS:
@@ -458,7 +535,8 @@ def main():
 
         st = S["state"]
         if st == "PLAY" and is_ai() and S["ai_play"] and frame % S["period"] == 0:
-            do_action(_ai_action(S["policy"], S["obs"], S, device))
+            _a, _p = _ai_action(S["policy"], S["obs"], S, device)
+            do_action(_a, _p)
 
         if st == "MENU":
             S["rects"] = _draw_menu(win, big, font, W0, H0, mouse)
@@ -475,6 +553,13 @@ def main():
             _draw_play(win, S["env"], S["sprites"], S["tp"], S["main_px"], S["main_px"], S["cell"],
                        S["effects"], small, lines)
             S["effects"][:] = [e for e in S["effects"] if e.alive()]
+            # live policy action-distribution pad in the bottom of the right panel
+            _padx = S["main_px"] + 14
+            _draw_action_pad(win, _padx, W0 - _padx - 14, H0 - 14, S["probs"], S["flash"], font, small)
+            if S["flash"]:
+                S["flash"]["t"] -= 1
+                if S["flash"]["t"] <= 0:
+                    S["flash"] = None
         pygame.display.flip()
         clock.tick(30)
     pygame.quit()
