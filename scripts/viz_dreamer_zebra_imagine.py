@@ -180,14 +180,28 @@ def _flatten_obs(obs: dict) -> jax.Array:
     ], axis=-1)
 
 
-def _decode_to_tiles(flat_pred: np.ndarray, view: int) -> np.ndarray:
+# Tile ids that actually occur in natural maps (+ WOOD, placed at runtime).
+# The decoder REGRESSES a single scalar = tile_id/NUM_TILES, so a blurry / on-the-
+# boundary prediction can land *between* real classes and round into an unused id:
+# 2(rock)..4(wood) -> 3 OBSIDIAN(lava), 4..7(target) -> 5/6 CUE(diamond). Snapping
+# the continuous prediction to the nearest VALID id removes those phantom tiles.
+_NATURAL_PALETTE = np.array(
+    [C.GRASS, C.WATER, C.ROCK, C.WOOD, C.TARGET, C.TREE, C.SAND, C.DIRT], dtype=np.int64
+)
+
+
+def _decode_to_tiles(flat_pred: np.ndarray, view: int, palette=None) -> np.ndarray:
     """Turn a decoded flat obs vector (V*V + 5,) into a (V,V) tile-id grid.
 
-    The decoder regresses the *normalised* minimap (tile_id / NUM_TILES), so undo
-    the scaling, round to nearest tile id, clip to [0, NUM_TILES-1]."""
-    mm = np.asarray(flat_pred[: view * view]).reshape(view, view)
-    ids = np.rint(mm * float(C.NUM_TILES)).astype(np.int64)
-    return np.clip(ids, 0, C.NUM_TILES - 1)
+    The decoder regresses the *normalised* minimap (tile_id / NUM_TILES); undo the
+    scaling. With ``palette`` given, snap each cell's continuous prediction to the
+    nearest tile id that genuinely occurs (kills phantom obsidian/cue tiles);
+    otherwise round to nearest of all NUM_TILES ids."""
+    raw = np.asarray(flat_pred[: view * view]).reshape(view, view) * float(C.NUM_TILES)
+    if palette is not None:
+        idx = np.argmin(np.abs(raw[..., None] - palette.astype(np.float64)), axis=-1)
+        return palette[idx]
+    return np.clip(np.rint(raw).astype(np.int64), 0, C.NUM_TILES - 1)
 
 
 def _build_model(cfg: dict):
@@ -233,7 +247,7 @@ def _single_map_params(seed: int, cfg: dict) -> tuple[EnvParams, object]:
 
 
 def rollout_and_imagine(models, wm_params, ac_params, env, params, cfg,
-                        warmup: int, horizon: int, key):
+                        warmup: int, horizon: int, key, palette=None):
     """Warm the RSSM on `warmup` real steps then imagine `horizon` steps.
 
     Returns a list of frame dicts:
@@ -300,7 +314,7 @@ def rollout_and_imagine(models, wm_params, ac_params, env, params, cfg,
         )
         frames.append({
             "phase": "REAL",
-            "tiles": _decode_to_tiles(np.asarray(rec_pred[0]), view),
+            "tiles": _decode_to_tiles(np.asarray(rec_pred[0]), view, palette),
             "action": a, "reward": float(reward),
         })
         obs = jax.tree_util.tree_map(lambda x: x[None], nobs)
@@ -318,7 +332,7 @@ def rollout_and_imagine(models, wm_params, ac_params, env, params, cfg,
         )
         frames.append({
             "phase": "IMAGINED",
-            "tiles": _decode_to_tiles(np.asarray(rec_pred[0]), view),
+            "tiles": _decode_to_tiles(np.asarray(rec_pred[0]), view, palette),
             "action": int(action_idx[0]), "reward": float(rew[0]),
         })
     return frames
@@ -405,11 +419,15 @@ def main():
     p.add_argument("--render", choices=("sprites", "tiles"), default="sprites",
                    help="sprites = decode to Crafter PNG sprites (default); tiles = flat tile colours")
     p.add_argument("--sprite-px", type=int, default=16, help="px per tile when --render sprites")
+    p.add_argument("--palette", choices=("natural", "all"), default="natural",
+                   help="natural = snap decoded scalar to ids that actually occur "
+                        "(no phantom obsidian/cue tiles); all = round to any of NUM_TILES")
     p.add_argument("--out-dir", type=Path, default=Path("videos/dreamer_imagine"))
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
 
     sprites = _load_sprite_imgs(args.sprite_px) if args.render == "sprites" else None
+    palette = _NATURAL_PALETTE if args.palette == "natural" else None
 
     ckpt_dir = args.checkpoint.resolve()
     cfg_path = ckpt_dir.parent.parent / "config.json"
@@ -435,7 +453,7 @@ def main():
               f"horizon={args.horizon} ...", flush=True)
         frames = rollout_and_imagine(
             models, wm_params, ac_params, env, params, cfg,
-            args.warmup, args.horizon, sub,
+            args.warmup, args.horizon, sub, palette,
         )
         imag = [f for f in frames if f["phase"] == "IMAGINED"]
         cum_imag_r = sum(f["reward"] for f in imag)
