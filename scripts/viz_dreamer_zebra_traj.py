@@ -70,7 +70,7 @@ from purejaxwm.commons import resolve_dtype  # noqa: E402
 # the dataset's NATURAL_KWARGS and to the PPO natural_agent checkpoint args.
 NATURAL_KWARGS = dict(
     size=32, width=64, orientation="natural",
-    water_frac=0.14, rock_frac=0.14, tree_frac=0.03, goal_half=4,
+    water_frac=0.14, rock_frac=0.14, tree_frac=0.03, goal_half=None,
 )
 SCALAR_DIM = 5
 
