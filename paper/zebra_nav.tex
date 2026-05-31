@@ -14,9 +14,24 @@
 \usepackage{caption}
 \usepackage{subcaption}
 \usepackage{enumitem}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, fit, backgrounds, calc}
 
 \captionsetup{font=small, labelfont=bf}
 \newcommand{\code}[1]{\texttt{#1}}
+
+% block-diagram node styles (shared by the two architecture figures)
+\tikzset{
+  blk/.style  = {draw, rounded corners, align=center, font=\small,
+                 minimum height=2.6em, fill=blue!8, inner sep=4pt},
+  head/.style = {draw, rounded corners, align=center, font=\small,
+                 minimum height=2.4em, fill=orange!14, inner sep=4pt},
+  lat/.style  = {draw, rounded corners, align=center, font=\small,
+                 minimum height=2.6em, fill=green!10, inner sep=4pt},
+  io/.style   = {draw, rounded corners, align=center, font=\small,
+                 minimum height=2.6em, fill=gray!10, inner sep=4pt},
+  fl/.style   = {-{Stealth[length=2.2mm]}, thick},
+}
 
 \title{\textbf{zebra\_nav}\\[2pt]
 \large A POMDP navigation environment with a bridge / mine / detour
@@ -187,17 +202,72 @@ proven bit-for-bit equivalent (a parity test asserts identical obs / reward /
 termination over thousands of steps), so the DreamerV3 world model trains on
 exactly the task the PPO agent does.
 
-\begin{description}[leftmargin=1.2em]
-\item[PPO + GRU.] A tile-embedding CNN with CoordConv $\to$ MLP $\to$ GRU
-($128$ hidden) $\to$ \{categorical actor, value\}. The $128$-d GRU state is the
-POMDP belief carrier and the primary probing target. Entropy $0.045$, no
-annealing (keeps the stochastic policy spread out).
-\item[DreamerV3 (25M).] The in-tree pure-JAX \code{purejaxwm} library: a 4-block
-MLP encoder/decoder on the flat $V^2+5$ vector obs (the minimap is symbolic, so no
-CNN), a block-GRU RSSM with discrete latents, TwoHot reward/value heads, RetNorm
-actor scaling. Paper-aligned defaults ($\gamma{=}0.997$, $\lambda{=}0.95$,
-$\text{lr}{=}4\mathrm{e}{-5}$).
-\end{description}
+\subsection{Recurrent PPO baseline}
+A tile-embedding CNN $\to$ GRU recurrent policy (Fig.~\ref{fig:ppo}). The
+$V{\times}V$ tile crop ($9$ classes) is embedded ($16$-d) and augmented with two
+CoordConv channels, passed through three $3{\times}3$ ReLU convolutions, flattened,
+concatenated with the $5$ scalars, and projected to a $256$-d embedding. A
+$128$-unit GRU carries memory across the episode; \textbf{this $h_t\in\mathbb{R}^{128}$
+is the POMDP belief carrier and the primary probing target}. Two linear heads read
+it: a categorical actor over the $6$ actions and a scalar value. There is \emph{no}
+auxiliary belief head --- bridge/mine/detour is driven purely by reward. Entropy
+$0.045$, no annealing (keeps the stochastic policy spread out). Adam
+($\text{lr}=3\!\times\!10^{-4}$), GAE ($\gamma{=}0.997,\lambda{=}0.95$), clip $0.2$.
+
+\begin{figure}[H]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[node distance=6mm and 8mm]
+  \node[io]  (obs)  {\texttt{minimap}\\$21{\times}21$ (9 ids)};
+  \node[blk, right=of obs] (emb) {tile-embed $16$\\$+$\,CoordConv};
+  \node[blk, right=of emb] (cnn) {$3\times$Conv\\$3{\times}3$ ReLU};
+  \node[blk, right=of cnn] (fc)  {flatten\,$\oplus$\,scalars$(5)$\\Linear $256$};
+  \node[lat, right=of fc]  (gru) {GRU\\$h_t\in\mathbb{R}^{128}$};
+  \node[head, right=12mm of gru, yshift=8mm]  (act) {actor\\$\to$ 6 logits};
+  \node[head, right=12mm of gru, yshift=-8mm] (val) {critic\\$\to V(h_t)$};
+  \draw[fl] (obs)--(emb); \draw[fl] (emb)--(cnn); \draw[fl] (cnn)--(fc);
+  \draw[fl] (fc)--(gru);
+  \draw[fl] (gru)--(act.west); \draw[fl] (gru)--(val.west);
+  \draw[fl] (gru) to[out=-60,in=-120,looseness=8]
+            node[below,font=\scriptsize]{$h_{t-1}$} (gru);
+\end{tikzpicture}}
+\caption{PPO+GRU policy. The $5$ scalars are the \textsc{facing} one-hot$(4)$ plus
+the step fraction. The $6$ actions are up/down/left/right/\textsf{place}/\textsf{mine}.
+The recurrent $h_t$ is the only place the partially-observed obstacle ahead can be
+integrated, hence the probing target.}
+\label{fig:ppo}
+\end{figure}
+
+\subsection{DreamerV3 world model (25M)}
+The in-tree pure-JAX \code{purejaxwm} library learns a recurrent state-space model
+(RSSM) and trains the actor--critic purely \emph{in imagination}
+(Fig.~\ref{fig:dreamer}). Because the minimap is symbolic, the encoder/decoder are
+$4$-block MLPs (RMSNorm\,$+$\,SiLU) over the flat $V{\cdot}V+5$ observation vector
+--- no pixel CNN. Heads read the RSSM features $[h_t,z_t]$: a decoder
+$\hat o_t$, TwoHot reward/continue heads, and the actor/critic optimised on imagined
+$\lambda$-returns with a slow (EMA) critic.
+
+\begin{figure}[H]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[node distance=6mm and 10mm]
+  \node[io]  (obs)  {obs\\$V{\cdot}V{+}5$};
+  \node[blk, right=of obs] (enc) {MLP encoder\\$4\times$ RMSNorm+SiLU};
+  \node[lat, right=of enc] (rssm) {RSSM\\block-GRU $h_t$ ($3072$)\\$+$ discrete $z_t$ (unimix $1\%$)};
+  \node[head, right=15mm of rssm, yshift=13mm] (dec) {decoder $\hat o_t$};
+  \node[head, right=15mm of rssm, yshift=0mm]  (rew) {reward / cont.\\TwoHot};
+  \node[head, right=15mm of rssm, yshift=-13mm](ac)  {actor / critic\\(in imagination)};
+  \draw[fl] (obs)--(enc); \draw[fl] (enc)--(rssm);
+  \draw[fl] (rssm)--(dec.west); \draw[fl] (rssm)--(rew.west); \draw[fl] (rssm)--(ac.west);
+  \draw[fl] (rssm) to[out=-60,in=-120,looseness=7]
+            node[below,font=\scriptsize]{$h_{t-1},z_{t-1},a_{t-1}$} (rssm);
+\end{tikzpicture}}
+\caption{High-level DreamerV3. The RSSM rolls forward in latent space; the
+actor--critic is trained on imagined trajectories ($\gamma{=}0.997,\lambda{=}0.95$,
+TwoHot over $255$ symlog bins, RetNorm scaling, LaProp $+$ AGC, $\text{lr}=4\mathrm{e}{-5}$).
+The $h_t$ ($3072$-d for the 25M preset) $+$ discrete $z_t$ are the latent we probe.}
+\label{fig:dreamer}
+\end{figure}
 
 \begin{center}\small
 \begin{tabular}{@{}lccc@{}}
