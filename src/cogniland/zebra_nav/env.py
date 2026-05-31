@@ -41,7 +41,7 @@ from gymnasium import spaces
 
 from .mapgen import MapRecord, generate_zebra_map
 from .tiles import (
-    GRASS, NUM_TILES, OBSIDIAN, OOB, ROCK, TARGET, TILE_COLORS, TREE, WATER, WOOD,
+    GRASS, NUM_TILES, OOB, ROCK, TARGET, TILE_COLORS, TREE, WATER, WOOD,
     is_walkable,
 )
 
@@ -79,7 +79,7 @@ class ZebraNavEnv(gym.Env):
         thin_half: int = 1,
         obsidian_half: int = 1,
         window_h: int = 3,
-        orientation: str = "diagonal",   # "diagonal" | "vertical" | "natural" | "mixed"
+        orientation: str = "natural",    # only "natural" supported (stripes retired)
         width: int | None = None,        # map width; height = size (default square)
         water_frac: float = 0.14,        # natural-only: water coverage
         rock_frac: float = 0.14,         # natural-only: rock coverage
@@ -106,9 +106,9 @@ class ZebraNavEnv(gym.Env):
         self.thin_half = int(thin_half)
         self.obsidian_half = int(obsidian_half)
         self.window_h = int(window_h)
-        if orientation not in ("diagonal", "vertical", "natural", "mixed"):
+        if orientation != "natural":
             raise ValueError(
-                f"orientation must be diagonal|vertical|natural|mixed, got {orientation!r}")
+                f"orientation must be 'natural' (stripes retired), got {orientation!r}")
         self.orientation = orientation
         self.water_frac = float(water_frac)
         self.rock_frac = float(rock_frac)
@@ -154,16 +154,11 @@ class ZebraNavEnv(gym.Env):
             self._record = self._fixed_record
         else:
             sub = int(self._rng.integers(0, 2 ** 31))
-            if self.orientation == "mixed":
-                orient = "vertical" if self._rng.random() < 0.5 else "diagonal"
-            else:
-                orient = self.orientation
             self._record = generate_zebra_map(
-                size=self.height, width=self.width, seed=sub, n_stripes=self.n_stripes,
-                thick_half=self.thick_half, thin_half=self.thin_half,
-                obsidian_half=self.obsidian_half, window_h=self.window_h,
-                orientation=orient, water_frac=self.water_frac, rock_frac=self.rock_frac,
-                tree_frac=self.tree_frac, goal_half=self.goal_half,
+                size=self.height, width=self.width, seed=sub,
+                orientation=self.orientation, water_frac=self.water_frac,
+                rock_frac=self.rock_frac, tree_frac=self.tree_frac,
+                goal_half=self.goal_half,
             )
         self._terrain = self._record.terrain.copy()       # mutable per-episode
         self._ctg = self._compute_ctg(self._terrain, self._record.target)
@@ -237,44 +232,20 @@ class ZebraNavEnv(gym.Env):
         return self._make_obs(), float(reward), terminated, truncated, info
 
     def _thin_side_accuracy(self) -> tuple[int, int]:
-        """Per-episode count of stripe crossings that took the *thinner* side.
-        Denominator is ``n_stripes`` (missed stripes count as wrong), so the
-        metric couples cue-following with actually solving the task.
-
-        Which window the agent used is read off the trajectory: for diagonal
-        walls the crossing happens at ``t = r-c = C`` and the side is water if
-        ``s = r+c < S_mid`` (else rock); for vertical walls it happens at
-        ``c = C`` and the side is water if ``r < R_mid`` (else rock)."""
-        rec = self._record
-        if rec is None or rec.orientation == "natural" or not rec.stripe_centers:
-            return 0, 0          # natural maps have no discrete thin/thick choice
-        vertical = rec.orientation == "vertical"
-        mid = float(self.height // 2) if vertical else (self.height + self.width - 2) / 2.0
-        n_ok = 0
-        for k, C in enumerate(rec.stripe_centers):
-            # trajectory point closest to this wall's centre line
-            best_d, best_v = 1e9, None
-            for (r, c) in self._traj:
-                d = abs(c - C) if vertical else abs((r - c) - C)
-                if d < best_d:
-                    best_d, best_v = d, (r if vertical else r + c)
-            if best_v is None or best_d > 1:        # never crossed this stripe
-                continue
-            side = "water" if best_v < mid else "rock"
-            if side == rec.stripe_thinner[k]:
-                n_ok += 1
-        return n_ok, len(rec.stripe_centers)
+        """Retired stripe metric — natural maps have no discrete thin/thick
+        choice, so this is always ``(0, 0)``. Kept for caller compatibility."""
+        return 0, 0
 
     # ── cost-to-go potential ─────────────────────────────────────────────
 
     @staticmethod
     def _compute_ctg(terrain: np.ndarray, target: tuple[int, int]) -> np.ndarray:
         """**Min-action** cost-to-go to the goal (Dijkstra). Entering a cell costs
-        1 action on walkable land (grass/wood/target/cue) and 2 on WATER/ROCK
-        (one PLACE/MINE *plus* the move), so the potential reflects the true cost
-        of crossing an obstacle vs walking around it. OBSIDIAN and TREE are
-        impassable. Seeded from *every* TARGET cell (one cell for stripe maps,
-        the whole goal wall for natural maps). Used as the PBRS potential
+        1 action on walkable land (grass/wood/target/sand/dirt) and 2 on
+        WATER/ROCK (one PLACE/MINE *plus* the move), so the potential reflects
+        the true cost of crossing an obstacle vs walking around it. TREE is
+        impassable. Seeded from *every* TARGET cell (the whole goal wall / door
+        for natural maps). Used as the PBRS potential
         ``φ = −ctg`` — so a policy maximising shaped return minimises episode
         length, and the cross-vs-detour choice falls out naturally."""
         import heapq
@@ -297,7 +268,7 @@ class ZebraNavEnv(gym.Env):
                 if not (0 <= nr < H and 0 <= nc < W):
                     continue
                 t = terrain[nr, nc]
-                if t == OBSIDIAN or t == TREE:
+                if t == TREE:
                     continue
                 step = 2 if (t == WATER or t == ROCK) else 1
                 nd = d + step

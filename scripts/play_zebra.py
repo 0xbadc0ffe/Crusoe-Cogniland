@@ -54,14 +54,12 @@ _MODELS_DIR = _REPO / "models/zebra_nav"
 _VAL_MAPS = _REPO / "data/zebra_nav/val_maps.pkl"
 
 _BASE = {T.GRASS: "grass", T.WATER: "water", T.ROCK: "stone", T.WOOD: "path",
-         T.OBSIDIAN: "lava", T.TREE: "tree", T.SAND: "sand", T.DIRT: "path",
-         T.TARGET: "grass", T.CUE_WATER_THIN: "grass", T.CUE_ROCK_THIN: "grass"}
-_OVERLAY = {T.TARGET: "flag", T.CUE_WATER_THIN: "diamond", T.CUE_ROCK_THIN: "diamond"}
+         T.TREE: "tree", T.SAND: "sand", T.DIRT: "path", T.TARGET: "grass"}
+_OVERLAY = {T.TARGET: "flag"}
 _FACE_SPRITE = {F_UP: "player-up", F_DOWN: "player-down", F_LEFT: "player-left", F_RIGHT: "player-right"}
 _BG = (18, 22, 30)
-# generate_zebra_map kwargs we may pull from an agent's stored args
-_GEN_KEYS = ("n_stripes", "thick_half", "thin_half", "obsidian_half", "window_h",
-             "orientation", "water_frac", "rock_frac", "tree_frac", "goal_half")
+# generate_zebra_map kwargs we may pull from an agent's stored args (natural-only)
+_GEN_KEYS = ("orientation", "water_frac", "rock_frac", "tree_frac", "goal_half")
 
 
 def _load_sprites(tp):
@@ -310,9 +308,7 @@ def main():
 
     def make_env(cfg, max_steps=1500):
         m = [("env_size", "size"), ("env_width", "width"), ("view_size", "view_size"),
-             ("orientation", "orientation"), ("n_stripes", "n_stripes"),
-             ("thick_half", "thick_half"), ("thin_half", "thin_half"),
-             ("obsidian_half", "obsidian_half"), ("window_h", "window_h"),
+             ("orientation", "orientation"),
              ("water_frac", "water_frac"), ("rock_frac", "rock_frac"),
              ("tree_frac", "tree_frac"), ("goal_half", "goal_half")]
         ekw = {dst: cfg[src] for src, dst in m if cfg.get(src) is not None}
@@ -323,19 +319,13 @@ def main():
         # NATURAL maps are generated with opensimplex, which segfaults on some
         # machines (macOS/arm) — so the demo NEVER generates them: it always
         # uses the curated, pre-pickled validation set (== the eval maps).
-        # Diagonal/vertical are pure numpy, so they're generated on the fly.
-        S["natural"] = cfg.get("orientation") == "natural"
-        if S["natural"]:
-            if not _VAL_MAPS.exists():
-                raise SystemExit(
-                    "natural demo needs data/zebra_nav/val_maps.pkl — "
-                    "generate it once on a machine where opensimplex works: "
-                    "python scripts/make_zebra_val_maps.py")
-            S["val_pool"] = pickle.load(open(_VAL_MAPS, "rb"))["records"]
-            S["recs"] = S["val_pool"][:9]
-        else:
-            S["val_pool"] = None
-            S["recs"] = _map_set(cfg, 9)
+        if not _VAL_MAPS.exists():
+            raise SystemExit(
+                "natural demo needs data/zebra_nav/val_maps.pkl — "
+                "generate it once on a machine where opensimplex works: "
+                "python scripts/make_zebra_val_maps.py")
+        S["val_pool"] = pickle.load(open(_VAL_MAPS, "rb"))["records"]
+        S["recs"] = S["val_pool"][:9]
         S["thumbs"] = [_terrain_surface(r.terrain, 6) for r in S["recs"]] + [None]
         S["labels"] = [f"map {i}" for i in range(len(S["recs"]))] + ["random"]
         S["map"] = 0
@@ -355,11 +345,9 @@ def main():
         env = S["env"]
         if S["map"] < len(S["recs"]):
             env._fixed_record = S["recs"][S["map"]]
-        elif S.get("natural"):            # "random" on natural → a random val map (never generate)
+        else:                             # "random" → a random val map (never generate)
             pool = S.get("val_pool") or S["recs"]
             env._fixed_record = pool[int(S["rng"].integers(len(pool)))]
-        else:                             # "random" on diagonal/vertical → fresh numpy map
-            env._fixed_record = None
         S["obs"], _ = env.reset()
         if S["policy"] is not None:
             S["hidden"] = torch.zeros(1, 1, S["policy"].gru_hidden, device=device)

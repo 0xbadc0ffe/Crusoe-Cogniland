@@ -4,6 +4,9 @@ This is a JAX port of ``src/cogniland/zebra_nav/`` (PyTorch). The tile
 vocabulary, action ids, facing ids, and reward shape mirror that env 1:1
 so the two are behaviourally identical on the same map + action sequence.
 See ``tests/test_zebra_jax_parity.py`` for the equivalence proof.
+
+Natural-only vocabulary: obsidian + cue tiles are retired; TREE is the sole
+inviolable tile. Must stay in lock-step with ``zebra_nav/tiles.py``.
 """
 from __future__ import annotations
 
@@ -11,17 +14,14 @@ from __future__ import annotations
 GRASS = 0
 WATER = 1
 ROCK = 2
-OBSIDIAN = 3
-WOOD = 4
-CUE_WATER_THIN = 5
-CUE_ROCK_THIN = 6
-TARGET = 7
-OOB = 8
-TREE = 9
-SAND = 10
-DIRT = 11
+WOOD = 3
+TARGET = 4
+OOB = 5
+TREE = 6
+SAND = 7
+DIRT = 8
 
-NUM_TILES = 12
+NUM_TILES = 9
 
 # ── action ids (Discrete(6)) ──────────────────────────────────────────
 A_UP = 0
@@ -42,8 +42,8 @@ DEFAULT_VIEW_SIZE = 21
 
 
 __all__ = [
-    "GRASS", "WATER", "ROCK", "OBSIDIAN", "WOOD", "CUE_WATER_THIN",
-    "CUE_ROCK_THIN", "TARGET", "OOB", "TREE", "SAND", "DIRT", "NUM_TILES",
+    "GRASS", "WATER", "ROCK", "WOOD", "TARGET", "OOB", "TREE", "SAND", "DIRT",
+    "NUM_TILES",
     "A_UP", "A_DOWN", "A_LEFT", "A_RIGHT", "A_PLACE", "A_MINE", "NUM_ACTIONS",
     "F_UP", "F_DOWN", "F_LEFT", "F_RIGHT", "DEFAULT_VIEW_SIZE",
 ]

@@ -1,37 +1,17 @@
-"""Procedural map generation for zebra_nav.
+"""Procedural map generation for zebra_nav (natural-only).
 
-Two orientations are supported (``generate_zebra_map(orientation=...)``); both
-are kept so an agent can be trained / probed on either or a mix:
+Only the ``"natural"`` orientation is supported now: open procedural terrain
+with overlaid lakes / mountains / ridges thresholded to ``water_frac`` water and
+``rock_frac`` rock, plus a few impassable TREE patches. The agent spawns at the
+centre of the left edge and wins by reaching the goal on the right wall (a
+central door by default, ``goal_half``). There is no obsidian — every lake/ridge
+can be bridged / mined OR walked around; TREE is the only inviolable obstacle.
 
-* ``"diagonal"`` — spawn bottom-left ``(H-1, 0)``, target top-right ``(0, W-1)``;
-  walls are diagonal bands perpendicular to the BL→TR path (``t = r-c = C``),
-  windows flank the path's ``s = r+c = S_mid``.
-* ``"vertical"`` — spawn mid-left ``(H//2, 0)``, target mid-right ``(H//2, W-1)``;
-  walls are full-height vertical bands (``c = C``), windows flank the centre row
-  ``R_mid``.
-
-Shared mechanic (obsidian walls with two crossing windows)
-----------------------------------------------------------
-Each *zebra stripe* is a solid **obsidian wall** spanning the map end-to-end so
-it cannot be skirted around the border. Each wall has exactly two crossing
-**windows** flanking the path centre:
-
-* WATER window (cross by PLACE) — inner cells within ``water_half`` of the wall
-  centre are WATER.
-* ROCK window (cross by MINE) — inner cells within ``rock_half`` are ROCK.
-* a central obsidian divider (half-width ``obsidian_half``) separates them.
-
-The agent meets the wall head-on at the centre and must commit to a window
-*locally* (one direction = water, the other = rock). The windows sit
-symmetrically about the path, so the only cost difference is the crossing width.
-
-Thick vs thin window
---------------------
-One window is thick (``2·thick_half + 1`` cells to cross, default 7) and one
-thin (``2·thin_half + 1``, default 3); a fair coin per wall decides whether
-water or rock is the thin one. Crossing the thin window needs fewer PLACE / MINE
-actions, so the optimal policy reads the cue and threads the thin window. A CUE
-tile on the grass just before each wall reveals which window is thin.
+The retired stripe orientations (``"diagonal"`` / ``"vertical"``) used obsidian
+walls + cue tiles; they have been dropped along with the obsidian/cue tile
+vocabulary. ``generate_zebra_map(orientation=...)`` raises ``ValueError`` for
+anything other than ``"natural"``; the stripe-only kwargs are kept as ignored
+no-ops so existing callers don't break.
 """
 from __future__ import annotations
 
@@ -40,10 +20,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .tiles import (
-    CUE_ROCK_THIN, CUE_WATER_THIN, DIRT, GRASS, OBSIDIAN, ROCK, SAND, TARGET,
-    TREE, WATER, is_walkable,
-)
+from .tiles import DIRT, GRASS, ROCK, SAND, TARGET, TREE, WATER
 
 
 @dataclass
@@ -51,195 +28,48 @@ class MapRecord:
     terrain: np.ndarray             # (H, W) int8
     spawn: tuple[int, int]
     target: tuple[int, int]
-    # per-stripe metadata (ordered along the path; empty for natural maps)
-    stripe_centers: list[int]                  # diagonal: t=r-c centre; vertical: column
-    stripe_thinner: list[str]                  # "water" or "rock" per stripe
-    cue_positions: list[tuple[int, int, int]]  # (r, c, cue_tile_id)
     seed: int
-    orientation: str = "diagonal"             # "diagonal" | "vertical" | "natural"
-    # natural maps: every cell on the goal wall is a target (touch the wall to win)
+    orientation: str = "natural"
+    # natural maps: every cell on the goal wall/door is a target (touch to win)
     goal_cells: list[tuple[int, int]] = field(default_factory=list)
 
 
-ORIENTATIONS = ("diagonal", "vertical", "natural")
-
-
-def _diag_centers(size: int, n_stripes: int, margin: int = 7) -> list[int]:
-    """Evenly spaced ``t = r-c`` centres for diagonal walls (BL→TR path)."""
-    lo, hi = -(size - 1) + margin, (size - 1) - margin
-    return [int(round(x)) for x in np.linspace(hi, lo, n_stripes)]
-
-
-def _vert_centers(size: int, n_stripes: int, margin: int = 6) -> list[int]:
-    """Evenly spaced column centres for vertical walls (mid-L→mid-R path)."""
-    lo, hi = margin, (size - 1) - margin
-    return [int(round(x)) for x in np.linspace(lo, hi, n_stripes)]
+ORIENTATIONS = ("natural",)
 
 
 def generate_zebra_map(
     size: int = 32,
     seed: int = 0,
-    n_stripes: int = 4,
-    thick_half: int = 3,          # thick side: 2*thick_half + 1 = 7 cells to cross
-    thin_half: int = 1,           # thin  side: 2*thin_half  + 1 = 3 cells to cross
-    obsidian_half: int = 1,       # central obsidian divider half-width (cells)
-    window_h: int = 3,            # diagonal-only: size of each crossing window
-    orientation: str = "diagonal",
+    n_stripes: int = 4,           # ignored (retired stripe param)
+    thick_half: int = 3,          # ignored (retired stripe param)
+    thin_half: int = 1,           # ignored (retired stripe param)
+    obsidian_half: int = 1,       # ignored (retired stripe param)
+    window_h: int = 3,            # ignored (retired stripe param)
+    orientation: str = "natural",
     width: int | None = None,     # map width; height = size (default square)
-    water_frac: float = 0.14,     # natural-only: fraction of map that is water (lakes)
-    rock_frac: float = 0.14,      # natural-only: fraction of map that is rock (mountains)
-    tree_frac: float = 0.03,      # natural-only: fraction of grass turned to impassable tree patches
-    goal_half: int | None = None, # natural-only: None ⇒ whole right wall is goal; N ⇒ central door
+    water_frac: float = 0.14,     # fraction of map that is water (lakes)
+    rock_frac: float = 0.14,      # fraction of map that is rock (mountains)
+    tree_frac: float = 0.03,      # fraction of grass turned to impassable tree patches
+    goal_half: int | None = None, # None ⇒ whole right wall is goal; N ⇒ central door
 ) -> MapRecord:
-    """Build one zebra-stripe / natural map. ``orientation`` selects the layout:
+    """Build one natural map.
 
-    * ``"diagonal"`` — diagonal walls perpendicular to a BL→TR path; each wall is
-      a solid obsidian barrier with a WATER and a ROCK crossing window flanking
-      ``s=S_mid`` (``_build_diagonal``). Square only.
-    * ``"vertical"`` — full-height vertical walls crossed mid-L→mid-R; each wall
-      is WATER (top) + OBSIDIAN divider + ROCK (bottom), filling to the edges so
-      it can't be skirted (``_build_vertical``). Supports rectangular maps.
-    * ``"natural"`` — open procedural terrain (``_build_natural``): a domain-warped
-      fractal heightmap with overlaid lakes (round), mountains, and ridges,
-      thresholded to ``water_frac`` water / ``rock_frac`` rock. The agent spawns
-      at the centre of the left edge and wins by **touching the opposite (right)
-      wall**; there is no obsidian, so every lake/ridge can be crossed
-      (bridge / mine) OR walked around — the agent chooses per obstacle.
+    ``"natural"`` — open procedural terrain (``_build_natural``): a domain-warped
+    fractal heightmap with overlaid lakes (round), mountains, and ridges,
+    thresholded to ``water_frac`` water / ``rock_frac`` rock, plus a few
+    impassable TREE patches biased toward the top/bottom edges. The agent spawns
+    at the centre of the left edge and wins by reaching the goal on the right
+    wall; every lake/ridge can be crossed (bridge / mine) OR walked around.
 
-    Stripe maps: one crossing is thick (``2·thick_half+1``) and one thin
-    (``2·thin_half+1``), 50/50 per wall, revealed by a cue. ``height = size``,
-    ``width = width or size``. Deterministic given the args.
+    ``height = size``, ``width = width or size``. Deterministic given the args.
+    The stripe-only kwargs (``n_stripes`` / ``thick_half`` / ``thin_half`` /
+    ``obsidian_half`` / ``window_h``) are accepted but ignored.
     """
-    if orientation not in ORIENTATIONS:
-        raise ValueError(f"orientation must be one of {ORIENTATIONS}, got {orientation!r}")
+    if orientation != "natural":
+        raise ValueError(
+            f"orientation must be 'natural' (stripe orientations retired), got {orientation!r}")
     H, W = int(size), int(width) if width is not None else int(size)
-    if orientation == "vertical":
-        return _build_vertical(H, W, seed, n_stripes, thick_half, thin_half, obsidian_half)
-    if orientation == "natural":
-        return _build_natural(H, W, seed, water_frac, rock_frac, tree_frac, goal_half=goal_half)
-    return _build_diagonal(H, W, seed, n_stripes, thick_half, thin_half, obsidian_half, window_h)
-
-
-def _build_diagonal(H, W, seed, n_stripes, thick_half, thin_half, obsidian_half, window_h):
-    """Diagonal walls perpendicular to the BL→TR path; windows flank ``s=S_mid``.
-
-    A wall is the t-band ``|t-C| ≤ thick_half`` (full anti-diagonal). The WATER
-    window sits at ``s`` just below ``S_mid`` and the ROCK window just above,
-    separated by a central obsidian divider — the agent meets the wall at the
-    centre and picks up (water) or down (rock)."""
-    rng = np.random.default_rng(seed)
-    terrain = np.full((H, W), GRASS, dtype=np.int8)
-    S_mid = (H + W - 2) / 2.0
-    rr = np.arange(H, dtype=np.int32)[:, None]
-    cc = np.arange(W, dtype=np.int32)[None, :]
-    t_grid = rr - cc
-    s_grid = rr + cc
-
-    centers = _diag_centers(max(H, W), n_stripes)
-    thinner_choice: list[str] = []
-    cue_positions: list[tuple[int, int, int]] = []
-
-    for C in centers:
-        thinner = "water" if rng.random() < 0.5 else "rock"
-        thinner_choice.append(thinner)
-        water_half = thin_half if thinner == "water" else thick_half
-        rock_half = thin_half if thinner == "rock" else thick_half
-
-        abs_t = np.abs(t_grid - C)
-        in_t = abs_t <= thick_half
-        water_win = in_t & (s_grid <= S_mid - obsidian_half - 1) \
-            & (s_grid >= S_mid - obsidian_half - window_h)
-        rock_win = in_t & (s_grid >= S_mid + obsidian_half + 1) \
-            & (s_grid <= S_mid + obsidian_half + window_h)
-        terrain[in_t] = OBSIDIAN
-        terrain[water_win] = GRASS
-        terrain[water_win & (abs_t <= water_half)] = WATER
-        terrain[rock_win] = GRASS
-        terrain[rock_win & (abs_t <= rock_half)] = ROCK
-
-        cue_t = C + thick_half + 2
-        cue_r = int(round((S_mid + cue_t) / 2.0))
-        cue_c = int(round((S_mid - cue_t) / 2.0))
-        if not (0 <= cue_r < H and 0 <= cue_c < W):
-            continue
-        if not is_walkable(int(terrain[cue_r, cue_c])):
-            for d in (1, -1, 2, -2):
-                rr2, cc2 = cue_r + d, cue_c + d
-                if 0 <= rr2 < H and 0 <= cc2 < W and is_walkable(int(terrain[rr2, cc2])):
-                    cue_r, cue_c = rr2, cc2
-                    break
-            else:
-                continue
-        cue_tile = CUE_WATER_THIN if thinner == "water" else CUE_ROCK_THIN
-        terrain[cue_r, cue_c] = cue_tile
-        cue_positions.append((cue_r, cue_c, int(cue_tile)))
-
-    spawn, target = (H - 1, 0), (0, W - 1)
-    _clear_bubble(terrain, spawn, target, H, W)
-    terrain[target] = TARGET
-    return MapRecord(terrain, spawn, target, list(centers), thinner_choice,
-                     cue_positions, int(seed), "diagonal")
-
-
-def _build_vertical(H, W, seed, n_stripes, thick_half, thin_half, obsidian_half, window_h=None):
-    """Full-height vertical walls crossed mid-L→mid-R.
-
-    Each wall at column ``C`` is **WATER above the centre row, ROCK below**, with
-    a central **obsidian divider** between them — and that divider is the *only*
-    obsidian. Water/rock fill all the way to the top / bottom edges, so column
-    ``C`` is water→obsidian→rock top-to-bottom and can't be skirted, yet there is
-    no obsidian on the top/bottom sides. The WATER column-width is
-    ``2·water_half+1`` and ROCK ``2·rock_half+1`` (one thick, one thin); the
-    agent meets the divider at the centre and goes up (bridge water) or down
-    (mine rock)."""
-    rng = np.random.default_rng(seed)
-    terrain = np.full((H, W), GRASS, dtype=np.int8)
-    R_mid = float(H // 2)           # integer centre row → symmetric divider
-    rr = np.arange(H, dtype=np.int32)[:, None]
-    cc = np.arange(W, dtype=np.int32)[None, :]
-
-    centers = _vert_centers(W, n_stripes)
-    thinner_choice: list[str] = []
-    cue_positions: list[tuple[int, int, int]] = []
-
-    for C in centers:
-        thinner = "water" if rng.random() < 0.5 else "rock"
-        thinner_choice.append(thinner)
-        water_half = thin_half if thinner == "water" else thick_half
-        rock_half = thin_half if thinner == "rock" else thick_half
-
-        abs_c = np.abs(cc - C)
-        # central obsidian divider spans the full wall width (so the grass
-        # approach lanes can't slip past it); water above it, rock below — both
-        # reaching the map edges (no obsidian on the top/bottom sides).
-        divider = (np.abs(rr - R_mid) <= obsidian_half) & (abs_c <= thick_half)
-        water_reg = (rr <= R_mid - obsidian_half - 1) & (abs_c <= water_half)
-        rock_reg = (rr >= R_mid + obsidian_half + 1) & (abs_c <= rock_half)
-        terrain[np.broadcast_to(divider, terrain.shape)] = OBSIDIAN
-        terrain[np.broadcast_to(water_reg, terrain.shape)] = WATER
-        terrain[np.broadcast_to(rock_reg, terrain.shape)] = ROCK
-
-        cue_r, cue_c = int(round(R_mid)), C - thick_half - 2
-        if not (0 <= cue_r < H and 0 <= cue_c < W):
-            continue
-        if not is_walkable(int(terrain[cue_r, cue_c])):
-            for d in (1, -1, 2, -2):
-                rr2 = cue_r + d
-                if 0 <= rr2 < H and is_walkable(int(terrain[rr2, cue_c])):
-                    cue_r = rr2
-                    break
-            else:
-                continue
-        cue_tile = CUE_WATER_THIN if thinner == "water" else CUE_ROCK_THIN
-        terrain[cue_r, cue_c] = cue_tile
-        cue_positions.append((cue_r, cue_c, int(cue_tile)))
-
-    rmid = int(round(R_mid))
-    spawn, target = (rmid, 0), (rmid, W - 1)
-    _clear_bubble(terrain, spawn, target, H, W)
-    terrain[target] = TARGET
-    return MapRecord(terrain, spawn, target, list(centers), thinner_choice,
-                     cue_positions, int(seed), "vertical")
+    return _build_natural(H, W, seed, water_frac, rock_frac, tree_frac, goal_half=goal_half)
 
 
 # ───────────────────────── natural (open) terrain ─────────────────────────
@@ -298,12 +128,13 @@ def _build_natural(H, W, seed, water_frac, rock_frac, tree_frac=0.06, edge_band=
     (round), mountains, and ridges; thresholded so ~``water_frac`` of cells are
     WATER (low), ~``rock_frac`` are ROCK (high), the rest GRASS. A few small
     **impassable TREE patches** (~``tree_frac``) are sprinkled on the grass
-    (walk-around-only). WATER is fringed with cosmetic SAND, ROCK with DIRT
-    (both behave like grass). The left and right ``edge_band`` columns are kept
-    obstacle-free. Spawn = centre of the left edge; the goal is the **whole right
-    wall** (touch it to win). A guard thins tree patches if they ever block the
-    goal. Obstacle sizes are deliberately varied (mostly small, a few large) and
-    on the small side."""
+    (walk-around-only), heavily biased toward the top & bottom walls so the
+    along-the-wall route to the centre door gets clogged with forest. WATER is
+    fringed with cosmetic SAND, ROCK with DIRT (both behave like grass). The
+    left and right ``edge_band`` columns are kept obstacle-free. Spawn = centre
+    of the left edge; the goal is on the right wall (touch it to win). A guard
+    thins tree patches if they ever block the goal. Obstacle sizes are
+    deliberately varied (mostly small, a few large) and on the small side."""
     import opensimplex
     from scipy.ndimage import map_coordinates, binary_dilation
 
@@ -412,7 +243,7 @@ def _build_natural(H, W, seed, water_frac, rock_frac, tree_frac=0.06, edge_band=
             for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 nr, nc = r + dr, c + dc
                 if 0 <= nr < H and 0 <= nc < W and not seen[nr, nc] \
-                        and terr[nr, nc] != OBSIDIAN and terr[nr, nc] != TREE:
+                        and terr[nr, nc] != TREE:
                     seen[nr, nc] = True
                     q.append((nr, nc))
         return False
@@ -421,14 +252,21 @@ def _build_natural(H, W, seed, water_frac, rock_frac, tree_frac=0.06, edge_band=
     patches, placed, attempts = [], 0, 0
     while placed < target_trees and attempts < 100:
         attempts += 1
-        # Bias tree rows toward the top & bottom edges (a *slight* U-shape) so the
-        # along-the-wall route gets clogged and edge-hugging is less effective on
-        # average. arcsine = U-shaped; blended 50/50 with uniform → mild bias.
+        # STRONG edge bias for tree rows: forests cluster hard against the top &
+        # bottom walls and stay sparse in the vertical middle, so wall-hugging to
+        # the centre door is blocked by forest. arcsine = U-shaped (dense near 0
+        # and 1); blended 85/15 with uniform for a heavy edge bias. Patches may
+        # land right against the top/bottom edge rows (pr ∈ [0, H-1]).
+        # Heavy edge bias: pick a small distance-from-the-nearest-wall and snap
+        # to the top or bottom edge. ``d = u**3`` concentrates the mass near 0
+        # (the wall) so most patches sit in the outer ~15% of rows; a few stray
+        # deeper. This makes the top/bottom walls a dense forest band while the
+        # vertical middle stays largely open.
         u = rng.random()
-        arc = math.sin(math.pi / 2.0 * u) ** 2          # arcsine, dense near 0 and 1
-        frac = 0.5 * u + 0.5 * arc
-        pr = int(round(2 + frac * (H - 4)))
-        pr = min(max(pr, 2), H - 3)
+        d = u ** 3 * 0.5                                 # 0 (at wall) .. 0.5 (centre)
+        frac = d if rng.random() < 0.5 else 1.0 - d
+        pr = int(round(frac * (H - 1)))
+        pr = min(max(pr, 0), H - 1)
         pc = int(rng.integers(eb, W - eb))
         rad = int(rng.integers(1, 3))               # small forests (radius 1–2)
         patch = (((rr - pr) ** 2 + (cc - pc) ** 2 <= rad * rad) & (terrain == GRASS)
@@ -442,28 +280,17 @@ def _build_natural(H, W, seed, water_frac, rock_frac, tree_frac=0.06, edge_band=
     while patches and not _reachable(terrain):
         terrain[patches.pop()] = GRASS
 
-    return MapRecord(terrain, spawn, target, [], [], [], int(seed),
-                     "natural", goal_cells)
-
-
-def _clear_bubble(terrain, spawn, target, H, W):
-    """Clear any water/rock in the 3×3 neighbourhood of spawn/target (not obsidian)."""
-    for (sr, sc) in (spawn, target):
-        for dr in (-1, 0, 1):
-            for dc in (-1, 0, 1):
-                r, c = sr + dr, sc + dc
-                if 0 <= r < H and 0 <= c < W and terrain[r, c] in (WATER, ROCK):
-                    terrain[r, c] = GRASS
+    return MapRecord(terrain, spawn, target, int(seed), "natural", goal_cells)
 
 
 # ──────────────────────────────────────────────────────────────────────────
 
 
 def is_reachable(rec: MapRecord) -> bool:
-    """BFS treating in-bounds cells as passable unless inviolable (OBSIDIAN /
-    TREE). Confirms that *with* mining/bridging the agent can reach the target —
-    used as a contract test (no inviolable wall isolates spawn from target)."""
-    from .tiles import OBSIDIAN, TREE
+    """BFS treating in-bounds cells as passable unless inviolable (TREE).
+    Confirms that *with* mining/bridging the agent can reach the target — used
+    as a contract test (no tree wall isolates spawn from target)."""
+    from .tiles import TREE
     H, W = rec.terrain.shape
     sr, sc = rec.spawn
     tr, tc = rec.target
@@ -477,7 +304,7 @@ def is_reachable(rec: MapRecord) -> bool:
         for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
             nr, nc = r + dr, c + dc
             if 0 <= nr < H and 0 <= nc < W and not seen[nr, nc]:
-                if rec.terrain[nr, nc] != OBSIDIAN and rec.terrain[nr, nc] != TREE:
+                if rec.terrain[nr, nc] != TREE:
                     seen[nr, nc] = True
                     stack.append((nr, nc))
     return False

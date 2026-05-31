@@ -1,3 +1,12 @@
+# ============================ DEPRECATED ============================
+# This sweep targets the RETIRED diagonal/vertical STRIPE task (obsidian walls
+# + cue tiles + thin-side accuracy). As of 2026-05-31 zebra_nav is natural-only
+# (9-tile vocab, no obsidian/cues, stripes removed) and the flags below
+# (--orientation=vertical, --n-stripes, metric thin_side/rolling100) NO LONGER
+# EXIST in scripts/train_ppo_zebra.py — running this sweep will error.
+# Use scripts/zebra_natural_sweep.yaml instead. Kept only for provenance.
+# ====================================================================
+#
 # W&B sweep for PPO-GRU on the zebra_nav POMDP (32×32).
 #
 # Goal: an agent that solves the task AND commits to the THINNER side at every

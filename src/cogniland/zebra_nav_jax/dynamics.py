@@ -35,13 +35,11 @@ _FACE_DCOL = jnp.array([0, 0, -1, 1], dtype=jnp.int32)
 
 def _is_walkable(tile: jax.Array) -> jax.Array:
     """Mirror of ``zebra_nav.tiles.is_walkable``: GRASS, WOOD, TARGET,
-    CUE_WATER_THIN, CUE_ROCK_THIN, SAND, DIRT."""
+    SAND, DIRT."""
     return (
         (tile == C.GRASS)
         | (tile == C.WOOD)
         | (tile == C.TARGET)
-        | (tile == C.CUE_WATER_THIN)
-        | (tile == C.CUE_ROCK_THIN)
         | (tile == C.SAND)
         | (tile == C.DIRT)
     )

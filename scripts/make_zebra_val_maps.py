@@ -6,7 +6,7 @@ evaluation, so "what you validate on" == "what you play". Stores a list of
 ``MapRecord`` dataclasses plus the generation metadata, and writes a preview PNG.
 
     python scripts/make_zebra_val_maps.py                      # default: natural, 16 maps
-    python scripts/make_zebra_val_maps.py --orientation diagonal --n 12
+    python scripts/make_zebra_val_maps.py --n 12 --goal-half 4
 """
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ from cogniland.zebra_nav.mapgen import is_reachable  # noqa: E402
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--orientation", default="natural",
-                   choices=("natural", "diagonal", "vertical"))
+    p.add_argument("--orientation", default="natural", choices=("natural",),
+                   help="only natural is supported (stripe orientations retired)")
     p.add_argument("--n", type=int, default=16, help="number of validation maps")
     p.add_argument("--seed-start", type=int, default=10_000,
                    help="held-out seeds (kept distinct from training's random seeds)")

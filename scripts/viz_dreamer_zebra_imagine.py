@@ -80,9 +80,8 @@ ACTION_NAMES = ["up", "down", "left", "right", "place", "mine"]
 # ── Crafter-sprite rendering (mirrors scripts/play_zebra.py) ───────────
 _SPRITE_DIR = _ROOT / "src/cogniland/assets/sprites"
 _BASE = {T.GRASS: "grass", T.WATER: "water", T.ROCK: "stone", T.WOOD: "path",
-         T.OBSIDIAN: "lava", T.TREE: "tree", T.SAND: "sand", T.DIRT: "path",
-         T.TARGET: "grass", T.CUE_WATER_THIN: "grass", T.CUE_ROCK_THIN: "grass"}
-_OVERLAY = {T.TARGET: "flag", T.CUE_WATER_THIN: "diamond", T.CUE_ROCK_THIN: "diamond"}
+         T.TREE: "tree", T.SAND: "sand", T.DIRT: "path", T.TARGET: "grass"}
+_OVERLAY = {T.TARGET: "flag"}
 # facing ids F_UP/F_DOWN/F_LEFT/F_RIGHT = 0/1/2/3 == move-action ids
 _FACE_SPRITE = {0: "player-up", 1: "player-down", 2: "player-left", 3: "player-right"}
 _BG = (18, 22, 30)
@@ -180,14 +179,11 @@ def _flatten_obs(obs: dict) -> jax.Array:
     ], axis=-1)
 
 
-# Tile ids that actually occur in natural maps (+ WOOD, placed at runtime).
-# The decoder REGRESSES a single scalar = tile_id/NUM_TILES, so a blurry / on-the-
-# boundary prediction can land *between* real classes and round into an unused id:
-# 2(rock)..4(wood) -> 3 OBSIDIAN(lava), 4..7(target) -> 5/6 CUE(diamond). Snapping
-# the continuous prediction to the nearest VALID id removes those phantom tiles.
-_NATURAL_PALETTE = np.array(
-    [C.GRASS, C.WATER, C.ROCK, C.WOOD, C.TARGET, C.TREE, C.SAND, C.DIRT], dtype=np.int64
-)
+# With the natural-only 9-tile vocab, EVERY id (0..8) is a real tile, so the
+# palette is just the full id range and palette-snapping is effectively a no-op
+# (kept so the --palette natural flag still works without changing the decode
+# path). The obsidian/cue phantom-tile problem is gone with those tiles removed.
+_NATURAL_PALETTE = np.arange(C.NUM_TILES, dtype=np.int64)
 
 
 def _decode_to_tiles(flat_pred: np.ndarray, view: int, palette=None) -> np.ndarray:

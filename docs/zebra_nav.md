@@ -7,23 +7,32 @@ This doc is the map of *what is where*.
 > For the **whole-repo** map (all clusters, dependency diagrams, and a
 > keep/legacy/remove inventory), see [`codebase_map.md`](codebase_map.md).
 
+> **Natural-only (2026-05-31).** The env is now a single **natural** orientation
+> with a contiguous **9-tile** vocabulary
+> (`GRASS WATER ROCK WOOD TARGET OOB TREE SAND DIRT`). The obsidian wall + cue
+> tiles and the diagonal/vertical **stripe orientations are retired** — they
+> caused phantom lava/diamond decoder artifacts. **TREE is the only inviolable
+> tile.** Old stripe agents are deleted and the `natural_*` checkpoints are
+> stale under the new ids (retraining in progress).
+
 ```
 src/cogniland/zebra_nav/        the environment package (pure numpy + gymnasium)
-  tiles.py                      tile ids, colours, walkability (grass/water/rock/
-                                obsidian/wood/cues/target/tree/sand/dirt)
-  mapgen.py                     procedural map generation (3 orientations) + MapRecord
+  tiles.py                      9 tile ids, colours, walkability
+                                (grass/water/rock/wood/target/oob/tree/sand/dirt)
+  mapgen.py                     procedural natural-map generation + MapRecord
   env.py                        ZebraNavEnv: obs, actions, reward, cost-to-go shaping
   _solver.py                    BFS reference solver (used as a solvability test)
   __init__.py                   exports ZebraNavEnv, generate_zebra_map, tiles
+src/cogniland/zebra_nav_jax/    pure-JAX parity port (DreamerV3); mirrors tiles/dynamics
 
 scripts/
   train_ppo_zebra.py            PPO+GRU trainer (single file; W&B optional)
-  eval_zebra_agent.py           deterministic eval grid + success / thin-side
+  eval_zebra_agent.py           deterministic eval grid + success (thin-side retired → 0)
   zebra_traj_grid.py            overlay N stochastic rollouts (path=blue, mine=yellow, bridge=red)
   play_zebra.py                 pygame demo — human or AI, mining/bridge animations
-  make_zebra_val_maps.py        curate the fixed validation/demo map set
-  zebra_sweep.yaml              W&B sweep: diagonal/vertical cue-following
+  make_zebra_val_maps.py        curate the fixed validation/demo map set (natural)
   zebra_natural_sweep.yaml      W&B sweep: natural maps
+  zebra_sweep.yaml              DEPRECATED stripe sweep (will error — kept for provenance)
   launch_zebra_sweep.sh         launch N parallel sweep agents (default ~9 runs)
 
 tests/test_zebra_nav.py         env + mapgen contract tests (run: pytest tests/test_zebra_nav.py)
@@ -39,16 +48,14 @@ WATER→WOOD) or **mine** (MINE turns ROCK→GRASS), or walk around. Observation
 an egocentric `view_size × view_size` crop of tile ids + a scalar vector
 (`facing` one-hot + step fraction) — so it's partially observed.
 
-Three map **orientations** (`generate_zebra_map(orientation=...)`, env
-`--orientation`):
+One map type, **natural** (`generate_zebra_map(orientation="natural")`, env
+`--orientation natural`; any other value raises):
 
-- **diagonal** — BL→TR; diagonal obsidian walls, each with a WATER and a ROCK
-  crossing window; a cue says which side is **thinner**. Goal = read cue, cross thin.
-- **vertical** — midL→midR (32×64); full-height walls, water-top/rock-bottom with
-  an obsidian divider; same cue→thin-side task.
 - **natural** — midL→right wall (32×64); open procedural terrain: lakes (bridge),
   mountains/ridges (mine), impassable **tree** patches (walk around), with cosmetic
-  sand/dirt fringes. Goal = a **central door** on the right wall. Behaviour
+  sand/dirt fringes. Trees cluster heavily along the **top & bottom walls** so naive
+  wall-hugging to the door is blocked by forest. Goal = a **central door** on the
+  right wall (`goal_half=1` ⇒ 3-cell door; `None` ⇒ whole wall). Behaviour
   (cross-vs-detour) emerges from minimising episode length.
 
 Actions: `Discrete(6)` — up / down / left / right (a move also sets `facing`) +
@@ -58,10 +65,9 @@ PLACE (bridge water in front) + MINE (mine rock in front).
 
 `slack` per action + `reach_bonus` on the goal + PBRS shaping with potential
 `φ = −ctg`, where `ctg` is a **min-action** cost-to-go (entering water/rock costs
-2 = build+move, grass 1, obsidian/tree impassable). With `build_cost=0` this makes
-the agent minimise total actions; `build_cost>0` makes crossings costlier so it
-prefers detours. The cue-following stripe agents add a per-build cost to favour
-the thin side.
+2 = build+move, grass 1, tree impassable). With `build_cost=0` this makes the
+agent minimise total actions; `build_cost>0` makes crossings costlier so it
+prefers detours.
 
 ## Quickstart
 
@@ -70,8 +76,7 @@ conda activate crusoe && pip install -e .          # one-time
 pytest tests/test_zebra_nav.py                     # sanity
 
 # play a released agent on the validation maps
-python scripts/play_zebra.py --checkpoint models/zebra_nav/natural_agent.pt \
-    --maps data/zebra_nav/val_maps.pkl
+python scripts/play_zebra.py --checkpoint models/zebra_nav/natural_agent.pt
 
 # train from scratch (reproduce the natural agent)
 python scripts/train_ppo_zebra.py --config models/zebra_nav/natural_agent.yaml \

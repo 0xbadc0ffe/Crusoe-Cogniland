@@ -83,7 +83,7 @@ def main():
     cargs = ckpt["args"]
     env_size = cargs.get("env_size", 32)
     env_width = cargs.get("env_width") or env_size
-    orientation = cargs.get("orientation", "diagonal")
+    orientation = cargs.get("orientation", "natural")
     device = torch.device(args.device)
 
     # build a dummy env to recover obs space, then the policy
@@ -105,12 +105,12 @@ def main():
     successes, lengths, thin_correct, thin_total = [], [], 0, 0
     for j in range(args.n_maps):
         seed = args.eval_seed_start + j
-        rec = generate_zebra_map(size=env_size, width=env_width, seed=seed,
-                                 n_stripes=cargs.get("n_stripes", 4),
-                                 thick_half=cargs.get("thick_half", 3),
-                                 thin_half=cargs.get("thin_half", 1),
-                                 obsidian_half=cargs.get("obsidian_half", 1),
-                                 orientation=orientation)
+        rec = generate_zebra_map(
+            size=env_size, width=env_width, seed=seed, orientation=orientation,
+            water_frac=cargs.get("water_frac", 0.14),
+            rock_frac=cargs.get("rock_frac", 0.14),
+            tree_frac=cargs.get("tree_frac", 0.03),
+            goal_half=cargs.get("goal_half"))
         traj, builds, reached, steps, n_ok, n_tot = rollout(
             policy, rec, device, args.max_steps, deterministic=not args.stochastic,
             view_size=cargs.get("view_size", 11))

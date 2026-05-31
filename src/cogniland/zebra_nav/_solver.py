@@ -2,7 +2,7 @@
 
 Used as an end-to-end *solvability test* — proves a deterministic policy can
 reach the target from the env's natural maps using only the in-game actions
-(move / mine / place). The solver re-plans every step, treating obsidian as
+(move / mine / place). The solver re-plans every step, treating TREE as
 the only absolutely-impassable tile; rock and water are crossed by emitting
 the corresponding MINE / PLACE action when the agent faces them.
 """
@@ -14,7 +14,7 @@ from .env import (
     A_DOWN, A_LEFT, A_MINE, A_PLACE, A_RIGHT, A_UP,
     F_DOWN, F_LEFT, F_RIGHT, F_UP, ZebraNavEnv,
 )
-from .tiles import OBSIDIAN, ROCK, TREE, WATER
+from .tiles import ROCK, TREE, WATER
 
 _FACE_TO_MOVE = {F_UP: A_UP, F_DOWN: A_DOWN, F_LEFT: A_LEFT, F_RIGHT: A_RIGHT}
 
@@ -47,7 +47,7 @@ def _bfs_path(terrain, start, goal):
         for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
             nr, nc = r + dr, c + dc
             if 0 <= nr < H and 0 <= nc < W and (nr, nc) not in seen \
-                    and terrain[nr, nc] != OBSIDIAN and terrain[nr, nc] != TREE:
+                    and terrain[nr, nc] != TREE:
                 seen[(nr, nc)] = (r, c)
                 q.append((nr, nc))
     return None

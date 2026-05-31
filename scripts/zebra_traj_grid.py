@@ -104,7 +104,7 @@ def main():
     env_size = cargs.get("env_size", 32)
     env_width = cargs.get("env_width") or env_size
     view_size = cargs.get("view_size", 11)
-    orientation = cargs.get("orientation", "diagonal")
+    orientation = cargs.get("orientation", "natural")
     device = torch.device(args.device)
 
     dummy = ZebraNavEnv(size=env_size, width=env_width, view_size=view_size)
@@ -131,10 +131,6 @@ def main():
         seed = args.eval_seed_start + j
         _gh = cargs.get("goal_half")
         rec = generate_zebra_map(size=env_size, width=env_width, seed=seed,
-                                 n_stripes=cargs.get("n_stripes", 4),
-                                 thick_half=cargs.get("thick_half", 3),
-                                 thin_half=cargs.get("thin_half", 1),
-                                 obsidian_half=cargs.get("obsidian_half", 1),
                                  orientation=orientation,
                                  # natural-only knobs — match the training config
                                  water_frac=cargs.get("water_frac", 0.14),

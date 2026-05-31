@@ -210,12 +210,10 @@ def main():
     parser.add_argument("--env-width", type=int, default=None,
                         help="map width (default = env-size, i.e. square)")
     parser.add_argument("--view-size", type=int, default=11)
-    parser.add_argument("--n-stripes", type=int, default=4)
-    parser.add_argument("--orientation", default="diagonal",
-                        choices=("diagonal", "vertical", "natural", "mixed"),
-                        help="layout: diagonal (BL→TR) | vertical (midL→midR) | "
-                             "natural (open lakes/mountains/trees, midL→right wall) | "
-                             "mixed (random per episode)")
+    parser.add_argument("--orientation", default="natural",
+                        choices=("natural",),
+                        help="layout: natural (open lakes/mountains/trees, "
+                             "midL→right wall). Stripe orientations are retired.")
     parser.add_argument("--water-frac", type=float, default=0.14, help="natural: water coverage")
     parser.add_argument("--rock-frac", type=float, default=0.14, help="natural: rock coverage")
     parser.add_argument("--tree-frac", type=float, default=0.03,
@@ -223,9 +221,6 @@ def main():
     parser.add_argument("--goal-half", type=int, default=-1,
                         help="natural goal: <0 ⇒ whole right wall (diverse endpoints); "
                              "N ⇒ central door of half-height N (funnels to centre)")
-    parser.add_argument("--thick-half", type=int, default=3)
-    parser.add_argument("--thin-half", type=int, default=1)
-    parser.add_argument("--obsidian-half", type=int, default=1)
     parser.add_argument("--max-steps", type=int, default=1000,
                         help="generous episode timeout — success measures whether "
                              "the agent reaches the target at all, not its speed")
@@ -238,8 +233,8 @@ def main():
     parser.add_argument("--shaping-coef", type=float, default=0.01)
     parser.add_argument("--reach-bonus", type=float, default=1.0)
     parser.add_argument("--build-cost", type=float, default=0.05,
-                        help="extra penalty per successful PLACE/MINE — makes the "
-                             "thick (7-cell) side cost more than the thin (3-cell)")
+                        help="extra penalty per successful PLACE/MINE — makes "
+                             "crossing an obstacle cost more than walking around it")
     # PPO
     parser.add_argument("--update-epochs", type=int, default=4)
     parser.add_argument("--num-minibatches", type=int, default=4)
@@ -297,8 +292,6 @@ def main():
     vec = VecZebraEnv(
         args.num_envs, size=args.env_size, width=args.env_width,
         view_size=args.view_size, orientation=args.orientation,
-        n_stripes=args.n_stripes, thick_half=args.thick_half,
-        thin_half=args.thin_half, obsidian_half=args.obsidian_half,
         max_steps=args.max_steps, slack_penalty=args.slack_penalty,
         shaping_coef=args.shaping_coef, reach_bonus=args.reach_bonus,
         build_cost=args.build_cost, gamma=args.gamma, seed=args.seed,

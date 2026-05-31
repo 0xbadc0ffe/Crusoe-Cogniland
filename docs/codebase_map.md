@@ -67,11 +67,17 @@ Two envs that are **proven bit-for-bit equivalent** (`tests/test_zebra_jax_parit
 the PyTorch `ZebraNavEnv` is the oracle for PPO + the demo; the JAX `ZebraNavJaxEnv`
 is the same task made jittable/vmappable so DreamerV3 can train on it.
 
+> **Natural-only (2026-05-31).** 9-tile vocab
+> (`GRASS WATER ROCK WOOD TARGET OOB TREE SAND DIRT`), no obsidian/cue tiles, no
+> diagonal/vertical stripe orientations (retired — caused phantom lava/diamond
+> decoder artifacts). TREE is the sole inviolable tile. Old stripe checkpoints
+> deleted; `natural_*` checkpoints are stale under the new ids (retraining).
+
 ```mermaid
 flowchart LR
     subgraph SRC["src/cogniland/zebra_nav/  (PyTorch, gymnasium)"]
-        T["tiles.py<br/>12 tile ids, colours, walkability"]
-        M["mapgen.py<br/>generate_zebra_map(): natural | diagonal | vertical"]
+        T["tiles.py<br/>9 tile ids, colours, walkability (natural-only)"]
+        M["mapgen.py<br/>generate_zebra_map(): natural only (stripes retired)"]
         E["env.py<br/>ZebraNavEnv: obs, step, reward, min-action ctg"]
         S["_solver.py<br/>BFS reference (tests)"]
         T --> M --> E
@@ -114,7 +120,7 @@ flowchart LR
 | `src/cogniland/zebra_nav_jax/{constants,state,dynamics,render,env,maps,__init__}.py` | JAX port (Dreamer target + parity) | ✅ core |
 | `scripts/train_ppo_zebra.py` | PPO+GRU trainer; defines `PPOGRUPolicy` reused by eval/grid scripts via importlib | ✅ core (entry) |
 | `scripts/dreamerv3_zebra_nav.py` | DreamerV3 trainer (single file) | ✅ core (entry) |
-| `scripts/eval_zebra_agent.py` | deterministic eval grid + success/thin-side | ✅ core (entry) |
+| `scripts/eval_zebra_agent.py` | deterministic eval grid + success (thin-side retired → 0) | ✅ core (entry) |
 | `scripts/zebra_traj_grid.py` | N-rollout stochastic trajectory grid (PPO) | ✅ core (entry) |
 | `scripts/zebra_strategy_examples.py` | one clean rollout per strategy (avoid/bridge/tunnel) | ✅ core (entry) |
 | `scripts/viz_dreamer_zebra_traj.py` | trajectory grid for the **Dreamer** agent | ✅ core (entry) |
@@ -123,7 +129,8 @@ flowchart LR
 | `tests/test_zebra_nav.py`, `tests/test_zebra_jax_parity.py` | env contract + JAX↔PyTorch parity gate | ✅ core |
 | `models/zebra_nav/*.pt` + `*.yaml` | released agents + reproducible configs | ✅ core (artifacts) |
 | `data/zebra_nav/val_maps.pkl`, `data/zebra_nav_jax/train_*.pkl` | demo/val maps; Dreamer training dataset (regenerable) | ✅ core (artifacts) |
-| `scripts/zebra_sweep.yaml`, `zebra_natural_sweep.yaml`, `launch_zebra_sweep.sh` | W&B sweeps | ✅ core (tools) |
+| `scripts/zebra_natural_sweep.yaml`, `launch_zebra_sweep.sh` | W&B sweeps (natural) | ✅ core (tools) |
+| `scripts/zebra_sweep.yaml` | DEPRECATED stripe sweep (will error — references retired flags) | 🟡 legacy |
 
 > **Reused-via-importlib pattern:** `eval_zebra_agent.py`, `zebra_traj_grid.py`,
 > and `zebra_strategy_examples.py` import `PPOGRUPolicy` from `train_ppo_zebra.py`
