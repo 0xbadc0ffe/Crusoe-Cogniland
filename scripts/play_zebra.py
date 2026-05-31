@@ -259,24 +259,31 @@ def _draw_arrow(win, rect, action, color):
     pygame.draw.polygon(win, color, pts)
 
 
-def _pad_button(win, rect, action, prob, flash_on, small):
+def _shadow_text(win, font, text, cx, by):
+    """White text with a 1px dark drop-shadow (readable on any button fill)."""
+    fg = font.render(text, True, (245, 247, 250))
+    sh = font.render(text, True, (18, 22, 30))
+    x = cx - fg.get_width() // 2
+    win.blit(sh, (x + 1, by + 1)); win.blit(fg, (x, by))
+
+
+def _pad_button(win, rect, action, prob, flash_on, small, small_bold):
     col = (255, 232, 64) if flash_on else _prob_color(prob)
     pygame.draw.rect(win, col, rect, border_radius=7)
     pygame.draw.rect(win, (255, 255, 255) if flash_on else (120, 140, 175),
                      rect, 2 if flash_on else 1, border_radius=7)
-    lum = 0.299 * col[0] + 0.587 * col[1] + 0.114 * col[2]   # readable ink on any fill
-    ink = (20, 24, 32) if lum > 130 else (215, 222, 235)
     if action in (A_UP, A_DOWN, A_LEFT, A_RIGHT):
-        _draw_arrow(win, rect, action, ink)
-    else:
-        lbl = small.render(_ACT_LABEL[action], True, ink)
-        win.blit(lbl, (rect.centerx - lbl.get_width() // 2, rect.centery - lbl.get_height()))
+        _draw_arrow(win, rect, action, (245, 247, 250))
+    else:                                            # build / mine — bold label
+        lbl = small_bold.render(_ACT_LABEL[action], True, (245, 247, 250))
+        _shadow_text(win, small_bold, _ACT_LABEL[action], rect.centerx,
+                     rect.centery - lbl.get_height())
     if prob is not None:
-        pt = small.render(f"{prob * 100:.0f}%", True, ink)
-        win.blit(pt, (rect.centerx - pt.get_width() // 2, rect.bottom - pt.get_height() - 3))
+        _shadow_text(win, small, f"{prob * 100:.0f}%", rect.centerx,
+                     rect.bottom - small.get_height() - 3)
 
 
-def _draw_action_pad(win, x0, Wp, bottom_y, probs, flash, font, small):
+def _draw_action_pad(win, x0, Wp, bottom_y, probs, flash, font, small, small_bold):
     """A 4-way d-pad + build/mine buttons, each shaded by its policy probability;
     the most-recently-taken action blinks bright yellow."""
     bs = max(40, min(64, Wp // 3 - 6))
@@ -293,11 +300,11 @@ def _draw_action_pad(win, x0, Wp, bottom_y, probs, flash, font, small):
              A_RIGHT: pygame.Rect(cx0 + 2 * bs, gy + bs, bs, bs),
              A_DOWN:  pygame.Rect(cx0 + bs, gy + 2 * bs, bs, bs)}
     for a, rc in cells.items():
-        _pad_button(win, rc, a, P(a), on(a), small)
+        _pad_button(win, rc, a, P(a), on(a), small, small_bold)
     ay, gap = gy + 3 * bs + 10, 8
     aw = (Wp - gap) // 2
     for i, a in enumerate((A_PLACE, A_MINE)):
-        _pad_button(win, pygame.Rect(x0 + i * (aw + gap), ay, aw, act_h), a, P(a), on(a), small)
+        _pad_button(win, pygame.Rect(x0 + i * (aw + gap), ay, aw, act_h), a, P(a), on(a), small, small_bold)
 
 
 # ───────────────────────────── AI helper ──────────────────────────────────
@@ -363,6 +370,7 @@ def main():
     big = pygame.font.SysFont("monospace", 34, bold=True)
     font = pygame.font.SysFont("monospace", 20)
     small = pygame.font.SysFont("monospace", 15)
+    small_bold = pygame.font.SysFont("monospace", 16, bold=True)
     clock = pygame.time.Clock()
 
     agents = _scan_agents()
@@ -555,7 +563,8 @@ def main():
             S["effects"][:] = [e for e in S["effects"] if e.alive()]
             # live policy action-distribution pad in the bottom of the right panel
             _padx = S["main_px"] + 14
-            _draw_action_pad(win, _padx, W0 - _padx - 14, H0 - 14, S["probs"], S["flash"], font, small)
+            _draw_action_pad(win, _padx, W0 - _padx - 14, H0 - 64, S["probs"], S["flash"],
+                             font, small, small_bold)
             if S["flash"]:
                 S["flash"]["t"] -= 1
                 if S["flash"]["t"] <= 0:
