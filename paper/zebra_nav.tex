@@ -331,18 +331,25 @@ so all three modes are well represented.}
 \section{DreamerV3 imagination}
 
 Because DreamerV3 learns a world model, we can roll it forward \emph{in
-imagination} (latent rollouts under the actor, no environment) and decode each
-imagined latent back to an egocentric view. Figure~\ref{fig:dream} plays such a
-dream, decoded to Crafter sprites: warmup frames are real, then the model imagines
-moving and crossing obstacles, predicting coherent grass/water/rock/tree terrain.
+imagination}: condition the RSSM on a few real frames, then let it predict the
+rest open-loop (prior only, no further observations) while the chosen actions
+still drive the real env, and decode each latent back to an egocentric view.
+Figure~\ref{fig:dream} compares the model's decode (top) against the
+\textbf{ground-truth} env observation (bottom) on a demo map.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=\linewidth]{figures/zebra_nav/dreamer_imagine_strip.png}
-\caption{A DreamerV3 imagined rollout decoded to sprites (green border = real
-warmup, red = open-loop imagination). The world model imagines coherent terrain
---- including the edge tree bands --- and dreams mining/placing through the
-middle.}
+\caption{Open-loop prediction vs.\ reality on a demo map (sprites). \textbf{Top
+row} = the model's decoded egocentric view; \textbf{bottom row} = the
+ground-truth env observation at the same step. \textcolor{green!60!black}{Green}
+columns are the closed-loop warmup (posterior conditioned on the real obs, so the
+top row is a faithful \emph{reconstruction}); \textcolor{red}{red} columns are
+open-loop imagination (prior only). The reconstruction tracks reality closely;
+the open-loop prediction stays plausible (grass/water/rock) but drifts from the
+true map --- it does not reproduce the tree cluster and occasionally hallucinates
+off-map (black) cells. (Note: the top warmup frames are decoder reconstructions,
+\emph{not} the raw observation --- which is exactly the bottom row.)}
 \label{fig:dream}
 \end{figure}
 

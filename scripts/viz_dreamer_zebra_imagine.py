@@ -287,8 +287,6 @@ def rollout_and_imagine(models, wm_params, ac_params, env, params, cfg,
         return prior, action_idx, next_oh, rec_pred, rew
 
     frames = []
-
-    # ── REAL warmup ────────────────────────────────────────────────
     key, kr = jax.random.split(key)
     obs, state = env.reset_env(kr, params)
     obs = jax.tree_util.tree_map(lambda x: x[None], obs)        # add batch dim
@@ -296,49 +294,43 @@ def rollout_and_imagine(models, wm_params, ac_params, env, params, cfg,
     last_action_oh = jnp.zeros((1, A))
     is_first = jnp.ones((1,), dtype=bool)
 
-    for _ in range(warmup):
+    # One unified rollout. For the first ``warmup`` steps the RSSM is CLOSED-LOOP
+    # (posterior conditioned on the real obs); after that it is OPEN-LOOP (prior
+    # only, the model no longer sees the env). In BOTH phases the chosen action is
+    # applied to the real env, so ``gt_tiles`` is always the true egocentric obs at
+    # that step and ``tiles`` is the model's decode (a reconstruction during warmup,
+    # a pure prediction during the open-loop phase).
+    for t in range(warmup + horizon):
+        gt_mm = np.asarray(obs["minimap"][0]).astype(np.int64)   # ground-truth obs
         key, k = jax.random.split(key)
-        flat = _flatten_obs(obs)
-        rssm_state, action_idx, action_oh, rec_pred = warmup_step(
-            rssm_state, last_action_oh, is_first, flat, k,
-        )
-        a = int(action_idx[0])
-        # step the real env with the chosen action
-        key, ks = jax.random.split(key)
-        nobs, state, reward, done, info = env.step_env(
-            ks, state, action_idx[0], params,
-        )
+        if t < warmup:
+            flat = _flatten_obs(obs)
+            rssm_state, action_idx, action_oh, rec_pred = warmup_step(
+                rssm_state, last_action_oh, is_first, flat, k)
+            phase, rew = "warmup", None
+        else:
+            rssm_state, action_idx, action_oh, rec_pred, rew_arr = imagine_step(
+                rssm_state, last_action_oh, k)
+            phase, rew = "open-loop", float(rew_arr[0])
         frames.append({
-            "phase": "REAL",
+            "phase": phase,
             "tiles": _decode_to_tiles(np.asarray(rec_pred[0]), view, palette),
-            "action": a, "reward": float(reward),
+            "gt_tiles": gt_mm,
+            "action": int(action_idx[0]), "reward": rew,
         })
+        key, ks = jax.random.split(key)
+        nobs, state, reward, done, info = env.step_env(ks, state, action_idx[0], params)
         obs = jax.tree_util.tree_map(lambda x: x[None], nobs)
         last_action_oh = action_oh
         is_first = jnp.zeros((1,), dtype=bool)
-
-    # ── IMAGINED open-loop rollout from the warmed latent ──────────
-    # rssm_state is the posterior after the last real obs; last_action_oh is the
-    # action the actor chose at that step → feed it as the first imagine action.
-    action_oh = last_action_oh
-    for _ in range(horizon):
-        key, k = jax.random.split(key)
-        rssm_state, action_idx, action_oh, rec_pred, rew = imagine_step(
-            rssm_state, action_oh, k,
-        )
-        frames.append({
-            "phase": "IMAGINED",
-            "tiles": _decode_to_tiles(np.asarray(rec_pred[0]), view, palette),
-            "action": int(action_idx[0]), "reward": float(rew[0]),
-        })
     return frames
 
 
 def _frame_to_rgb(frame: dict, scale: int, sprites=None, sprite_px: int = 16,
                   facing: int = 1) -> np.ndarray:
     """Render one frame dict → uint8 RGB array (Crafter sprites if ``sprites``
-    given, else flat tile colours), with a coloured banner (green=REAL,
-    red=IMAGINED) and text overlay via matplotlib so the labels burn in."""
+    given, else flat tile colours), with a coloured banner (green=warmup/closed-
+    loop, red=open-loop imagination) and a burnt-in title."""
     big = _frame_base_rgb(frame, scale, sprites, sprite_px, facing)
 
     # draw onto a matplotlib canvas for the title text + phase banner.
@@ -347,12 +339,12 @@ def _frame_to_rgb(frame: dict, scale: int, sprites=None, sprite_px: int = 16,
     ax = fig.add_axes([0.0, 0.0, 1.0, 0.85])
     ax.imshow(big, interpolation="nearest")
     ax.set_xticks([]); ax.set_yticks([])
-    banner = "tab:green" if frame["phase"] == "REAL" else "tab:red"
+    banner = "tab:green" if frame["phase"] == "warmup" else "tab:red"
     for spine in ax.spines.values():
         spine.set_edgecolor(banner)
         spine.set_linewidth(6)
-    title = (f"{frame['phase']}   a={ACTION_NAMES[frame['action']]}   "
-             f"r={frame['reward']:+.3f}")
+    rtxt = "" if frame["reward"] is None else f"   r={frame['reward']:+.3f}"
+    title = f"{frame['phase']}   a={ACTION_NAMES[frame['action']]}{rtxt}"
     fig.text(0.5, 0.93, title, ha="center", va="center", fontsize=11,
              color=banner, fontweight="bold")
     fig.canvas.draw()
@@ -377,26 +369,40 @@ def _write_video(frames_rgb, base: Path, fps: int) -> tuple[Path, str]:
         return gif, "gif"
 
 
+def _tiles_rgb(tiles, sprites, sprite_px, facing):
+    """One tile grid → RGB (Crafter sprites if given, else flat tile colours)."""
+    if sprites is not None:
+        return _tiles_to_sprite_rgb(tiles, sprites, sprite_px, facing)
+    return T.TILE_COLORS[tiles]
+
+
 def _write_strip(frames, base: Path, every: int, sprites=None, sprite_px: int = 16,
                  facings=None) -> Path:
+    """Two-row filmstrip: TOP = the model's decoded egocentric view (a
+    reconstruction during warmup, an open-loop prediction after), BOTTOM = the
+    GROUND-TRUTH egocentric obs from the env at the same step. Green columns are
+    closed-loop warmup, red columns are open-loop imagination."""
     sel = [(i, f) for i, f in enumerate(frames) if i % every == 0]
     if (len(frames) - 1) % every != 0:        # always include the last frame
         sel.append((len(frames) - 1, frames[-1]))
     n = len(sel)
-    fig, axes = plt.subplots(1, n, figsize=(1.7 * n, 2.2))
-    axes = np.atleast_1d(axes).ravel()
-    for ax, (i, f) in zip(axes, sel):
+    fig, axes = plt.subplots(2, n, figsize=(1.7 * n, 3.7), squeeze=False)
+    for col, (i, f) in enumerate(sel):
         fc = facings[i] if facings is not None else 1
-        ax.imshow(_frame_base_rgb(f, 1, sprites, sprite_px, fc), interpolation="nearest")
-        col = "green" if f["phase"] == "REAL" else "red"
-        ax.set_title(f"t{i} {f['phase'][:4]}\n{ACTION_NAMES[f['action']]} "
-                     f"{f['reward']:+.2f}", fontsize=7, color=col)
-        ax.set_xticks([]); ax.set_yticks([])
-        for s in ax.spines.values():
-            s.set_edgecolor(col); s.set_linewidth(2)
+        c = "green" if f["phase"] == "warmup" else "red"
+        for row, key in ((0, "tiles"), (1, "gt_tiles")):
+            ax = axes[row][col]
+            ax.imshow(_tiles_rgb(f[key], sprites, sprite_px, fc), interpolation="nearest")
+            ax.set_xticks([]); ax.set_yticks([])
+            for s in ax.spines.values():
+                s.set_edgecolor(c); s.set_linewidth(2)
+        axes[0][col].set_title(f"t{i} {f['phase']}\n{ACTION_NAMES[f['action']]}",
+                               fontsize=7, color=c)
+    axes[0][0].set_ylabel("decoded\n(model)", fontsize=9)
+    axes[1][0].set_ylabel("ground truth\n(env)", fontsize=9)
     fig.tight_layout()
     out = base.with_suffix(".png")
-    fig.savefig(out, dpi=110)
+    fig.savefig(out, dpi=120)
     plt.close(fig)
     return out
 
@@ -451,12 +457,12 @@ def main():
             models, wm_params, ac_params, env, params, cfg,
             args.warmup, args.horizon, sub, palette,
         )
-        imag = [f for f in frames if f["phase"] == "IMAGINED"]
-        cum_imag_r = sum(f["reward"] for f in imag)
+        imag = [f for f in frames if f["phase"] == "open-loop"]
         acts = "".join(ACTION_NAMES[f["action"]][0] for f in imag)
-        print(f"  imagined actions: {acts}")
-        print(f"  imagined reward (head mean) sum={cum_imag_r:+.3f}  "
-              f"max={max(f['reward'] for f in imag):+.3f}")
+        print(f"  open-loop actions: {acts}")
+        if imag:
+            rs = [f["reward"] for f in imag]
+            print(f"  open-loop reward (head mean) sum={sum(rs):+.3f}  max={max(rs):+.3f}")
 
         # facing per frame: carry last move direction (default right → goal).
         facings, cur = [], 3
