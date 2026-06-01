@@ -117,14 +117,23 @@ class PPOGRUPolicy(nn.Module):
 
     def __init__(self, obs_space, num_actions: int = 6, gru_hidden: int = 128,
                  embed_dim: int = 256, tile_embed_dim: int = 16,
-                 num_tile_classes: int = NUM_TILES):
+                 num_tile_classes: int = NUM_TILES, obs_encoding: str = "embed"):
         super().__init__()
         V, _ = obs_space["minimap"].shape
         n_scalars = obs_space["scalars"].shape[0]
         self.view = V
-        self.tile_embed = nn.Embedding(num_tile_classes, tile_embed_dim)
-        nn.init.normal_(self.tile_embed.weight, std=0.5)
-        in_c = tile_embed_dim + 2                       # + CoordConv row/col
+        self.obs_encoding = obs_encoding
+        self.num_tile_classes = num_tile_classes
+        if obs_encoding == "onehot":
+            # categorical observation: one-hot the tile ids (matches the
+            # DreamerV3 categorical encoder for a fair comparison). No learned
+            # tile embedding — the CNN sees raw per-tile indicator channels.
+            self.tile_embed = None
+            in_c = num_tile_classes + 2                  # + CoordConv row/col
+        else:
+            self.tile_embed = nn.Embedding(num_tile_classes, tile_embed_dim)
+            nn.init.normal_(self.tile_embed.weight, std=0.5)
+            in_c = tile_embed_dim + 2                     # + CoordConv row/col
         self.cnn = nn.Sequential(
             _layer_init(nn.Conv2d(in_c, 32, kernel_size=3, padding=0)), nn.ReLU(),
             _layer_init(nn.Conv2d(32, 32, kernel_size=3, padding=0)), nn.ReLU(),
@@ -150,7 +159,10 @@ class PPOGRUPolicy(nn.Module):
     def _encode(self, obs):
         mm = obs["minimap"].long()                      # (B, V, V)
         B, V, _ = mm.shape
-        emb = self.tile_embed(mm)                       # (B, V, V, E)
+        if self.obs_encoding == "onehot":
+            emb = torch.nn.functional.one_hot(mm, self.num_tile_classes).float()  # (B,V,V,K)
+        else:
+            emb = self.tile_embed(mm)                   # (B, V, V, E)
         rr = torch.linspace(-1, 1, V, device=mm.device).view(1, V, 1).expand(B, V, V)
         cc = torch.linspace(-1, 1, V, device=mm.device).view(1, 1, V).expand(B, V, V)
         coords = torch.stack([rr, cc], dim=-1)          # (B, V, V, 2)
@@ -262,6 +274,9 @@ def main():
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--checkpoint-dir", type=Path, default=Path("checkpoints"))
     parser.add_argument("--save-every-iters", type=int, default=300)
+    parser.add_argument("--obs-encoding", choices=("embed", "onehot"), default="embed",
+                        help="onehot = categorical one-hot minimap (matches the DreamerV3 "
+                             "categorical encoder for a fair comparison); embed = learned tile embedding")
     parser.add_argument("--config", type=Path, default=None)
     args, _ = parser.parse_known_args()
     if args.config is not None:
@@ -301,6 +316,7 @@ def main():
     policy = PPOGRUPolicy(
         vec.single_observation_space, num_actions=vec.single_action_space.n,
         gru_hidden=args.gru_hidden, embed_dim=args.embed_dim,
+        obs_encoding=args.obs_encoding,
     ).to(device)
     optimizer = optim.Adam(policy.parameters(), lr=args.learning_rate, eps=1e-5)
     n_params = sum(p.numel() for p in policy.parameters())
