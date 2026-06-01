@@ -269,16 +269,44 @@ The $h_t$ ($3072$-d for the 25M preset) $+$ discrete $z_t$ are the latent we pro
 \label{fig:dreamer}
 \end{figure}
 
-\begin{center}\small
-\begin{tabular}{@{}lccc@{}}
+\subsection{A fair comparison}\label{sec:fair}
+To compare the two algorithms cleanly we train them on the \emph{identical}
+environment \emph{and} the \emph{identical observation}: both consume a
+\textbf{categorical one-hot} minimap ($V{\times}V{\times}9$). For PPO this replaces
+the learned tile embedding with one-hot channels into the CoordConv CNN; for
+DreamerV3 it replaces the ordinal-scalar encoder/decoder with a one-hot encoder
+and a per-cell cross-entropy decoder (\S\ref{sec:imagination}). Only the
+\emph{algorithm} then differs. Table~\ref{tab:agents} reports held-out
+trajectory-grid success ($200$ stochastic rollouts $\times$ 6 maps);
+Figure~\ref{fig:curves} shows the training curves.
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{@{}lcccc@{}}
 \toprule
-agent & success & episode return & episode length\\
+agent & observation & success (held-out) & return & episode length\\
 \midrule
-PPO + GRU      & $100\%$ & ${\approx}3.3$ & ${\approx}92$\\
-DreamerV3 (25M) & $100\%$ & ${\approx}3.4$ & ${\approx}95$\\
+PPO + GRU       & one-hot & $100\%$ & ${\approx}3.4$ & ${\approx}89$\\
+DreamerV3 (25M) & one-hot & $85\%$  & ${\approx}2.1$ & longer / variable\\
 \bottomrule
 \end{tabular}
-\end{center}
+\caption{Both on the same env + same categorical observation (only the algorithm
+differs). DreamerV3 logs ${\approx}96\%$ success \emph{during} training but
+${\approx}85\%$ in clean per-episode evaluation at $1$M steps (it was only
+${\approx}7\%$ at $500$k --- door-homing on the narrow $3$-cell goal is what the
+extra budget buys).}
+\label{tab:agents}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/zebra_nav/training_curves.png}
+\caption{Reward and success vs.\ environment steps (W\&B, rolling). On this
+symbolic task \textbf{PPO+GRU is markedly more sample-efficient} --- ${\sim}100\%$
+by ${\sim}0.2$M steps --- while DreamerV3 rises more slowly (with a mid-training
+dip near $0.5$M) to ${\sim}96\%$ by $1$M. PPO trained to $2$M, DreamerV3 to $1$M.}
+\label{fig:curves}
+\end{figure}
 
 \section{Behaviour: stochastic rollouts}
 
@@ -328,12 +356,14 @@ so all three modes are well represented.}
 \label{fig:strat}
 \end{figure}
 
-\section{DreamerV3 imagination}
+\section{DreamerV3 imagination}\label{sec:imagination}
 
 Because DreamerV3 learns a world model, we can roll it forward \emph{in
 imagination}: condition the RSSM on a few real frames, then let it predict the
 rest open-loop (prior only, no further observations) while the chosen actions
-still drive the real env, and decode each latent back to an egocentric view.
+still drive the real env, and decode each latent back to an egocentric view. The
+minimap is decoded with a \textbf{per-cell categorical (cross-entropy) head} over
+the $9$ tiles (the categorical observation of \S\ref{sec:fair}).
 Figure~\ref{fig:dream} compares the model's decode (top) against the
 \textbf{ground-truth} env observation (bottom) on a demo map.
 
@@ -353,12 +383,18 @@ off-map (black) cells. (Note: the top warmup frames are decoder reconstructions,
 \label{fig:dream}
 \end{figure}
 
-\paragraph{An encoding caveat (relevant to probing).} The Dreamer obs encodes the
-minimap as a single ordinal scalar per cell ($\text{tile\_id}/\text{NUM\_TILES}$)
-and the decoder \emph{regresses} it. Reconstructions are therefore blurry and
-\emph{not} a categorical tile-belief; a cleaner design (one-hot channels +
-per-cell softmax decoder with cross-entropy) would make tile beliefs a crisp probe
-target. The PPO agent already uses a proper tile \emph{embedding}.
+\paragraph{Why categorical (relevant to probing).} An earlier version encoded the
+minimap as a single \emph{ordinal scalar} per cell ($\text{tile\_id}/\text{NUM\_TILES}$)
+and \emph{regressed} it with MSE. That produced blurry reconstructions and
+\emph{phantom out-of-vocab tiles}: a value between, say, rock$(2)$ and wood$(3)$
+rounds to an id that never occurs. The categorical one-hot encoder $+$ per-cell
+cross-entropy decoder removes both pathologies --- reconstructions are crisp and
+can only emit real tiles (above) --- at a modest cost in policy sample-efficiency
+(Fig.~\ref{fig:curves}). The residual divergence in the open-loop frames is
+therefore \emph{dynamics} error (the RSSM prediction), not a decoding artifact.
+For the interpretability work this matters: the decode is now a genuine per-cell
+tile belief, but we will still probe the latent ($h,z$) directly rather than read
+beliefs off the decoder.
 
 \section{Mechanistic-interpretability plan}\label{sec:mechinterp}
 
