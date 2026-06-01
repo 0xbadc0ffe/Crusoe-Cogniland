@@ -104,13 +104,19 @@ class ZebraEncoder(nn.Module):
         return jax.nn.silu(x)
 
 
+# Decoder/encoder mode of the loaded checkpoint; set from cfg in main().
+_DECODER_MODE = "mse"
+
+
 def _flatten_obs(obs: dict) -> jax.Array:
-    """Matches FlattenObsWrapper._flatten."""
-    mm = obs["minimap"].astype(jnp.float32) / float(C.NUM_TILES)
-    return jnp.concatenate([
-        mm.reshape(*mm.shape[:-2], -1),
-        obs["scalars"].astype(jnp.float32),
-    ], axis=-1)
+    """Matches FlattenObsWrapper._flatten (mse: scalar/NUM_TILES; categorical: one-hot)."""
+    if _DECODER_MODE == "categorical":
+        oh = jax.nn.one_hot(obs["minimap"].astype(jnp.int32), C.NUM_TILES)
+        mm = oh.reshape(*oh.shape[:-3], -1)
+    else:
+        mm = (obs["minimap"].astype(jnp.float32) / float(C.NUM_TILES))
+        mm = mm.reshape(*mm.shape[:-2], -1)
+    return jnp.concatenate([mm, obs["scalars"].astype(jnp.float32)], axis=-1)
 
 
 def _single_map_params(seed: int, cfg: dict) -> EnvParams:
@@ -265,6 +271,8 @@ def main():
     cfg_path = ckpt_dir.parent.parent / "config.json"
     cfg = json.loads(cfg_path.read_text())
     run_name = ckpt_dir.parent.parent.name
+    global _DECODER_MODE
+    _DECODER_MODE = cfg.get("decoder", "mse")
 
     print(f"[load] config {cfg_path}")
     print(f"[load] checkpoint {ckpt_dir}")
