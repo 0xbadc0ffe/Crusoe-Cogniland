@@ -233,3 +233,6 @@ sweep_logs/
 # generic `checkpoints/` ignore above (stored via git-LFS, see .gitattributes).
 !models/bridge_tunnel/dreamer_natural_categorical/checkpoints/
 !models/bridge_tunnel/dreamer_natural_categorical/checkpoints/**
+
+# bridge_tunnel_commit generated JAX map datasets (regenerable)
+data/bridge_tunnel_commit_jax/
