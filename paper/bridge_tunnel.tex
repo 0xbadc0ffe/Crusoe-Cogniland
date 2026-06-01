@@ -1,6 +1,6 @@
 % !TEX program = pdflatex
 % Overleaf-compatible. Self-contained: only stock packages.
-% Figures live in ./figures/bridge_tunnel/ (see paper/README.md for how to regenerate).
+% Figures live in ./figures/bridge\_tunnel/ (see paper/README.md for how to regenerate).
 \documentclass[11pt]{article}
 
 \usepackage[margin=1in]{geometry}
@@ -33,7 +33,7 @@
   fl/.style   = {-{Stealth[length=2.2mm]}, thick},
 }
 
-\title{\textbf{bridge_tunnel\_nav}\\[2pt]
+\title{\textbf{bridge\_tunnel\_nav}\\[2pt]
 \large A POMDP navigation environment with a bridge / mine / detour
 strategy choice, built as a substrate for mechanistic interpretability}
 \author{}
@@ -44,7 +44,7 @@ strategy choice, built as a substrate for mechanistic interpretability}
 \vspace{-2.2em}
 
 \begin{abstract}\noindent
-\textsc{bridge_tunnel\_nav} is a small partially-observable navigation environment in
+\textsc{bridge\_tunnel\_nav} is a small partially-observable navigation environment in
 which an agent crosses open procedural terrain to reach a narrow goal door. The
 direct route is blocked by obstacles the agent can deal with in three distinct
 ways: \textbf{bridge} a lake (place wood on water), \textbf{mine} a mountain
@@ -76,6 +76,131 @@ state, and we can test whether those subspaces are (a) linearly decodable and
 agent fully competent while removing one option (tunneling) by editing activations
 --- the recurrent analogue of the ``cheese vector'' steering result on maze-solving
 policy networks.
+
+\paragraph{Two environments.} We study the belief--strategy relationship in two
+complementary settings. We \emph{first} present a deliberately \textbf{controlled}
+variant, \code{bridge\_tunnel\_commit}, in which both the belief and the skill are
+made \emph{explicit and discrete} --- a clean ground-truth map from a labeled belief
+to an enforced, committed skill (\S\ref{sec:commit}). We \emph{then} present the
+open \code{bridge\_tunnel} task (the remainder of the paper), where neither is
+labeled nor enforced: the belief is a continuous, partially-observed inference and
+the strategy is a soft, reversible tendency. The controlled variant is the place
+to first establish that a belief$\to$skill map exists and is legible; the open task
+is where the harder probing/steering programme of \S\ref{sec:mechinterp} lives.
+
+\section{The \code{bridge\_tunnel\_commit} environment: a controlled
+belief--skill testbed}\label{sec:commit}
+
+\paragraph{Why a controlled variant.} In the open task (below) the agent's belief
+--- the type and size of the obstacle ahead --- is a continuous, noisy inference,
+and its ``strategy'' is a soft tendency it can revise mid-obstacle (poke a lake,
+back out, detour). That makes \emph{belief} and \emph{skill} useful descriptions
+for us, but neither is a clean ground-truth variable to probe against.
+\code{bridge\_tunnel\_commit} pins both down while keeping the terrain, observation
+format, reward and agents otherwise identical:
+
+\begin{itemize}[leftmargin=1.4em, itemsep=2pt]
+\item \textbf{Labeled belief $=$ map category.} Every map belongs to one of three
+labeled categories, drawn uniformly: \textsc{balanced} ($14\%/14\%$ water/rock),
+\textsc{lakes} (water-dominated, ${\approx}80/20$), and \textsc{rocky}
+(rock-dominated, ${\approx}20/80$). The dominant obstacle is the latent the agent
+must infer from its egocentric crop, and we hold the exact category label for every
+episode (Fig.~\ref{fig:commit-maps}).
+\item \textbf{Enforced skill $=$ irreversible commitment.} The action space grows to
+\code{Discrete(8)}: the four moves, \code{BUILD} and \code{MINE}, and two new
+actions \code{COMMIT\_BUILD} / \code{COMMIT\_MINE}. \code{BUILD}/\code{MINE} are
+\textbf{no-ops until the matching commit}. The commitment slot starts \emph{none};
+the first commit action sets it and is \emph{irreversible} --- the other tool is
+then permanently locked for the rest of the episode. The agent may move freely, but
+to ever cross an obstacle it must first commit to exactly one tool. The current
+commitment is exposed in the observation scalars
+($\mathbb{R}^{7}=[\textsc{facing}(4),\ \text{step}/\text{max},\
+\text{committed\_build},\ \text{committed\_mine}]$).
+\end{itemize}
+
+\paragraph{The belief$\to$skill map.} Crossing the \emph{abundant} obstacle of a
+category is far cheaper than detouring around all of it, so the optimal commitment
+is dictated by the category: \textsc{lakes}$\,\to\,$\code{COMMIT\_BUILD},
+\textsc{rocky}$\,\to\,$\code{COMMIT\_MINE}, \textsc{balanced}$\,\to\,$either. A
+competent agent therefore realises a clean function from a \emph{discrete belief}
+(category) to a \emph{discrete, committed skill}. We read this function off directly
+as a $3\times3$ \textbf{commit matrix} (Fig.~\ref{fig:commit-matrix}): rows are the
+map category, columns are the skill the agent ended the episode committed to
+(\textsf{none}/\textsf{build}/\textsf{mine}), and each entry is the fraction of
+held-out episodes of that category --- so every row sums to $1$. The ideal,
+belief-reading agent puts its mass on the diagonal (build for lakes, mine for
+rocky) with a split on the balanced row.
+
+\paragraph{Maps and reward.} Terrain uses the \emph{same} domain-warped fractal
+pipeline as the open task (\S\ref{sec:gen}), only with each category's water/rock
+fractions; every map is rejection-sampled to be winnable under its intended
+commitment. The reward is unchanged (slack $-0.01$, reach $+3$, no build cost, PBRS
+shaping with $\gamma{=}0.997$) with one addition: the cost-to-go potential is
+\textbf{commitment-aware}. Three Dijkstra fields (none\,/\,build\,/\,mine) are
+precomputed per map and indexed by the \emph{live} commitment --- the
+\emph{non}-committed obstacle becomes an impassable wall --- and capped at
+$2(H{+}W)$ so the potential stays bounded. Committing to the wrong tool therefore
+\emph{raises} the cost-to-go (or strands the agent on a one-sided map), so the
+shaping itself, together with the sparse reach bonus, teaches the agent to read the
+terrain \emph{before} it commits. The pure-JAX port is again proven bit-for-bit
+equivalent to the PyTorch env, now across all $8$ actions.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/bridge\_tunnel_commit/categories.png}
+\caption{The three labeled map categories (rows) of \code{bridge\_tunnel\_commit},
+five seeds each. White dot $=$ spawn; yellow $=$ the 3-cell goal door. \textsc{lakes}
+are water-dominated (the cheap crossings are over water $\to$ commit \emph{build}),
+\textsc{rocky} are rock-dominated (commit \emph{mine}), \textsc{balanced} is an even
+mix (either tool works). The category is the ground-truth \emph{belief} the agent
+must infer under partial observation.}
+\label{fig:commit-maps}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.49\linewidth}\centering
+\includegraphics[width=\linewidth]{figures/bridge\_tunnel_commit/ppo_commit_matrix.png}
+\caption{PPO + GRU}
+\end{subfigure}\hfill
+\begin{subfigure}{0.49\linewidth}\centering
+\includegraphics[width=\linewidth]{figures/bridge\_tunnel_commit/dreamer_commit_matrix.png}
+\caption{DreamerV3 (25M)}
+\end{subfigure}
+\caption{The $3\times3$ \textbf{belief$\to$skill commit matrix} for each agent: rows
+$=$ map category (the inferred belief), columns $=$ the skill the agent irreversibly
+committed to (none/build/mine), entries $=$ fraction of held-out episodes (each row
+sums to $1$). Mass on the diagonal (build$\,\leftarrow\,$lakes,
+mine$\,\leftarrow\,$rocky) means the agent reads the terrain and commits correctly.}
+\label{fig:commit-matrix}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.49\linewidth}\centering
+\includegraphics[width=\linewidth]{figures/bridge\_tunnel_commit/ppo_traj.png}
+\caption{PPO + GRU}
+\end{subfigure}\hfill
+\begin{subfigure}{0.49\linewidth}\centering
+\includegraphics[width=\linewidth]{figures/bridge\_tunnel_commit/dreamer_traj.png}
+\caption{DreamerV3 (25M)}
+\end{subfigure}
+\caption{Stochastic rollouts on held-out maps, rows $=$ category, columns $=$ seeds.
+path $=$ blue, \textcolor{red}{bridge $=$ red}, \textcolor{orange}{mine $=$ yellow},
+\textcolor{magenta}{commit step $=$ $\star$}. Each panel is titled with its success
+rate and the episode-level commit split.}
+\label{fig:commit-traj}
+\end{figure}
+
+\paragraph{From controlled to open.} The remainder of the paper studies the original
+\code{bridge\_tunnel} task, which removes \emph{both} scaffolds. The belief is no
+longer a single labeled category: obstacle \emph{type and size} vary continuously
+\emph{within} a map and must be inferred afresh at each obstacle. And the skill is
+no longer enforced: there is no commitment, so the agent may bridge one obstacle,
+mine the next, detour a third, and even abandon a half-finished crossing. Belief and
+strategy survive only as \emph{emergent, soft} variables in the recurrent state ---
+which is the harder, more realistic setting the probing and steering programme of
+\S\ref{sec:mechinterp} targets.
 
 \section{Environment}
 
@@ -124,7 +249,7 @@ Figure~\ref{fig:maps} shows the curated validation set.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.86\linewidth]{figures/bridge_tunnel/maps.png}
+\includegraphics[width=0.86\linewidth]{figures/bridge\_tunnel/maps.png}
 \caption{The 16 validation maps. White dot = spawn (centre-left); yellow = the
 3-cell goal door (centre-right). Blue lakes (bridge), grey mountains (mine), dark
 forests clustered along the top/bottom edges (detour). The demo plays these exact
@@ -132,9 +257,9 @@ maps.}
 \label{fig:maps}
 \end{figure}
 
-\subsection{Generation algorithm}
+\subsection{Generation algorithm}\label{sec:gen}
 Each map is produced deterministically from a single integer seed
-(\code{generate\_bridge_tunnel\_map(orientation="natural", seed)}); the steps are:
+(\code{generate\_bridge\_tunnel\_map(orientation="natural", seed)}); the steps are:
 \begin{enumerate}[leftmargin=1.4em, itemsep=2pt]
 \item \textbf{Domain-warped fractal heightmap.} A multi-octave OpenSimplex field
 $h_0$ (base frequency $\max(6,\max(H,W)/4.5)$, five octaves with weights
@@ -300,7 +425,7 @@ extra budget buys).}
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=\linewidth]{figures/bridge_tunnel/training_curves.png}
+\includegraphics[width=\linewidth]{figures/bridge\_tunnel/training_curves.png}
 \caption{Reward and success vs.\ environment steps (W\&B, rolling). On this
 symbolic task \textbf{PPO+GRU is markedly more sample-efficient} --- ${\sim}100\%$
 by ${\sim}0.2$M steps --- while DreamerV3 rises more slowly (with a mid-training
@@ -329,11 +454,11 @@ the activation dataset (\S\ref{sec:mechinterp}).
 \begin{figure}[H]
 \centering
 \begin{subfigure}{0.49\linewidth}\centering
-\includegraphics[width=\linewidth]{figures/bridge_tunnel/ppo_traj.png}
+\includegraphics[width=\linewidth]{figures/bridge\_tunnel/ppo_traj.png}
 \caption{PPO + GRU}
 \end{subfigure}\hfill
 \begin{subfigure}{0.49\linewidth}\centering
-\includegraphics[width=\linewidth]{figures/bridge_tunnel/dreamer_traj.png}
+\includegraphics[width=\linewidth]{figures/bridge\_tunnel/dreamer_traj.png}
 \caption{DreamerV3}
 \end{subfigure}
 \caption{$200$ stochastic rollouts per map. path = dark blue, \textcolor{red}{bridge
@@ -344,7 +469,7 @@ forest-walled central corridor and cross obstacles there.}
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.95\linewidth]{figures/bridge_tunnel/strategy_examples.png}
+\includegraphics[width=0.95\linewidth]{figures/bridge\_tunnel/strategy_examples.png}
 \caption{One stochastic rollout per strategy (PPO agent), under the strict
 crossing definition. The crossed lake/mountain body is shaded; the bold segment is
 the in$\to$out traversal (green \textbullet\ = entered the body, magenta $\star$ =
@@ -369,7 +494,7 @@ Figure~\ref{fig:dream} compares the model's decode (top) against the
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=\linewidth]{figures/bridge_tunnel/dreamer_imagine_strip.png}
+\includegraphics[width=\linewidth]{figures/bridge\_tunnel/dreamer_imagine_strip.png}
 \caption{Open-loop prediction vs.\ reality on a demo map (sprites). \textbf{Top
 row} = the model's decoded egocentric view; \textbf{bottom row} = the
 ground-truth env observation at the same step. \textcolor{green!60!black}{Green}
@@ -418,10 +543,10 @@ failing --- i.e.\ a competent agent that \textbf{never digs tunnels}, achieved i
 activation space.
 \end{enumerate}
 
-\paragraph{Reproduce.} Train: \code{scripts/train\_ppo\_bridge_tunnel.py --config
-models/bridge_tunnel\_nav/natural\_centergoal3.yaml} and \code{scripts/dreamerv3\_bridge_tunnel\_nav.py
---size 25M}. Visualise: \code{scripts/bridge_tunnel\_traj\_grid.py},
-\code{scripts/bridge_tunnel\_strategy\_examples.py}, \code{scripts/viz\_dreamer\_bridge_tunnel\_imagine.py}.
-See \code{docs/bridge_tunnel\_nav.md} and \code{docs/codebase\_map.md}.
+\paragraph{Reproduce.} Train: \code{scripts/train\_ppo\_bridge\_tunnel.py --config
+models/bridge\_tunnel\_nav/natural\_centergoal3.yaml} and \code{scripts/dreamerv3\_bridge\_tunnel\_nav.py
+--size 25M}. Visualise: \code{scripts/bridge\_tunnel\_traj\_grid.py},
+\code{scripts/bridge\_tunnel\_strategy\_examples.py}, \code{scripts/viz\_dreamer\_bridge\_tunnel\_imagine.py}.
+See \code{docs/bridge\_tunnel\_nav.md} and \code{docs/codebase\_map.md}.
 
 \end{document}
