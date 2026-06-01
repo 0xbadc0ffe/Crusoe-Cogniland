@@ -228,3 +228,8 @@ data/crafter_in_cogniland/
 # zebra_nav scratch
 mapgen_preview/
 sweep_logs/
+
+# Released DreamerV3 orbax checkpoint lives under models/ — keep it despite the
+# generic `checkpoints/` ignore above (stored via git-LFS, see .gitattributes).
+!models/zebra_nav/dreamer_natural_categorical/checkpoints/
+!models/zebra_nav/dreamer_natural_categorical/checkpoints/**

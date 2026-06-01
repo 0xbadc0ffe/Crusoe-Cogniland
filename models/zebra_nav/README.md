@@ -12,14 +12,26 @@ that produced it.
 > `diagonal_cuefollower` / `vertical_cuefollower` and the pre-remap `natural_agent`
 > were deleted (invalid under the new vocab).
 
-| file | map type | what it does | success | episode len |
-|------|----------|--------------|---------|-------------|
-| `natural_centergoal3.pt` | natural (32×64, lakes/mountains, edge forests) | routes through the **central corridor** to a 3-cell centre door, crossing obstacles (mine/bridge) and detouring around the larger ones | 100% | ~95 |
+All agents share the env (natural 32×64, 3-cell centre door `goal_half=1`, edge
+forests). The **`_onehot` / categorical** agents additionally share the same
+**categorical one-hot observation** (`V×V×9`) — a fair PPO-vs-DreamerV3 comparison
+where only the algorithm differs (see `paper/zebra_nav.tex`).
 
-Recipe: a **3-cell central goal door** (`goal_half=1`) + **tree forests biased
-heavily to the top & bottom walls** funnel the agent through the obstacle-filled
-middle; **no entropy annealing** + entropy 0.045 keeps the stochastic policy
-spread out → a mix of avoid / bridge / tunnel.
+| agent | algo / obs | success (held-out grid) | notes |
+|------|-----------|------|------|
+| `natural_centergoal3.pt` | PPO+GRU, tile-embed | 100% | original released agent |
+| `natural_centergoal3_onehot.pt` | PPO+GRU, **one-hot** | 100% | fair-comparison PPO (`obs_encoding: onehot`) |
+| `dreamer_natural_categorical/` | DreamerV3 25M, **categorical** | 85% | fair-comparison Dreamer, 1M steps (orbax, **git-LFS**) |
+
+Recipe (all): **3-cell central goal door** + **tree forests biased to the top &
+bottom walls** funnel the agent through the obstacle-filled middle; **no entropy
+annealing** + entropy 0.045 → a mix of avoid / bridge / tunnel. DreamerV3 logs
+~96% during training but ~85% in clean per-episode eval, and is far less
+sample-efficient than PPO here (PPO ~100% by 0.2M; Dreamer ~96% by 1M).
+
+The DreamerV3 checkpoint is an orbax PyTree dir (`config.json` + `checkpoints/
+step_1000000/`), stored via **git-LFS** (~74 MB). PPO `*.pt` are plain dicts
+(`{"policy", "args", ...}`) with a matching reproducible `*.yaml`.
 
 ## See it play (pygame demo)
 
@@ -48,7 +60,13 @@ python scripts/eval_zebra_agent.py  --checkpoint models/zebra_nav/natural_center
 python scripts/zebra_traj_grid.py   --checkpoint models/zebra_nav/natural_centergoal3.pt --n-maps 6 --n-traj 200
 ```
 
-A DreamerV3 agent on the same task lives under `runs/dreamer_natural_*/` (not
-committed); render its dreams with `scripts/viz_dreamer_zebra_imagine.py`.
+Evaluate / visualise the **DreamerV3 categorical** agent (auto-detects the
+categorical encoder from its `config.json`):
+
+```bash
+python scripts/viz_dreamer_zebra_traj.py    --checkpoint models/zebra_nav/dreamer_natural_categorical/checkpoints/step_1000000
+python scripts/viz_dreamer_zebra_imagine.py --checkpoint models/zebra_nav/dreamer_natural_categorical/checkpoints/step_1000000
+```
+(`git lfs pull` to fetch its weights after cloning.)
 
 See `docs/zebra_nav.md` for the full project guide.
