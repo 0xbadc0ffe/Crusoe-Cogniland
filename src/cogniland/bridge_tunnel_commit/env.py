@@ -260,10 +260,19 @@ class BridgeTunnelCommitEnv(gym.Env):
         obstacle (water if ``water_cross``, rock if ``rock_cross``) costs 2 (the
         build/mine + the move). TREE — and any obstacle that is **not** crossable
         under the current commitment — is an impassable wall. Seeded from every
-        TARGET cell. Unreachable cells get the ``INF = H·W·4`` sentinel (matches
-        the base env)."""
+        TARGET cell.
+
+        Unlike the base env, cells unreachable under the current commitment are
+        common (the non-crossable obstacle walls off whole regions). The raw
+        ``INF = H·W·4`` sentinel would blow up the PBRS term ``(1−γ)·ctg`` on
+        those cells (e.g. ``0.01·8192 ≈ 82`` per step), dwarfing the reach bonus,
+        so the distance field is **capped at ``2·(H+W)``** — comfortably above the
+        largest real reachable distance (~130 on a 32×64 map) yet bounded, so the
+        shaping stays well-scaled and a wrong commitment raises the cost-to-go
+        without producing reward spikes."""
         H, W = terrain.shape
         INF = H * W * 4
+        CAP = 2 * (H + W)
         dist = np.full((H, W), INF, dtype=np.int32)
         seeds = list(map(tuple, np.argwhere(terrain == TARGET)))
         if not seeds:
@@ -297,7 +306,7 @@ class BridgeTunnelCommitEnv(gym.Env):
                 if nd < dist[nr, nc]:
                     dist[nr, nc] = nd
                     heapq.heappush(pq, (nd, nr, nc))
-        return dist
+        return np.minimum(dist, CAP)
 
     @classmethod
     def _compute_all_ctg(cls, terrain: np.ndarray, target: tuple[int, int]) -> np.ndarray:
