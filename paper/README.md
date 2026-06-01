@@ -3,26 +3,26 @@
 Two self-contained, Overleaf-compatible documents (stock packages only, compile
 with pdfLaTeX). Upload the whole `paper/` folder to Overleaf and build either.
 
-- **`zebra_nav.tex`** — the **current** project: the `zebra_nav` POMDP (bridge /
+- **`bridge_tunnel.tex`** — the **current** project: the `bridge_tunnel` POMDP (bridge /
   mine / detour strategy choice), the natural-maps task + reward, the trained PPO
   and DreamerV3 agents, rollout examples, DreamerV3 imagination, and the
   mechanistic-interpretability plan (probe + steer belief/strategy subspaces;
-  suppress tunneling in activation space). Figures in `figures/zebra_nav/`.
+  suppress tunneling in activation space). Figures in `figures/bridge_tunnel/`.
 - **`crafter_in_cogniland.tex`** — the original build-commitment (raft vs harness)
   navigation env with slip mechanics. Figures in `figures/`.
 
-## Regenerate the `zebra_nav` figures
+## Regenerate the `bridge_tunnel` figures
 
-From the repo root in the `crusoe` conda env, then `cd paper && latexmk -pdf zebra_nav.tex`:
+From the repo root in the `crusoe` conda env, then `cd paper && latexmk -pdf bridge_tunnel.tex`:
 
 ```bash
-python scripts/make_zebra_val_maps.py --orientation natural --n 16
-cp data/zebra_nav/val_maps_preview.png paper/figures/zebra_nav/maps.png
-python scripts/zebra_traj_grid.py        --checkpoint models/zebra_nav/natural_centergoal3.pt --out paper/figures/zebra_nav/ppo_traj.png
-python scripts/viz_dreamer_zebra_traj.py --checkpoint runs/dreamer_natural_v2/checkpoints/step_1000000 --out paper/figures/zebra_nav/dreamer_traj.png
-python scripts/zebra_strategy_examples.py --checkpoint models/zebra_nav/natural_centergoal3.pt --out paper/figures/zebra_nav/strategy_examples.png
-python scripts/viz_dreamer_zebra_imagine.py --checkpoint runs/dreamer_natural_v2/checkpoints/step_1000000 --render sprites
-cp videos/dreamer_imagine/imagine_strip_seed10001.png paper/figures/zebra_nav/dreamer_imagine_strip.png
+python scripts/make_bridge_tunnel_val_maps.py --orientation natural --n 16
+cp data/bridge_tunnel/val_maps_preview.png paper/figures/bridge_tunnel/maps.png
+python scripts/bridge_tunnel_traj_grid.py        --checkpoint models/bridge_tunnel/natural_centergoal3.pt --out paper/figures/bridge_tunnel/ppo_traj.png
+python scripts/viz_dreamer_bridge_tunnel_traj.py --checkpoint runs/dreamer_natural_v2/checkpoints/step_1000000 --out paper/figures/bridge_tunnel/dreamer_traj.png
+python scripts/bridge_tunnel_strategy_examples.py --checkpoint models/bridge_tunnel/natural_centergoal3.pt --out paper/figures/bridge_tunnel/strategy_examples.png
+python scripts/viz_dreamer_bridge_tunnel_imagine.py --checkpoint runs/dreamer_natural_v2/checkpoints/step_1000000 --render sprites
+cp videos/dreamer_imagine/imagine_strip_seed10001.png paper/figures/bridge_tunnel/dreamer_imagine_strip.png
 ```
 
 ---

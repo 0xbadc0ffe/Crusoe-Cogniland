@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Reward + success training curves for PPO vs DreamerV3 on the SAME zebra_nav
+"""Reward + success training curves for PPO vs DreamerV3 on the SAME bridge_tunnel
 env (natural, 3-cell centre door, edge forests) with the SAME categorical
 observation — pulled from W&B, plotted on shared axes for a fair comparison.
 
     python scripts/plot_training_curves.py \\
         --run ppo+gru=epykvjql --run dreamerv3=be4qhuvf \\
-        --out paper/figures/zebra_nav/training_curves.png
+        --out paper/figures/bridge_tunnel/training_curves.png
 """
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--run", action="append", required=True,
                    help="label=wandb_run_id (repeatable)")
-    p.add_argument("--project", default="crusoe/zebra_nav")
-    p.add_argument("--out", type=Path, default=Path("paper/figures/zebra_nav/training_curves.png"))
+    p.add_argument("--project", default="crusoe/bridge_tunnel")
+    p.add_argument("--out", type=Path, default=Path("paper/figures/bridge_tunnel/training_curves.png"))
     args = p.parse_args()
 
     api = wandb.Api()

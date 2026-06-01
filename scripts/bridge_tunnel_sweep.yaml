@@ -1,0 +1,87 @@
+# ============================ DEPRECATED ============================
+# This sweep targets the RETIRED diagonal/vertical STRIPE task (obsidian walls
+# + cue tiles + thin-side accuracy). As of 2026-05-31 bridge_tunnel is natural-only
+# (9-tile vocab, no obsidian/cues, stripes removed) and the flags below
+# (--orientation=vertical, --n-stripes, metric thin_side/rolling100) NO LONGER
+# EXIST in scripts/train_ppo_bridge_tunnel.py — running this sweep will error.
+# Use scripts/bridge_tunnel_natural_sweep.yaml instead. Kept only for provenance.
+# ====================================================================
+#
+# W&B sweep for PPO-GRU on the bridge_tunnel POMDP (32×32).
+#
+# Goal: an agent that solves the task AND commits to the THINNER side at every
+# stripe (reads the cue / observed thickness instead of always bridging or
+# always mining). The first sweep showed every config hits 100% success but
+# only ~50–67% thin-side accuracy: the entropy bonus (~0.3–0.8/episode) and the
+# reach bonus dwarf the thin-side incentive, so there is no gradient to compare
+# sides. This sweep therefore:
+#   * optimises `thin_side/rolling100` DIRECTLY (fraction of stripe crossings
+#     taking the cheaper side; denominator = n_stripes, so a non-solver scores
+#     low — the metric couples solving with cue-following);
+#   * sweeps `build-cost` UP and `reach-bonus` UP together so the thick (7-cell)
+#     route is materially more expensive than the thin (3-cell) one while
+#     solving stays clearly positive;
+#   * lowers the entropy range so the policy can become decisive at the fork;
+#   * uses a generous 1000-step timeout (success = reaching ability, not speed)
+#     and drops LR annealing so late training can still refine the choice.
+program: scripts/train_ppo_bridge_tunnel.py
+project: bridge_tunnel
+entity: crusoe
+method: bayes
+metric:
+  name: thin_side/rolling100
+  goal: maximize
+command:
+  - /home/filippo/miniconda3/envs/crusoe/bin/python
+  - ${program}
+  - --env-size=32
+  - --env-width=64                  # 32×64 vertical maps fit 4 walls (7-vs-3 thickness)
+  - --view-size=11
+  - --orientation=vertical          # water(top)+rock(bottom), obsidian divider only
+  - --n-stripes=4
+  - --num-envs=32
+  - --num-minibatches=4
+  - --max-steps=1000
+  - --total-timesteps=2000000      # bridge_tunnel maps converge well before 2M (was 4M)
+  - --device=cuda
+  - --wandb-project=bridge_tunnel
+  - --wandb-mode=online
+  - --checkpoint-dir=checkpoints/bridge_tunnel_sweep2
+  - ${args}
+parameters:
+  build-cost:                       # per PLACE/MINE penalty; 0.01 works @32×64,
+    distribution: uniform           #   ≥0.03 suppresses building on the longer task
+    min: 0.005
+    max: 0.02
+  reach-bonus:                      # raised so solving stays positive despite build cost
+    distribution: uniform
+    min: 1.5
+    max: 2.5
+  ent-coef:                         # 0.004 too low for the longer 32×64 task; 0.01 reaches fast
+    distribution: log_uniform_values
+    min: 0.006
+    max: 0.02
+  learning-rate:
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.0004
+  gamma:
+    distribution: uniform
+    min: 0.990
+    max: 0.999
+  gae-lambda:
+    distribution: uniform
+    min: 0.92
+    max: 0.97
+  num-steps:
+    values: [128, 256]
+  update-epochs:
+    values: [3, 4]
+  shaping-coef:                     # stronger shaping helps reach on the longer task
+    distribution: log_uniform_values
+    min: 0.015
+    max: 0.03
+  slack-penalty:
+    distribution: uniform
+    min: -0.015
+    max: -0.005

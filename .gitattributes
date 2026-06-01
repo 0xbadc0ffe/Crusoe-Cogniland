@@ -1,1 +1,1 @@
-models/zebra_nav/dreamer_natural_categorical/checkpoints/** filter=lfs diff=lfs merge=lfs -text
+models/bridge_tunnel/dreamer_natural_categorical/checkpoints/** filter=lfs diff=lfs merge=lfs -text

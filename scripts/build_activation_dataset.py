@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a mechanistic-interpretability activation dataset for a zebra_nav PPO+GRU
+"""Build a mechanistic-interpretability activation dataset for a bridge_tunnel PPO+GRU
 agent: probe BELIEF (obstacle ahead, type/size, cost-to-go) and STRATEGY
 (avoid / bridge / tunnel) subspaces, and supply matched contrast sets for
 difference-of-means steering (e.g. suppressing tunnelling).
@@ -22,7 +22,7 @@ Re-running ``torch.manual_seed(traj_seed)`` + reset on the same map on the same
 device reproduces the EXACT trajectory, observations and sampled actions.
 
     python scripts/build_activation_dataset.py \\
-        --checkpoint models/zebra_nav/natural_centergoal3_onehot.pt \\
+        --checkpoint models/bridge_tunnel/natural_centergoal3_onehot.pt \\
         --maps 10000,10001 --n-traj 500 --out-dir data/mechinterp/ppo_onehot
 
 Outputs (under --out-dir):
@@ -44,9 +44,9 @@ from scipy.ndimage import label as cc_label, distance_transform_cdt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from cogniland.zebra_nav import generate_zebra_map, tiles as T  # noqa: E402
-from cogniland.zebra_nav.env import ZebraNavEnv  # noqa: E402
-from train_ppo_zebra import PPOGRUPolicy  # noqa: E402
+from cogniland.bridge_tunnel import generate_bridge_tunnel_map, tiles as T  # noqa: E402
+from cogniland.bridge_tunnel.env import BridgeTunnelEnv  # noqa: E402
+from train_ppo_bridge_tunnel import PPOGRUPolicy  # noqa: E402
 
 _FACE_DELTA = {0: (-1, 0), 1: (1, 0), 2: (0, -1), 3: (0, 1)}
 _FACE_NAME = {0: "up", 1: "down", 2: "left", 3: "right"}
@@ -62,7 +62,7 @@ def _map_geometry(rec, min_body=4):
     orig = np.asarray(rec.terrain)
     H, W = orig.shape
     target = tuple(rec.target)
-    ctg = ZebraNavEnv._compute_ctg(orig, target).astype(np.float32)
+    ctg = BridgeTunnelEnv._compute_ctg(orig, target).astype(np.float32)
 
     geo = {"orig": orig, "H": H, "W": W, "target": target, "ctg": ctg, "bodies": {}}
     for tile, name in ((T.WATER, "water"), (T.ROCK, "rock")):
@@ -196,7 +196,7 @@ def _rollout(policy, rec, geo, map_id, traj_id, traj_seed, view, max_steps, devi
              min_cross, approach_window, near_radius):
     """One reproducible stochastic rollout; returns per-step records + decisions."""
     torch.manual_seed(traj_seed)              # <- the ONLY randomness (action sampling)
-    env = ZebraNavEnv(map_record=rec, size=rec.terrain.shape[0], width=rec.terrain.shape[1],
+    env = BridgeTunnelEnv(map_record=rec, size=rec.terrain.shape[0], width=rec.terrain.shape[1],
                       view_size=view, max_steps=max_steps)
     obs = env.reset()[0]
     h = torch.zeros(1, 1, policy.gru_hidden, device=device)
@@ -254,7 +254,7 @@ def _rollout(policy, rec, geo, map_id, traj_id, traj_seed, view, max_steps, devi
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--checkpoint", type=Path,
-                   default=Path("models/zebra_nav/natural_centergoal3_onehot.pt"))
+                   default=Path("models/bridge_tunnel/natural_centergoal3_onehot.pt"))
     p.add_argument("--maps", default="10000,10001", help="comma-sep map seeds (held fixed)")
     p.add_argument("--n-traj", type=int, default=500, help="stochastic rollouts per map")
     p.add_argument("--max-steps", type=int, default=600)
@@ -282,7 +282,7 @@ def main():
     else:
         n_tiles = int(sd["cnn.0.weight"].shape[1]) - 2; obs_enc = "onehot"
     n_act = int(sd["actor.weight"].shape[0])
-    dummy = ZebraNavEnv(size=env_size, width=env_width, view_size=view); dummy.reset()
+    dummy = BridgeTunnelEnv(size=env_size, width=env_width, view_size=view); dummy.reset()
     policy = PPOGRUPolicy(dummy.observation_space, num_actions=n_act,
                           gru_hidden=cargs.get("gru_hidden", 128),
                           embed_dim=cargs.get("embed_dim", 256),
@@ -295,7 +295,7 @@ def main():
 
     all_rows, all_dec = [], []
     for map_id, ms in enumerate(map_seeds):
-        rec = generate_zebra_map(seed=ms, **natkw)
+        rec = generate_bridge_tunnel_map(seed=ms, **natkw)
         geo = _map_geometry(rec); geo["map_seed"] = ms
         print(f"[map {map_id}] seed {ms}: water bodies={len(geo['bodies']['water'])} "
               f"rock bodies={len(geo['bodies']['rock'])} — {args.n_traj} rollouts...", flush=True)
@@ -349,7 +349,7 @@ def main():
         "activation_sites": {"gru_h": 128, "enc_embed": 256},
         "obs_stored": {"minimap": [view, view], "scalars": 5},
         "dtype": "float16 (activations/scalars/probs), int8 (minimap)",
-        "reproduce": "torch.manual_seed(traj_seed); ZebraNavEnv(map_record=generate_zebra_map("
+        "reproduce": "torch.manual_seed(traj_seed); BridgeTunnelEnv(map_record=generate_bridge_tunnel_map("
                      "seed=map_seed, **natural_kwargs)).reset(); then sample actions in order "
                      f"on device={args.device}.",
         "files": {"activations": act_path.name, "labels": lp, "decisions": dp},
