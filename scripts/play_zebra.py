@@ -415,10 +415,15 @@ def main():
         ck = torch.load(agents[i]["path"], map_location="cpu", weights_only=False)
         ca = ck["args"]
         e = make_env(ca, 10)
-        nt = int(ck["policy"]["tile_embed.weight"].shape[0])
         na = int(ck["policy"]["actor.weight"].shape[0])
+        oe = ca.get("obs_encoding", "embed")
+        if "tile_embed.weight" in ck["policy"]:
+            nt = int(ck["policy"]["tile_embed.weight"].shape[0])
+        else:                                   # onehot: K = conv in-channels − 2 (CoordConv)
+            nt = int(ck["policy"]["cnn.0.weight"].shape[1]) - 2; oe = "onehot"
         pol = PPOGRUPolicy(e.observation_space, num_actions=na, gru_hidden=ca.get("gru_hidden", 128),
-                           embed_dim=ca.get("embed_dim", 256), num_tile_classes=nt).to(device)
+                           embed_dim=ca.get("embed_dim", 256), num_tile_classes=nt,
+                           obs_encoding=oe).to(device)
         pol.load_state_dict(ck["policy"]); pol.eval()
         return pol
 

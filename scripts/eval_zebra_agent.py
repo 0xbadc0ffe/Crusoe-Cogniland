@@ -89,11 +89,15 @@ def main():
     # build a dummy env to recover obs space, then the policy
     dummy = ZebraNavEnv(size=env_size, width=env_width, view_size=cargs.get("view_size", 11))
     dummy.reset()
-    n_tiles = int(ckpt["policy"]["tile_embed.weight"].shape[0])   # match training-time NUM_TILES
+    _sd = ckpt["policy"]; obs_enc = cargs.get("obs_encoding", "embed")
+    if "tile_embed.weight" in _sd:
+        n_tiles = int(_sd["tile_embed.weight"].shape[0])
+    else:
+        n_tiles = int(_sd["cnn.0.weight"].shape[1]) - 2; obs_enc = "onehot"
     policy = PPOGRUPolicy(dummy.observation_space, num_actions=6,
                           gru_hidden=cargs.get("gru_hidden", 128),
                           embed_dim=cargs.get("embed_dim", 256),
-                          num_tile_classes=n_tiles).to(device)
+                          num_tile_classes=n_tiles, obs_encoding=obs_enc).to(device)
     policy.load_state_dict(ckpt["policy"])
     policy.eval()
 
