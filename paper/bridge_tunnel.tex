@@ -106,30 +106,36 @@ labeled categories, drawn uniformly: \textsc{balanced} ($14\%/14\%$ water/rock),
 (rock-dominated, ${\approx}20/80$). The dominant obstacle is the latent the agent
 must infer from its egocentric crop, and we hold the exact category label for every
 episode (Fig.~\ref{fig:commit-maps}).
-\item \textbf{Enforced skill $=$ irreversible commitment.} The action space grows to
-\code{Discrete(8)}: the four moves, \code{BUILD} and \code{MINE}, and two new
-actions \code{COMMIT\_BUILD} / \code{COMMIT\_MINE}. \code{BUILD}/\code{MINE} are
-\textbf{no-ops until the matching commit}. The commitment slot starts \emph{none};
-the first commit action sets it and is \emph{irreversible} --- the other tool is
-then permanently locked for the rest of the episode. The agent may move freely, but
-to ever cross an obstacle it must first commit to exactly one tool. The current
-commitment is exposed in the observation scalars
-($\mathbb{R}^{7}=[\textsc{facing}(4),\ \text{step}/\text{max},\
+\item \textbf{Enforced skill $=$ implicit, irreversible commitment.} The action
+space is \code{Discrete(6)} (four moves, \code{BUILD}, \code{MINE}). Commitment is
+\emph{implicit}: the \textbf{first successful} \code{BUILD} (bridging a faced water
+cell) locks the agent into building for the rest of the episode; the first
+successful \code{MINE} locks it into mining. Thereafter the opposite tool is
+permanently disabled --- using it is a no-op with a small penalty. So the agent
+commits simply by \emph{choosing to cross its first obstacle}; there is no separate
+commit action it could spam blind at the spawn, so the commitment naturally tracks
+the first obstacle it decides to cross (usually the category's dominant one). A
+\code{BUILD}/\code{MINE} that faces the wrong or empty tile while still uncommitted
+is a harmless no-op and does not commit. A one-time \emph{commit cost} is charged on
+the committing action, so when a short detour exists it can be better never to
+commit (leaving a small \textsf{none} mass). The commitment is exposed in the
+observation scalars ($\mathbb{R}^{7}=[\textsc{facing}(4),\ \text{step}/\text{max},\
 \text{committed\_build},\ \text{committed\_mine}]$).
 \end{itemize}
 
 \paragraph{The belief$\to$skill map.} Crossing the \emph{abundant} obstacle of a
-category is far cheaper than detouring around all of it, so the optimal commitment
-is dictated by the category: \textsc{lakes}$\,\to\,$\code{COMMIT\_BUILD},
-\textsc{rocky}$\,\to\,$\code{COMMIT\_MINE}, \textsc{balanced}$\,\to\,$either. A
-competent agent therefore realises a clean function from a \emph{discrete belief}
-(category) to a \emph{discrete, committed skill}. We read this function off directly
-as a $3\times3$ \textbf{commit matrix} (Fig.~\ref{fig:commit-matrix}): rows are the
-map category, columns are the skill the agent ended the episode committed to
-(\textsf{none}/\textsf{build}/\textsf{mine}), and each entry is the fraction of
-held-out episodes of that category --- so every row sums to $1$. The ideal,
-belief-reading agent puts its mass on the diagonal (build for lakes, mine for
-rocky) with a split on the balanced row.
+category is cheaper than detouring around all of it, so the better commitment is
+biased by the category: \textsc{lakes} favour committing to \emph{build},
+\textsc{rocky} to \emph{mine}, \textsc{balanced} either. Because commitment is
+implicit (the first obstacle the agent crosses), and on a one-sided map that first
+crossing is usually the dominant obstacle, the commitment naturally correlates with
+the category. We read this off as a $3\times3$ \textbf{commit matrix}
+(Fig.~\ref{fig:commit-matrix}): rows are the map category, columns are the skill the
+agent ended the episode committed to (\textsf{none}/\textsf{build}/\textsf{mine}),
+and each entry is the fraction of held-out episodes of that category --- so every
+row sums to $1$. We are after a \emph{soft} bias toward the matching tool (e.g.
+lakes leaning to build, rocky to mine) with a little \textsf{none} mass, not a hard
+diagonal --- crossing is never strictly mandatory, since a detour usually exists.
 
 \paragraph{Maps and reward.} Terrain uses the \emph{same} domain-warped fractal
 pipeline as the open task (\S\ref{sec:gen}), only with each category's water/rock
