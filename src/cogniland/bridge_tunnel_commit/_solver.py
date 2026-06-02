@@ -11,9 +11,8 @@ from __future__ import annotations
 from collections import deque
 
 from .env import (
-    A_BUILD, A_COMMIT_BUILD, A_COMMIT_MINE, A_DOWN, A_LEFT, A_MINE, A_RIGHT,
-    A_UP, COMMIT_BUILD, COMMIT_MINE, F_DOWN, F_LEFT, F_RIGHT, F_UP,
-    BridgeTunnelCommitEnv,
+    A_BUILD, A_DOWN, A_LEFT, A_MINE, A_RIGHT, A_UP,
+    F_DOWN, F_LEFT, F_RIGHT, F_UP, BridgeTunnelCommitEnv,
 )
 from .mapgen import _can_reach_goal
 from .tiles import GRASS, ROCK, SAND, DIRT, TARGET, TREE, WATER, WOOD
@@ -58,22 +57,22 @@ def _bfs_path(terrain, start, cross_tile):
 
 
 def scripted_solve(env: BridgeTunnelCommitEnv) -> tuple[int, bool]:
-    """Run the commit-then-BFS solver to completion. Returns
-    ``(steps_taken, reached_target)``."""
+    """Run the BFS solver to completion. Commitment is implicit — the solver
+    just builds/mines its chosen obstacle type when it faces it, and the first
+    such successful action locks the skill. Returns ``(steps_taken, reached)``."""
     terr = env._terrain
     spawn = env._pos
     # choose a tool that makes the goal reachable; prefer the intended one
     build_ok = _can_reach_goal(terr, spawn, frozenset({WATER}))
     cat = env._record.category
     if cat == "rocky":
-        commit_action, cross_tile, cross_act = A_COMMIT_MINE, ROCK, A_MINE
+        cross_tile, cross_act = ROCK, A_MINE
     elif cat == "lakes":
-        commit_action, cross_tile, cross_act = A_COMMIT_BUILD, WATER, A_BUILD
+        cross_tile, cross_act = WATER, A_BUILD
     elif build_ok:
-        commit_action, cross_tile, cross_act = A_COMMIT_BUILD, WATER, A_BUILD
+        cross_tile, cross_act = WATER, A_BUILD
     else:
-        commit_action, cross_tile, cross_act = A_COMMIT_MINE, ROCK, A_MINE
-    env.step(commit_action)
+        cross_tile, cross_act = ROCK, A_MINE
 
     while env._step_count < env.max_steps:
         if env._terrain[env._pos] == TARGET:

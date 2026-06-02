@@ -21,16 +21,14 @@ DIRT = 8
 
 NUM_TILES = 9
 
-# ── action ids (Discrete(8)) ──────────────────────────────────────────
+# ── action ids (Discrete(6)) ──────────────────────────────────────────
 A_UP = 0
 A_DOWN = 1
 A_LEFT = 2
 A_RIGHT = 3
-A_BUILD = 4          # water → wood (only after committing to build)
-A_MINE = 5           # rock  → grass (only after committing to mine)
-A_COMMIT_BUILD = 6   # unlock build (once)
-A_COMMIT_MINE = 7    # unlock mine  (once)
-NUM_ACTIONS = 8
+A_BUILD = 4          # water → wood; first successful build commits to 'build'
+A_MINE = 5           # rock  → grass; first successful mine commits to 'mine'
+NUM_ACTIONS = 6
 
 # ── commitment slot states ────────────────────────────────────────────
 COMMIT_NONE = 0
@@ -50,8 +48,7 @@ N_SCALARS = 7        # facing one-hot (4) + step/max + commit_build + commit_min
 __all__ = [
     "GRASS", "WATER", "ROCK", "WOOD", "TARGET", "OOB", "TREE", "SAND", "DIRT",
     "NUM_TILES",
-    "A_UP", "A_DOWN", "A_LEFT", "A_RIGHT", "A_BUILD", "A_MINE",
-    "A_COMMIT_BUILD", "A_COMMIT_MINE", "NUM_ACTIONS",
+    "A_UP", "A_DOWN", "A_LEFT", "A_RIGHT", "A_BUILD", "A_MINE", "NUM_ACTIONS",
     "COMMIT_NONE", "COMMIT_BUILD", "COMMIT_MINE",
     "F_UP", "F_DOWN", "F_LEFT", "F_RIGHT", "DEFAULT_VIEW_SIZE", "N_SCALARS",
 ]

@@ -73,11 +73,10 @@ def test_parity_obs_reward_done():
                 np.asarray(jx_obs["scalars"]), pt_obs["scalars"], atol=1e-6,
                 err_msg=f"map {mi} seq {si} reset scalars")
 
-            # exercise all 8 actions; commits are reasonably frequent so the
-            # build/mine gating + commit-aware shaping both get covered.
+            # exercise all 6 actions; build/mine are frequent so implicit
+            # commitment + the locked-tool penalty + commit-aware shaping all get covered.
             actions = rng_actions.choice(
-                8, size=seq_len,
-                p=[0.18, 0.14, 0.10, 0.24, 0.08, 0.08, 0.09, 0.09])
+                6, size=seq_len, p=[0.18, 0.14, 0.10, 0.24, 0.17, 0.17])
 
             key = jax.random.PRNGKey(0)
             for t, a in enumerate(actions):

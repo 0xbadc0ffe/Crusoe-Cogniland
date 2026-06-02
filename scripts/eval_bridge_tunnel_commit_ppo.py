@@ -40,8 +40,8 @@ from train_ppo_bridge_tunnel_commit import PPOGRUPolicy  # noqa: E402
 
 _FACE_DELTA = {0: (-1, 0), 1: (1, 0), 2: (0, -1), 3: (0, 1)}
 COMMIT_NAMES = ["none", "commit_build", "commit_mine"]
-# path colour by commitment state: none=blue, build=yellow, mine=orange
-_COMMIT_COLORS = {0: "#1f5fd0", 1: "gold", 2: "darkorange"}
+# path colour by commitment state: none=blue, build=yellow, mine=purple
+_COMMIT_COLORS = {0: "#1f5fd0", 1: "gold", 2: "purple"}
 
 
 def _draw_commit_path(ax, pos, cm, reached):
@@ -198,8 +198,6 @@ def plot_grid(policy, view_size, env_size, env_width, cargs, device,
                 m = np.array(mine_pts); ax.scatter(m[:, 1], m[:, 0], color="yellow", s=6, alpha=0.18, zorder=3, linewidths=0)
             if bridge_pts:
                 b = np.array(bridge_pts); ax.scatter(b[:, 1], b[:, 0], color="red", s=6, alpha=0.18, zorder=3, linewidths=0)
-            if commit_pts:
-                cp = np.array(commit_pts); ax.scatter(cp[:, 1], cp[:, 0], color="magenta", s=18, marker="*", alpha=0.25, zorder=4, linewidths=0)
             ax.scatter([rec.spawn[1]], [rec.spawn[0]], color="white", s=22, marker="s", edgecolors="k", zorder=5)
             fb = float((fcommit == 1).mean()); fm = float((fcommit == 2).mean()); fn = float((fcommit == 0).mean())
             ax.set_xticks([]); ax.set_yticks([])
@@ -241,8 +239,8 @@ def main():
     plot_grid(policy, view_size, env_size, env_width, cargs, device,
               args.grid_seeds, args.grid_traj, args.eval_seed_start, args.max_steps,
               f"PPO+GRU bridge_tunnel_commit  ·  {tag}  ·  {args.grid_traj} rollouts/map  ·  "
-              f"line=commitment (blue none / yellow build / orange mine)  ·  "
-              f"dots: build=red mine=yellow  ·  commit step=★",
+              f"line=commitment (blue none / yellow build / purple mine)  ·  "
+              f"dots: build=red mine=yellow",
               Path(str(args.out_prefix) + "_traj.png"))
 
 

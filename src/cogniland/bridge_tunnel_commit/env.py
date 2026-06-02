@@ -7,22 +7,24 @@ irreversible for the rest of the episode.
 
 Action space
 ------------
-``Discrete(8)``:
+``Discrete(6)``:
     0 = move UP      (also faces up)
     1 = move DOWN
     2 = move LEFT
     3 = move RIGHT
-    4 = BUILD        (water → wood) — **no-op unless committed to build**
-    5 = MINE         (rock  → grass) — **no-op unless committed to mine**
-    6 = COMMIT_BUILD (first use unlocks BUILD; no-op once any commit is made)
-    7 = COMMIT_MINE  (first use unlocks MINE;  no-op once any commit is made)
+    4 = BUILD        (water → wood)
+    5 = MINE         (rock  → grass)
 
-Commitment is a single slot ``commit ∈ {none, build, mine}``. It starts ``none``
-(neither BUILD nor MINE does anything). ``COMMIT_BUILD`` / ``COMMIT_MINE`` set it
-the first time they are used and are no-ops thereafter — once set it can never
-change, and the *other* tool stays permanently locked. So before committing the
-agent can only move + commit; after committing it can move + use the one tool it
-locked into. The commitment is exposed in the observation scalars.
+Commitment is **implicit**: a single slot ``commit ∈ {none, build, mine}`` starts
+``none``. The **first successful BUILD** (bridging a water cell the agent faces)
+locks the slot to ``build``; the **first successful MINE** locks it to ``mine``.
+Once set it can never change and the *other* tool is permanently locked — using
+the locked tool is a no-op with a small penalty. So the agent commits simply by
+*choosing to cross* its first obstacle, not via a separate action; afterwards it
+must avoid the opposite obstacle (it can't cross it) and may keep using its tool.
+A BUILD/MINE that faces the wrong (or empty) tile while still uncommitted is a
+harmless no-op and does **not** commit. The commitment is exposed in the
+observation scalars.
 
 Observation
 -----------
@@ -61,9 +63,9 @@ from .tiles import (
 )
 
 # action ids
-A_UP, A_DOWN, A_LEFT, A_RIGHT, A_BUILD, A_MINE, A_COMMIT_BUILD, A_COMMIT_MINE = range(8)
+A_UP, A_DOWN, A_LEFT, A_RIGHT, A_BUILD, A_MINE = range(6)
 A_PLACE = A_BUILD                # alias (base env calls the bridge action PLACE)
-NUM_ACTIONS = 8
+NUM_ACTIONS = 6
 
 # commitment slot states
 COMMIT_NONE, COMMIT_BUILD, COMMIT_MINE = range(3)
@@ -209,8 +211,10 @@ class BridgeTunnelCommitEnv(gym.Env):
                     reached = True
             else:
                 blocked = True
-        elif action == A_BUILD:                       # bridge water → wood (if committed)
-            if self._commit == COMMIT_BUILD:
+        elif action == A_BUILD:                       # bridge water → wood
+            if self._commit == COMMIT_MINE:           # opposite skill is locked → prohibited
+                reward -= self.illegal_penalty
+            else:
                 dr, dc = _FACE_DELTA[self._facing]
                 fr, fc = self._pos[0] + dr, self._pos[1] + dc
                 if 0 <= fr < self.height and 0 <= fc < self.width \
@@ -218,10 +222,15 @@ class BridgeTunnelCommitEnv(gym.Env):
                     self._terrain[fr, fc] = WOOD
                     placed = True
                     reward -= self.build_cost
-            else:                                     # build without committing to build → prohibited
+                    if self._commit == COMMIT_NONE:   # first successful build → commit to build
+                        self._commit = COMMIT_BUILD
+                        committed_now = True
+                        reward -= self.commit_cost
+                # facing a non-water tile: harmless no-op, no commit, no penalty
+        elif action == A_MINE:                        # mine rock → grass
+            if self._commit == COMMIT_BUILD:          # opposite skill is locked → prohibited
                 reward -= self.illegal_penalty
-        elif action == A_MINE:                        # mine rock → grass (if committed)
-            if self._commit == COMMIT_MINE:
+            else:
                 dr, dc = _FACE_DELTA[self._facing]
                 fr, fc = self._pos[0] + dr, self._pos[1] + dc
                 if 0 <= fr < self.height and 0 <= fc < self.width \
@@ -229,22 +238,11 @@ class BridgeTunnelCommitEnv(gym.Env):
                     self._terrain[fr, fc] = GRASS
                     mined = True
                     reward -= self.build_cost
-            else:                                     # mine without committing to mine → prohibited
-                reward -= self.illegal_penalty
-        elif action == A_COMMIT_BUILD:                # lock into building (once)
-            if self._commit == COMMIT_NONE:
-                self._commit = COMMIT_BUILD
-                committed_now = True
-                reward -= self.commit_cost
-            else:                                     # re-committing after a commit → prohibited
-                reward -= self.illegal_penalty
-        elif action == A_COMMIT_MINE:                 # lock into mining (once)
-            if self._commit == COMMIT_NONE:
-                self._commit = COMMIT_MINE
-                committed_now = True
-                reward -= self.commit_cost
-            else:                                     # re-committing after a commit → prohibited
-                reward -= self.illegal_penalty
+                    if self._commit == COMMIT_NONE:   # first successful mine → commit to mine
+                        self._commit = COMMIT_MINE
+                        committed_now = True
+                        reward -= self.commit_cost
+                # facing a non-rock tile: harmless no-op, no commit, no penalty
 
         # PBRS shaping with a commitment-aware potential φ = −ctg[commit].
         # Read φ_prev with the pre-action commitment and φ_curr with the
@@ -401,6 +399,5 @@ class BridgeTunnelCommitEnv(gym.Env):
 
 __all__ = ["BridgeTunnelCommitEnv", "NUM_ACTIONS", "N_SCALARS",
            "A_UP", "A_DOWN", "A_LEFT", "A_RIGHT", "A_BUILD", "A_MINE", "A_PLACE",
-           "A_COMMIT_BUILD", "A_COMMIT_MINE",
            "COMMIT_NONE", "COMMIT_BUILD", "COMMIT_MINE",
            "F_UP", "F_DOWN", "F_LEFT", "F_RIGHT"]

@@ -51,8 +51,8 @@ from purejaxwm.commons import resolve_dtype  # noqa: E402
 _FACE_DELTA = np.array([(-1, 0), (1, 0), (0, -1), (0, 1)], dtype=np.int32)
 COMMIT_NAMES = ["none", "commit_build", "commit_mine"]
 _DECODER_MODE = "categorical"
-# path colour by commitment state: none=blue, build=yellow, mine=orange
-_COMMIT_COLORS = {0: "#1f5fd0", 1: "gold", 2: "darkorange"}
+# path colour by commitment state: none=blue, build=yellow, mine=purple
+_COMMIT_COLORS = {0: "#1f5fd0", 1: "gold", 2: "purple"}
 
 
 def _draw_commit_path(ax, pos, cm, reached):
@@ -289,8 +289,6 @@ def main():
                 m = np.array(mine_pts); ax.scatter(m[:, 1], m[:, 0], color="yellow", s=6, alpha=0.18, zorder=3, linewidths=0)
             if bridge_pts:
                 b = np.array(bridge_pts); ax.scatter(b[:, 1], b[:, 0], color="red", s=6, alpha=0.18, zorder=3, linewidths=0)
-            if commit_pts:
-                cp = np.array(commit_pts); ax.scatter(cp[:, 1], cp[:, 0], color="magenta", s=18, marker="*", alpha=0.25, zorder=4, linewidths=0)
             ax.scatter([rec.spawn[1]], [rec.spawn[0]], color="white", s=22, marker="s", edgecolors="k", zorder=5)
             fcl = commit[-1]
             fb = float((fcl == 1).mean()); fm = float((fcl == 2).mean()); fn = float((fcl == 0).mean())
@@ -298,8 +296,8 @@ def main():
             ax.set_title(f"{cat} s{args.eval_seed_start+sj}  succ {reached.mean():.0%}\n"
                          f"build {fb:.0%}/mine {fm:.0%}/none {fn:.0%}", fontsize=7)
     fig.suptitle(f"DreamerV3 bridge_tunnel_commit  ·  {tag}  ·  {args.grid_traj} rollouts/map  ·  "
-                 f"line=commitment (blue none / yellow build / orange mine)  ·  "
-                 f"dots: build=red mine=yellow  ·  commit step=★", fontsize=12)
+                 f"line=commitment (blue none / yellow build / purple mine)  ·  "
+                 f"dots: build=red mine=yellow", fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     out = Path(str(args.out_prefix) + "_traj.png")
     out.parent.mkdir(parents=True, exist_ok=True)

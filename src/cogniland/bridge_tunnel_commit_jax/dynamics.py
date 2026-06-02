@@ -72,8 +72,6 @@ def step(
     is_move = action < 4
     is_build = action == C.A_BUILD
     is_mine = action == C.A_MINE
-    is_cbuild = action == C.A_COMMIT_BUILD
-    is_cmine = action == C.A_COMMIT_MINE
 
     commit_prev = state.commit
     # ctg at the pre-action commitment + position
@@ -97,16 +95,18 @@ def step(
     new_c = jnp.where(can_step, fc, state.agent_c)
     reached = can_step & (front_tile == C.TARGET)
 
-    # --- commitment update (only from NONE) ---
     is_none = commit_prev == C.COMMIT_NONE
-    new_commit = jnp.where(is_none & is_cbuild, jnp.int32(C.COMMIT_BUILD),
-                  jnp.where(is_none & is_cmine, jnp.int32(C.COMMIT_MINE),
-                            commit_prev))
+    # --- BUILD: water → wood, allowed unless locked to mine ---
+    do_place = is_build & (commit_prev != C.COMMIT_MINE) & in_bounds & (front_tile == C.WATER)
+    # --- MINE: rock → grass, allowed unless locked to build ---
+    do_mine = is_mine & (commit_prev != C.COMMIT_BUILD) & in_bounds & (front_tile == C.ROCK)
 
-    # --- BUILD: water → wood (only if committed to build) ---
-    do_place = is_build & (commit_prev == C.COMMIT_BUILD) & in_bounds & (front_tile == C.WATER)
-    # --- MINE: rock → grass (only if committed to mine) ---
-    do_mine = is_mine & (commit_prev == C.COMMIT_MINE) & in_bounds & (front_tile == C.ROCK)
+    # implicit commitment: the FIRST successful build/mine locks the slot.
+    committed_build = do_place & is_none
+    committed_mine = do_mine & is_none
+    new_commit = jnp.where(committed_build, jnp.int32(C.COMMIT_BUILD),
+                  jnp.where(committed_mine, jnp.int32(C.COMMIT_MINE), commit_prev))
+
     new_tile = jnp.where(do_place, jnp.int8(C.WOOD),
                          jnp.where(do_mine, jnp.int8(C.GRASS), front_tile))
     new_terrain = jnp.where(
@@ -116,13 +116,11 @@ def step(
     )
 
     # --- commitment-specific terms ---
-    committed_now = is_none & (is_cbuild | is_cmine)        # first valid commit this step
-    # prohibited: BUILD/MINE without (or against) the matching commitment, or
-    # committing again after a commit is already set.
+    committed_now = committed_build | committed_mine       # first successful build/mine
+    # prohibited: using the LOCKED opposite tool after a commitment is set.
     illegal = (
-        (is_build & (commit_prev != C.COMMIT_BUILD))
-        | (is_mine & (commit_prev != C.COMMIT_MINE))
-        | ((is_cbuild | is_cmine) & (commit_prev != C.COMMIT_NONE))
+        (is_build & (commit_prev == C.COMMIT_MINE))
+        | (is_mine & (commit_prev == C.COMMIT_BUILD))
     )
 
     # --- reward (ctg_curr indexes the post-action commitment + position) ---

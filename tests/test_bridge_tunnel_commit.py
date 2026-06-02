@@ -20,9 +20,8 @@ from cogniland.bridge_tunnel_commit import (
     BridgeTunnelCommitEnv, generate_commit_map, is_winnable, tiles as T,
 )
 from cogniland.bridge_tunnel_commit.env import (
-    A_UP, A_DOWN, A_LEFT, A_RIGHT, A_BUILD, A_MINE, A_COMMIT_BUILD,
-    A_COMMIT_MINE, COMMIT_NONE, COMMIT_BUILD, COMMIT_MINE, N_SCALARS,
-    F_RIGHT,
+    A_UP, A_DOWN, A_LEFT, A_RIGHT, A_BUILD, A_MINE,
+    COMMIT_NONE, COMMIT_BUILD, COMMIT_MINE, N_SCALARS, F_RIGHT,
 )
 from cogniland.bridge_tunnel_commit.mapgen import (
     CATEGORIES, MapRecord, _can_reach_goal, _CATEGORY_FRACS,
@@ -95,98 +94,89 @@ def _custom_env(terr, spawn, target, category="balanced", **kw):
 def test_obs_shapes_and_action_space():
     env = BridgeTunnelCommitEnv(seed=0)
     obs, info = env.reset()
-    assert env.action_space.n == 8
+    assert env.action_space.n == 6
     assert obs["scalars"].shape == (N_SCALARS,)
     assert info["commit"] == COMMIT_NONE
     # before commit, facing one-hot set, both commit flags zero
     assert obs["scalars"][4 + 1] == 0.0 and obs["scalars"][4 + 2] == 0.0
 
 
-def test_build_is_noop_before_commit():
+def test_build_noop_on_grass_does_not_commit():
+    """BUILD facing a non-water tile while uncommitted is a harmless no-op and
+    does NOT commit."""
+    terr = np.full((5, 5), T.GRASS, dtype=np.int8)
+    terr[4, 4] = T.TARGET
+    env = _custom_env(terr, (2, 2), (4, 4))
+    env.step(A_RIGHT)                                   # face grass
+    _, _, _, _, info = env.step(A_BUILD)
+    assert info["placed"] is False and info["commit"] == COMMIT_NONE
+
+
+def test_first_build_commits_and_locks_mine():
     terr = np.full((5, 5), T.GRASS, dtype=np.int8)
     terr[4, 4] = T.TARGET
     terr[2, 3] = T.WATER
+    terr[3, 2] = T.ROCK                                 # a rock to try mining later
     env = _custom_env(terr, (2, 2), (4, 4))
     env.step(A_RIGHT)                                   # face the water
-    _, _, _, _, info = env.step(A_BUILD)                # not committed → no-op
-    assert info["placed"] is False
-    assert env._terrain[2, 3] == T.WATER
-
-
-def test_commit_build_unlocks_build_and_locks_mine():
-    terr = np.full((5, 5), T.GRASS, dtype=np.int8)
-    terr[4, 4] = T.TARGET
-    terr[2, 3] = T.WATER
-    env = _custom_env(terr, (2, 2), (4, 4))
-    _, _, _, _, info = env.step(A_COMMIT_BUILD)
-    assert info["commit"] == COMMIT_BUILD and info["committed_now"] is True
-    # committing mine afterwards is a no-op (locked)
-    _, _, _, _, info = env.step(A_COMMIT_MINE)
-    assert info["commit"] == COMMIT_BUILD and info["committed_now"] is False
-    # re-committing build is a no-op too
-    _, _, _, _, info = env.step(A_COMMIT_BUILD)
-    assert info["committed_now"] is False
-    # now BUILD works on water
-    env.step(A_RIGHT)
-    _, _, _, _, info = env.step(A_BUILD)
-    assert info["placed"] is True and env._terrain[2, 3] == T.WOOD
-
-
-def test_mine_blocked_after_committing_build():
-    terr = np.full((5, 5), T.GRASS, dtype=np.int8)
-    terr[4, 4] = T.TARGET
-    terr[2, 3] = T.ROCK
-    env = _custom_env(terr, (2, 2), (4, 4))
-    env.step(A_COMMIT_BUILD)                            # committed to build
-    env.step(A_RIGHT)                                   # face the rock
-    _, _, _, _, info = env.step(A_MINE)                 # mine is locked out
-    assert info["mined"] is False and env._terrain[2, 3] == T.ROCK
-
-
-def test_commit_mine_unlocks_mine():
-    terr = np.full((5, 5), T.GRASS, dtype=np.int8)
-    terr[4, 4] = T.TARGET
-    terr[2, 3] = T.ROCK
-    env = _custom_env(terr, (2, 2), (4, 4))
-    env.step(A_COMMIT_MINE)
-    env.step(A_RIGHT)
+    _, _, _, _, info = env.step(A_BUILD)                # first build → commit + bridge
+    assert info["placed"] is True and info["committed_now"] is True
+    assert info["commit"] == COMMIT_BUILD and env._terrain[2, 3] == T.WOOD
+    # mine is now locked: facing the rock and mining does nothing
+    env.step(A_DOWN)                                    # face the rock below
     _, _, _, _, info = env.step(A_MINE)
-    assert info["mined"] is True and env._terrain[2, 3] == T.GRASS
+    assert info["mined"] is False and env._terrain[3, 2] == T.ROCK
+
+
+def test_first_mine_commits_and_locks_build():
+    terr = np.full((5, 5), T.GRASS, dtype=np.int8)
+    terr[4, 4] = T.TARGET
+    terr[2, 3] = T.ROCK
+    terr[3, 2] = T.WATER
+    env = _custom_env(terr, (2, 2), (4, 4))
+    env.step(A_RIGHT)                                   # face the rock
+    _, _, _, _, info = env.step(A_MINE)                 # first mine → commit + mine
+    assert info["mined"] is True and info["commit"] == COMMIT_MINE
+    assert env._terrain[2, 3] == T.GRASS
+    # build is now locked
+    env.step(A_DOWN)                                    # face the water below
+    _, _, _, _, info = env.step(A_BUILD)
+    assert info["placed"] is False and env._terrain[3, 2] == T.WATER
 
 
 def test_commit_flag_in_scalars():
-    env = BridgeTunnelCommitEnv(seed=1)
-    env.reset()
-    obs, *_ = env.step(A_COMMIT_MINE)
+    terr = np.full((5, 5), T.GRASS, dtype=np.int8)
+    terr[4, 4] = T.TARGET
+    terr[2, 3] = T.ROCK
+    env = _custom_env(terr, (2, 2), (4, 4))
+    env.step(A_RIGHT)
+    obs, *_ = env.step(A_MINE)                          # commit to mine
     # scalars[-2]=commit_build, scalars[-1]=commit_mine
     assert obs["scalars"][-1] == 1.0 and obs["scalars"][-2] == 0.0
 
 
-def test_commit_cost_and_illegal_penalties():
-    """One-time commit cost; penalties for build/mine without the matching commit
-    and for re-committing; legal-but-ineffective actions are NOT penalized."""
+def test_commit_cost_and_illegal_penalty():
+    """One-time commit cost on the first successful build/mine; penalty for the
+    LOCKED opposite skill. Obstacles are placed adjacent to spawn so moves are
+    blocked (the agent only re-faces, staying put)."""
     terr = np.full((5, 5), T.GRASS, dtype=np.int8)
     terr[4, 4] = T.TARGET
-    env = _custom_env(terr, (2, 2), (4, 4), shaping_coef=0.0,
+    terr[2, 3] = T.WATER                                # right of spawn
+    terr[1, 2] = T.ROCK                                 # above spawn
+    env = _custom_env(terr, (2, 2), (4, 4), shaping_coef=0.0, build_cost=0.0,
                       commit_cost=0.05, illegal_penalty=0.02, slack_penalty=-0.01)
-    # build before committing → slack + illegal penalty
-    _, r, *_ = env.step(A_BUILD)
-    assert r == pytest.approx(-0.01 - 0.02)
-    # commit build → slack + commit cost
-    _, r, _, _, info = env.step(A_COMMIT_BUILD)
-    assert info["committed_now"] is True
-    assert r == pytest.approx(-0.01 - 0.05)
-    # re-commit (mine) after committed → slack + illegal penalty, commitment unchanged
-    _, r, _, _, info = env.step(A_COMMIT_MINE)
-    assert info["commit"] == COMMIT_BUILD
-    assert r == pytest.approx(-0.01 - 0.02)
-    # mine while committed to build → prohibited → slack + illegal penalty
-    _, r, *_ = env.step(A_MINE)
-    assert r == pytest.approx(-0.01 - 0.02)
-    # build facing grass while committed to build → legal-but-ineffective → just slack
+    # reset faces right → BUILD bridges the water and commits (slack + commit_cost)
     _, r, _, _, info = env.step(A_BUILD)
-    assert info["placed"] is False
-    assert r == pytest.approx(-0.01)
+    assert info["committed_now"] is True and info["commit"] == COMMIT_BUILD
+    assert env._pos == (2, 2)                           # build never moves
+    assert r == pytest.approx(-0.01 - 0.05)
+    # face the rock above (move blocked by rock → stays, just re-faces; slack only)
+    _, r, _, _, _ = env.step(A_UP)
+    assert r == pytest.approx(-0.01) and env._pos == (2, 2)
+    # MINE the rock while committed to build → locked → no-op + illegal penalty
+    _, r, _, _, info = env.step(A_MINE)
+    assert info["mined"] is False and env._terrain[1, 2] == T.ROCK
+    assert r == pytest.approx(-0.01 - 0.02)
 
 
 def test_target_terminates_with_reach_bonus():
