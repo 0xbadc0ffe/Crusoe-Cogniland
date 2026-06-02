@@ -52,7 +52,7 @@ _FACE_DELTA = np.array([(-1, 0), (1, 0), (0, -1), (0, 1)], dtype=np.int32)
 COMMIT_NAMES = ["none", "commit_build", "commit_mine"]
 _DECODER_MODE = "categorical"
 # path colour by commitment state: none=blue, build=yellow, mine=purple
-_COMMIT_COLORS = {0: "#1f5fd0", 1: "gold", 2: "purple"}
+_COMMIT_COLORS = {0: "#1f5fd0", 1: "#ffd000", 2: "#a800e6"}
 
 
 def _draw_commit_path(ax, pos, cm, reached):

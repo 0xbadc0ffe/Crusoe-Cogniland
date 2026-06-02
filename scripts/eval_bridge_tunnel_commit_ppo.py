@@ -41,7 +41,7 @@ from train_ppo_bridge_tunnel_commit import PPOGRUPolicy  # noqa: E402
 _FACE_DELTA = {0: (-1, 0), 1: (1, 0), 2: (0, -1), 3: (0, 1)}
 COMMIT_NAMES = ["none", "commit_build", "commit_mine"]
 # path colour by commitment state: none=blue, build=yellow, mine=purple
-_COMMIT_COLORS = {0: "#1f5fd0", 1: "gold", 2: "purple"}
+_COMMIT_COLORS = {0: "#1f5fd0", 1: "#ffd000", 2: "#a800e6"}
 
 
 def _draw_commit_path(ax, pos, cm, reached):

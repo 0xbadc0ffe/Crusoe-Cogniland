@@ -23,7 +23,7 @@ from matplotlib.collections import LineCollection
 
 HERE = Path(__file__).resolve().parent
 # commitment → path colour (matches the trajectory grids): none/build/mine
-_COMMIT_COL = {"none": "#1f5fd0", "build": "gold", "mine": "purple", "": "#1f5fd0"}
+_COMMIT_COL = {"none": "#1f5fd0", "build": "#ffd000", "mine": "#a800e6", "": "#1f5fd0"}
 
 
 def load_bundle(d: Path):
