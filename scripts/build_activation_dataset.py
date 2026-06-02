@@ -293,9 +293,12 @@ def _build_map_list(cfg, args):
     if cfg["is_commit"]:
         cats = [c.strip() for c in args.categories.split(",")]
         mid = 0
-        for cat in cats:
+        # distinct seed block per category so map_seed (hence traj_seed) is GLOBALLY
+        # unique across categories — else traj_seed collides between balanced/lakes/rocky.
+        for ci, cat in enumerate(cats):
+            base = args.seed_start + ci * 100_000
             for i in range(args.maps_per_category):
-                seed = args.seed_start + i
+                seed = base + i
                 rec = cfg["gen"](seed, cat, natkw)
                 out.append({"map_id": mid, "map_seed": seed, "category": cat, "rec": rec}); mid += 1
     else:
@@ -470,13 +473,13 @@ def main():
     print(f"\n=== {args.env} dataset @ {out_dir} ===")
     print(f"maps={len(maps)}  rows={N}  decisions={len(all_dec)}")
     if N and cfg["is_commit"]:
-        fc = labels.groupby('traj_seed').first()
+        fc = labels.groupby(['map_id', 'traj_id']).first()   # one row per episode
         print("final_commit x category (episode counts):")
         print(fc.groupby(['category', 'final_commit']).size().to_string())
     if len(decisions):
         print("decisions by choice:\n" + decisions["choice"].value_counts().to_string())
     if N:
-        print(f"success: {labels.groupby('traj_seed')['reached'].first().mean():.1%}")
+        print(f"success: {labels.groupby(['map_id','traj_id'])['reached'].first().mean():.1%}")
     sz = sum(f.stat().st_size for f in out_dir.iterdir() if f.is_file()) / 1e6
     print(f"on-disk: {sz:.1f} MB")
 
