@@ -29,6 +29,7 @@ import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -39,6 +40,25 @@ from train_ppo_bridge_tunnel_commit import PPOGRUPolicy  # noqa: E402
 
 _FACE_DELTA = {0: (-1, 0), 1: (1, 0), 2: (0, -1), 3: (0, 1)}
 COMMIT_NAMES = ["none", "commit_build", "commit_mine"]
+# path colour by commitment state: none=blue, build=yellow, mine=orange
+_COMMIT_COLORS = {0: "#1f5fd0", 1: "gold", 2: "darkorange"}
+
+
+def _draw_commit_path(ax, pos, cm, reached):
+    """Draw one trajectory as line segments coloured by the commitment state
+    (blue=none, yellow=build, orange=mine). cm[k] is the commit when AT pos[k];
+    each segment pos[k]->pos[k+1] is coloured by cm[k+1] (the state during that move)."""
+    pos = np.asarray(pos, dtype=float)
+    cm = np.asarray(cm)
+    if len(pos) < 2:
+        return
+    jit = (np.random.rand(*pos.shape) - 0.5) * 0.6
+    xy = np.stack([(pos + jit)[:, 1], (pos + jit)[:, 0]], axis=1)   # (L,2) as (x,y)
+    segs = np.stack([xy[:-1], xy[1:]], axis=1)                      # (L-1,2,2)
+    colors = [_COMMIT_COLORS.get(int(c), "gray") for c in cm[1:]]
+    lc = LineCollection(segs, colors=colors, linewidths=0.6,
+                        alpha=0.045 if reached else 0.07)
+    ax.add_collection(lc)
 
 
 def _load_policy(ckpt_path: Path, device):
@@ -80,6 +100,7 @@ def batched_rollout(policy, rec, n_traj, view_size, max_steps, device):
     reached = np.zeros(n_traj, dtype=bool)
     final_commit = np.zeros(n_traj, dtype=np.int64)
     trajs = [[tuple(e._pos)] for e in envs]
+    commits = [[0] for _ in envs]                       # commit state aligned with trajs
     commit_pts, mine_pts, bridge_pts = [], [], []
 
     for _ in range(max_steps):
@@ -94,6 +115,7 @@ def batched_rollout(policy, rec, n_traj, view_size, max_steps, device):
             o, r, term, trunc, info = e.step(int(acts[i]))
             obs[i] = o
             trajs[i].append(tuple(e._pos))
+            commits[i].append(int(info["commit"]))
             final_commit[i] = info["commit"]
             if info["committed_now"]:
                 commit_pts.append(tuple(e._pos))
@@ -108,7 +130,7 @@ def batched_rollout(policy, rec, n_traj, view_size, max_steps, device):
         done = torch.zeros(n_traj, device=device)
         if not active.any():
             break
-    return trajs, reached, final_commit, commit_pts, mine_pts, bridge_pts
+    return trajs, reached, final_commit, commit_pts, mine_pts, bridge_pts, commits
 
 
 def compute_matrix(policy, view_size, env_size, env_width, cargs, device,
@@ -159,22 +181,19 @@ def plot_grid(policy, view_size, env_size, env_width, cargs, device,
     gh = cargs.get("goal_half", 1)
     fig, axes = plt.subplots(len(CATEGORIES), n_seeds,
                              figsize=(n_seeds * 3.0, len(CATEGORIES) * 2.0))
-    axes = np.atleast_2d(axes)
+    axes = np.asarray(axes).reshape(len(CATEGORIES), n_seeds)
     for ci, cat in enumerate(CATEGORIES):
         for sj in range(n_seeds):
             rec = generate_commit_map(size=env_size, width=env_width,
                                       seed=seed_start + sj, category=cat,
                                       tree_frac=cargs.get("tree_frac", 0.03),
                                       goal_half=(gh if (gh is not None and gh >= 0) else None))
-            trajs, reached, fcommit, commit_pts, mine_pts, bridge_pts = batched_rollout(
+            trajs, reached, fcommit, commit_pts, mine_pts, bridge_pts, commits = batched_rollout(
                 policy, rec, n_traj, view_size, max_steps, device)
             ax = axes[ci, sj]
             ax.imshow(T.TILE_COLORS[rec.terrain], interpolation="nearest")
             for i, tr in enumerate(trajs):
-                a = np.array(tr)
-                jit = (np.random.rand(*a.shape) - 0.5) * 0.6
-                ax.plot(a[:, 1] + jit[:, 1], a[:, 0] + jit[:, 0],
-                        color="darkblue", lw=0.6, alpha=0.04 if reached[i] else 0.07)
+                _draw_commit_path(ax, tr, commits[i], reached[i])
             if mine_pts:
                 m = np.array(mine_pts); ax.scatter(m[:, 1], m[:, 0], color="yellow", s=6, alpha=0.18, zorder=3, linewidths=0)
             if bridge_pts:
@@ -221,8 +240,9 @@ def main():
                 Path(str(args.out_prefix) + "_commit_matrix.png"))
     plot_grid(policy, view_size, env_size, env_width, cargs, device,
               args.grid_seeds, args.grid_traj, args.eval_seed_start, args.max_steps,
-              f"PPO+GRU bridge_tunnel_commit  ·  {tag}  ·  {args.grid_traj} stochastic rollouts/map  ·  "
-              f"path=blue mine=yellow bridge=red commit=★",
+              f"PPO+GRU bridge_tunnel_commit  ·  {tag}  ·  {args.grid_traj} rollouts/map  ·  "
+              f"line=commitment (blue none / yellow build / orange mine)  ·  "
+              f"dots: build=red mine=yellow  ·  commit step=★",
               Path(str(args.out_prefix) + "_traj.png"))
 
 

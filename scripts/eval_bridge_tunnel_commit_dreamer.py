@@ -28,6 +28,7 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 
 import jax
 import jax.numpy as jnp
@@ -50,6 +51,24 @@ from purejaxwm.commons import resolve_dtype  # noqa: E402
 _FACE_DELTA = np.array([(-1, 0), (1, 0), (0, -1), (0, 1)], dtype=np.int32)
 COMMIT_NAMES = ["none", "commit_build", "commit_mine"]
 _DECODER_MODE = "categorical"
+# path colour by commitment state: none=blue, build=yellow, mine=orange
+_COMMIT_COLORS = {0: "#1f5fd0", 1: "gold", 2: "darkorange"}
+
+
+def _draw_commit_path(ax, pos, cm, reached):
+    """Draw one trajectory as segments coloured by commitment (blue=none,
+    yellow=build, orange=mine). Segment pos[k]->pos[k+1] uses cm[k+1]."""
+    pos = np.asarray(pos, dtype=float)
+    cm = np.asarray(cm)
+    if len(pos) < 2:
+        return
+    jit = (np.random.rand(*pos.shape) - 0.5) * 0.6
+    xy = np.stack([(pos + jit)[:, 1], (pos + jit)[:, 0]], axis=1)
+    segs = np.stack([xy[:-1], xy[1:]], axis=1)
+    colors = [_COMMIT_COLORS.get(int(c), "gray") for c in cm[1:]]
+    lc = LineCollection(segs, colors=colors, linewidths=0.6,
+                        alpha=0.045 if reached else 0.07)
+    ax.add_collection(lc)
 
 
 class BridgeTunnelEncoder(nn.Module):
@@ -250,7 +269,7 @@ def main():
     # --- trajectory grid ---
     fig, axes = plt.subplots(len(CATEGORIES), args.grid_seeds,
                              figsize=(args.grid_seeds * 3.0, len(CATEGORIES) * 2.0))
-    axes = np.atleast_2d(axes)
+    axes = np.asarray(axes).reshape(len(CATEGORIES), args.grid_seeds)
     for ci, cat in enumerate(CATEGORIES):
         for sj in range(args.grid_seeds):
             rec = make_map(cat, args.eval_seed_start + sj)
@@ -264,10 +283,8 @@ def main():
             ax = axes[ci, sj]
             ax.imshow(T.TILE_COLORS[rec.terrain], interpolation="nearest")
             for i in range(positions.shape[1]):
-                a = positions[:, i, :]
-                jit = (np.random.rand(*a.shape) - 0.5) * 0.6
-                ax.plot(a[:, 1] + jit[:, 1], a[:, 0] + jit[:, 0],
-                        color="darkblue", lw=0.6, alpha=0.04 if reached[i] else 0.07)
+                cm_i = np.concatenate([[0], commit[:, i]])     # align with T+1 positions
+                _draw_commit_path(ax, positions[:, i, :], cm_i, reached[i])
             if mine_pts:
                 m = np.array(mine_pts); ax.scatter(m[:, 1], m[:, 0], color="yellow", s=6, alpha=0.18, zorder=3, linewidths=0)
             if bridge_pts:
@@ -280,8 +297,9 @@ def main():
             ax.set_xticks([]); ax.set_yticks([])
             ax.set_title(f"{cat} s{args.eval_seed_start+sj}  succ {reached.mean():.0%}\n"
                          f"build {fb:.0%}/mine {fm:.0%}/none {fn:.0%}", fontsize=7)
-    fig.suptitle(f"DreamerV3 bridge_tunnel_commit  ·  {tag}  ·  {args.grid_traj} stochastic rollouts/map  ·  "
-                 f"path=blue mine=yellow bridge=red commit=★", fontsize=12)
+    fig.suptitle(f"DreamerV3 bridge_tunnel_commit  ·  {tag}  ·  {args.grid_traj} rollouts/map  ·  "
+                 f"line=commitment (blue none / yellow build / orange mine)  ·  "
+                 f"dots: build=red mine=yellow  ·  commit step=★", fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     out = Path(str(args.out_prefix) + "_traj.png")
     out.parent.mkdir(parents=True, exist_ok=True)
