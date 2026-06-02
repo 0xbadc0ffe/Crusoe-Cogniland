@@ -43,6 +43,8 @@ class EnvParams:
     reach_bonus: float = struct.field(pytree_node=False, default=1.0)
     shaping_coef: float = struct.field(pytree_node=False, default=0.01)
     build_cost: float = struct.field(pytree_node=False, default=0.05)
+    commit_cost: float = struct.field(pytree_node=False, default=0.05)
+    illegal_penalty: float = struct.field(pytree_node=False, default=0.02)
     gamma: float = struct.field(pytree_node=False, default=0.99)
 
     @property
@@ -73,6 +75,8 @@ class EnvParams:
         reach_bonus: float = 1.0,
         shaping_coef: float = 0.01,
         build_cost: float = 0.05,
+        commit_cost: float = 0.05,
+        illegal_penalty: float = 0.02,
         gamma: float = 0.99,
     ) -> "EnvParams":
         assert ctg.ndim == 4 and ctg.shape[1] == 3, \
@@ -90,6 +94,8 @@ class EnvParams:
             reach_bonus=float(reach_bonus),
             shaping_coef=float(shaping_coef),
             build_cost=float(build_cost),
+            commit_cost=float(commit_cost),
+            illegal_penalty=float(illegal_penalty),
             gamma=float(gamma),
         )
 

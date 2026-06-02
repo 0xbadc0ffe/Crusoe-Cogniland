@@ -162,6 +162,33 @@ def test_commit_flag_in_scalars():
     assert obs["scalars"][-1] == 1.0 and obs["scalars"][-2] == 0.0
 
 
+def test_commit_cost_and_illegal_penalties():
+    """One-time commit cost; penalties for build/mine without the matching commit
+    and for re-committing; legal-but-ineffective actions are NOT penalized."""
+    terr = np.full((5, 5), T.GRASS, dtype=np.int8)
+    terr[4, 4] = T.TARGET
+    env = _custom_env(terr, (2, 2), (4, 4), shaping_coef=0.0,
+                      commit_cost=0.05, illegal_penalty=0.02, slack_penalty=-0.01)
+    # build before committing → slack + illegal penalty
+    _, r, *_ = env.step(A_BUILD)
+    assert r == pytest.approx(-0.01 - 0.02)
+    # commit build → slack + commit cost
+    _, r, _, _, info = env.step(A_COMMIT_BUILD)
+    assert info["committed_now"] is True
+    assert r == pytest.approx(-0.01 - 0.05)
+    # re-commit (mine) after committed → slack + illegal penalty, commitment unchanged
+    _, r, _, _, info = env.step(A_COMMIT_MINE)
+    assert info["commit"] == COMMIT_BUILD
+    assert r == pytest.approx(-0.01 - 0.02)
+    # mine while committed to build → prohibited → slack + illegal penalty
+    _, r, *_ = env.step(A_MINE)
+    assert r == pytest.approx(-0.01 - 0.02)
+    # build facing grass while committed to build → legal-but-ineffective → just slack
+    _, r, _, _, info = env.step(A_BUILD)
+    assert info["placed"] is False
+    assert r == pytest.approx(-0.01)
+
+
 def test_target_terminates_with_reach_bonus():
     terr = np.full((3, 3), T.GRASS, dtype=np.int8)
     terr[0, 2] = T.TARGET

@@ -115,11 +115,23 @@ def step(
         state.terrain,
     )
 
+    # --- commitment-specific terms ---
+    committed_now = is_none & (is_cbuild | is_cmine)        # first valid commit this step
+    # prohibited: BUILD/MINE without (or against) the matching commitment, or
+    # committing again after a commit is already set.
+    illegal = (
+        (is_build & (commit_prev != C.COMMIT_BUILD))
+        | (is_mine & (commit_prev != C.COMMIT_MINE))
+        | ((is_cbuild | is_cmine) & (commit_prev != C.COMMIT_NONE))
+    )
+
     # --- reward (ctg_curr indexes the post-action commitment + position) ---
     ctg_curr = ctg_all[new_commit, new_r, new_c]
     reward = jnp.float32(params.slack_penalty)
     reward = reward + params.reach_bonus * reached.astype(jnp.float32)
     reward = reward - params.build_cost * (do_place | do_mine).astype(jnp.float32)
+    reward = reward - params.commit_cost * committed_now.astype(jnp.float32)
+    reward = reward - params.illegal_penalty * illegal.astype(jnp.float32)
     reward = reward + params.shaping_coef * (ctg_prev - params.gamma * ctg_curr)
 
     new_step_count = state.step_count + 1

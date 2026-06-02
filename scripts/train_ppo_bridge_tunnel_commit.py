@@ -254,6 +254,12 @@ def main():
     parser.add_argument("--build-cost", type=float, default=0.05,
                         help="extra penalty per successful PLACE/MINE — makes "
                              "crossing an obstacle cost more than walking around it")
+    parser.add_argument("--commit-cost", type=float, default=0.05,
+                        help="one-time cost paid when the agent commits (so a short "
+                             "detour can beat committing → some 'none' episodes)")
+    parser.add_argument("--illegal-penalty", type=float, default=0.02,
+                        help="penalty for prohibited actions: build/mine without the "
+                             "matching commit, or re-committing after a commit")
     # PPO
     parser.add_argument("--update-epochs", type=int, default=4)
     parser.add_argument("--num-minibatches", type=int, default=4)
@@ -316,7 +322,8 @@ def main():
         view_size=args.view_size, orientation=args.orientation,
         max_steps=args.max_steps, slack_penalty=args.slack_penalty,
         shaping_coef=args.shaping_coef, reach_bonus=args.reach_bonus,
-        build_cost=args.build_cost, gamma=args.gamma, seed=args.seed,
+        build_cost=args.build_cost, commit_cost=args.commit_cost,
+        illegal_penalty=args.illegal_penalty, gamma=args.gamma, seed=args.seed,
         categories=tuple(args.categories), tree_frac=args.tree_frac,
         goal_half=(args.goal_half if args.goal_half >= 0 else None),
     )

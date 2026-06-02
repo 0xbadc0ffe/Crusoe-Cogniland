@@ -33,7 +33,11 @@ Reward
 ------
 ``slack_penalty`` per step, ``+reach_bonus`` on reaching the target, ``−build_cost``
 per successful BUILD/MINE, plus PBRS shaping ``shaping_coef · (φ_prev − γ·φ_curr)``
-with ``φ = −ctg``. The cost-to-go ``ctg`` is **commitment-aware**: before
+with ``φ = −ctg``. Two commitment-specific terms shape the decision: a one-time
+``−commit_cost`` paid on the step the agent commits (so when a short detour exists
+it can be better to never commit — leaving a little ``none`` mass), and a small
+``−illegal_penalty`` whenever a *prohibited* action is used: BUILD/MINE without (or
+against) the matching commitment, or committing again after a commit. The cost-to-go ``ctg`` is **commitment-aware**: before
 committing, both water and rock count as crossable (unit-ish cost); once
 committed, only the committed obstacle is crossable and the other is treated as
 an impassable wall. Three static ctg fields (none / build / mine) are
@@ -102,6 +106,8 @@ class BridgeTunnelCommitEnv(gym.Env):
         reach_bonus: float = 1.0,
         shaping_coef: float = 0.01,
         build_cost: float = 0.05,
+        commit_cost: float = 0.05,
+        illegal_penalty: float = 0.02,
         gamma: float = 0.99,
     ) -> None:
         super().__init__()
@@ -123,6 +129,8 @@ class BridgeTunnelCommitEnv(gym.Env):
         self.reach_bonus = float(reach_bonus)
         self.shaping_coef = float(shaping_coef)
         self.build_cost = float(build_cost)
+        self.commit_cost = float(commit_cost)        # one-time cost paid when committing
+        self.illegal_penalty = float(illegal_penalty)  # using a tool without/against its commit, or re-committing
         self.gamma = float(gamma)
         self._seed = int(seed)
         self._fixed_record = map_record
@@ -210,6 +218,8 @@ class BridgeTunnelCommitEnv(gym.Env):
                     self._terrain[fr, fc] = WOOD
                     placed = True
                     reward -= self.build_cost
+            else:                                     # build without committing to build → prohibited
+                reward -= self.illegal_penalty
         elif action == A_MINE:                        # mine rock → grass (if committed)
             if self._commit == COMMIT_MINE:
                 dr, dc = _FACE_DELTA[self._facing]
@@ -219,14 +229,22 @@ class BridgeTunnelCommitEnv(gym.Env):
                     self._terrain[fr, fc] = GRASS
                     mined = True
                     reward -= self.build_cost
+            else:                                     # mine without committing to mine → prohibited
+                reward -= self.illegal_penalty
         elif action == A_COMMIT_BUILD:                # lock into building (once)
             if self._commit == COMMIT_NONE:
                 self._commit = COMMIT_BUILD
                 committed_now = True
+                reward -= self.commit_cost
+            else:                                     # re-committing after a commit → prohibited
+                reward -= self.illegal_penalty
         elif action == A_COMMIT_MINE:                 # lock into mining (once)
             if self._commit == COMMIT_NONE:
                 self._commit = COMMIT_MINE
                 committed_now = True
+                reward -= self.commit_cost
+            else:                                     # re-committing after a commit → prohibited
+                reward -= self.illegal_penalty
 
         # PBRS shaping with a commitment-aware potential φ = −ctg[commit].
         # Read φ_prev with the pre-action commitment and φ_curr with the

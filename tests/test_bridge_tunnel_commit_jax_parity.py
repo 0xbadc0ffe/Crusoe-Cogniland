@@ -29,6 +29,8 @@ TASK = dict(
     reach_bonus=1.0,
     shaping_coef=0.01,
     build_cost=0.05,
+    commit_cost=0.05,
+    illegal_penalty=0.02,
     gamma=0.99,
 )
 
@@ -58,6 +60,7 @@ def test_parity_obs_reward_done():
                 view_size=TASK["view_size"], max_steps=TASK["max_steps"],
                 slack_penalty=TASK["slack_penalty"], reach_bonus=TASK["reach_bonus"],
                 shaping_coef=TASK["shaping_coef"], build_cost=TASK["build_cost"],
+                commit_cost=TASK["commit_cost"], illegal_penalty=TASK["illegal_penalty"],
                 gamma=TASK["gamma"],
             )
             pt_obs, _ = pt.reset()

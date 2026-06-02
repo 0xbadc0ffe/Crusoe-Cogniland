@@ -202,6 +202,8 @@ def _make_env_params(cfg) -> EnvParams:
         reach_bonus=cfg["reach_bonus"],
         shaping_coef=cfg["shaping_coef"],
         build_cost=cfg["build_cost"],
+        commit_cost=cfg["commit_cost"],
+        illegal_penalty=cfg["illegal_penalty"],
         gamma=cfg["gamma"],
     )
 
@@ -688,9 +690,11 @@ def _default_cfg() -> dict:
         # "categorical" (per-cell softmax + cross-entropy on a one-hot minimap)
         "decoder": "mse",
         "slack_penalty": -0.01,
-        "reach_bonus": 1.0,
-        "shaping_coef": 0.01,
-        "build_cost": 0.05,
+        "reach_bonus": 3.0,
+        "shaping_coef": 0.015,
+        "build_cost": 0.0,
+        "commit_cost": 0.05,
+        "illegal_penalty": 0.02,
         # train budget
         "num_envs": 32,
         "total_env_steps": 1_000_000,

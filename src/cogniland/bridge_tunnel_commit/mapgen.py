@@ -6,8 +6,8 @@ heightmap with overlaid lakes/mountains/ridges + edge-biased tree forests) and
 just varies the water/rock coverage to produce three map *categories*:
 
 * ``balanced`` — 14% water / 14% rock (the original bridge_tunnel mix).
-* ``lakes``    — water-dominated, ~80/20 water:rock (0.224 / 0.056).
-* ``rocky``    — rock-dominated,  ~20/80 water:rock (0.056 / 0.224).
+* ``lakes``    — strongly water-dominated, ~87/13 water:rock (0.245 / 0.035).
+* ``rocky``    — strongly rock-dominated,  ~13/87 water:rock (0.035 / 0.245).
 
 (The splits are approximate — coverage is thresholded by quantile, then trimmed
 by the clear edge bands and sand/dirt fringes, so realised coverage is lower.)
@@ -35,11 +35,14 @@ from .tiles import GRASS, ROCK, SAND, DIRT, TARGET, TREE, WATER, WOOD
 CATEGORIES = ("balanced", "lakes", "rocky")
 
 # (water_frac, rock_frac) per category. Total obstacle mass ~0.28 in all three;
-# lakes/rocky are ~80/20 splits of that mass (approximate — see module docstring).
+# lakes/rocky are strongly one-sided (~87/13 split of that mass) so the dominant
+# obstacle is hard to detour around — committing to the *wrong* tool gives long
+# (often blocked) detours, which softly biases the agent toward the matching tool
+# without forcing it (see module docstring). balanced is an even 50/50 mix.
 _CATEGORY_FRACS = {
     "balanced": (0.14, 0.14),
-    "lakes":    (0.224, 0.056),
-    "rocky":    (0.056, 0.224),
+    "lakes":    (0.245, 0.035),
+    "rocky":    (0.035, 0.245),
 }
 
 _WALK = (GRASS, WOOD, TARGET, SAND, DIRT)
