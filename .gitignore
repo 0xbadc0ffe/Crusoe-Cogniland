@@ -236,3 +236,6 @@ sweep_logs/
 
 # bridge_tunnel_commit generated JAX map datasets (regenerable)
 data/bridge_tunnel_commit_jax/
+
+# large activation-dataset bundles (shared out-of-band, not in git)
+datasets/
