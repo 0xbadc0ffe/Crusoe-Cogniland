@@ -1,3 +1,4 @@
+variant: btc
 anneal_ent: false
 anneal_lr: false
 build_cost: 0.0

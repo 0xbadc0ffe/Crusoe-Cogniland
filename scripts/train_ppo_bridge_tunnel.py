@@ -45,6 +45,7 @@ import wandb
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from cogniland.bridge_tunnel import BridgeTunnelEnv  # noqa: E402
 from cogniland.bridge_tunnel.tiles import NUM_TILES  # noqa: E402
+from cogniland.bridge_tunnel.policy import PPOGRUPolicy  # noqa: E402
 
 
 # =============================================================== vec env
@@ -80,8 +81,8 @@ class VecBridgeTunnelEnv:
                     "return": float(self.ep_returns[i]),
                     "length": int(self.ep_lengths[i]),
                     "reached_target": bool(info["reached_target"]),
-                    "thin_correct": int(info.get("thin_correct", 0)),
-                    "thin_total": int(info.get("thin_total", 0)),
+                    "commit": int(info.get("commit", 0)),        # btc: 0 none/1 build/2 mine
+                    "category": info.get("category", None),
                 }
                 self.ep_returns[i] = 0.0
                 self.ep_lengths[i] = 0
@@ -104,111 +105,6 @@ class VecBridgeTunnelEnv:
         }
 
 
-# =============================================================== policy
-
-def _layer_init(layer, std: float = np.sqrt(2), bias_const: float = 0.0):
-    nn.init.orthogonal_(layer.weight, std)
-    nn.init.constant_(layer.bias, bias_const)
-    return layer
-
-
-class PPOGRUPolicy(nn.Module):
-    """Tile-embed minimap → CNN → MLP(+scalars) → GRU → (Categorical, value)."""
-
-    def __init__(self, obs_space, num_actions: int = 6, gru_hidden: int = 128,
-                 embed_dim: int = 256, tile_embed_dim: int = 16,
-                 num_tile_classes: int = NUM_TILES, obs_encoding: str = "embed"):
-        super().__init__()
-        V, _ = obs_space["minimap"].shape
-        n_scalars = obs_space["scalars"].shape[0]
-        self.view = V
-        self.obs_encoding = obs_encoding
-        self.num_tile_classes = num_tile_classes
-        if obs_encoding == "onehot":
-            # categorical observation: one-hot the tile ids (matches the
-            # DreamerV3 categorical encoder for a fair comparison). No learned
-            # tile embedding — the CNN sees raw per-tile indicator channels.
-            self.tile_embed = None
-            in_c = num_tile_classes + 2                  # + CoordConv row/col
-        else:
-            self.tile_embed = nn.Embedding(num_tile_classes, tile_embed_dim)
-            nn.init.normal_(self.tile_embed.weight, std=0.5)
-            in_c = tile_embed_dim + 2                     # + CoordConv row/col
-        self.cnn = nn.Sequential(
-            _layer_init(nn.Conv2d(in_c, 32, kernel_size=3, padding=0)), nn.ReLU(),
-            _layer_init(nn.Conv2d(32, 32, kernel_size=3, padding=0)), nn.ReLU(),
-            _layer_init(nn.Conv2d(32, 32, kernel_size=3, padding=0)), nn.ReLU(),
-            nn.Flatten(),
-        )
-        with torch.no_grad():
-            n_flat = self.cnn(torch.zeros(1, in_c, V, V)).shape[1]
-
-        self.embed = nn.Sequential(
-            _layer_init(nn.Linear(n_flat + n_scalars, embed_dim)), nn.ReLU(),
-        )
-        self.gru = nn.GRU(embed_dim, gru_hidden, batch_first=False)
-        for name, p in self.gru.named_parameters():
-            if "weight" in name:
-                nn.init.orthogonal_(p, 1.0)
-            elif "bias" in name:
-                nn.init.constant_(p, 0.0)
-        self.actor = _layer_init(nn.Linear(gru_hidden, num_actions), std=0.01)
-        self.critic = _layer_init(nn.Linear(gru_hidden, 1), std=1.0)
-        self.gru_hidden = gru_hidden
-
-    def _encode(self, obs):
-        mm = obs["minimap"].long()                      # (B, V, V)
-        B, V, _ = mm.shape
-        if self.obs_encoding == "onehot":
-            emb = torch.nn.functional.one_hot(mm, self.num_tile_classes).float()  # (B,V,V,K)
-        else:
-            emb = self.tile_embed(mm)                   # (B, V, V, E)
-        rr = torch.linspace(-1, 1, V, device=mm.device).view(1, V, 1).expand(B, V, V)
-        cc = torch.linspace(-1, 1, V, device=mm.device).view(1, 1, V).expand(B, V, V)
-        coords = torch.stack([rr, cc], dim=-1)          # (B, V, V, 2)
-        x = torch.cat([emb, coords], dim=-1).permute(0, 3, 1, 2)
-        feat = self.cnn(x)
-        feat = torch.cat([feat, obs["scalars"].float()], dim=-1)
-        return self.embed(feat)
-
-    def _gru_forward(self, obs_seq, done_seq, hidden):
-        any_key = next(iter(obs_seq))
-        T, B = obs_seq[any_key].shape[:2]
-        flat = {k: v.flatten(0, 1) for k, v in obs_seq.items()}
-        feat = self._encode(flat).reshape(T, B, -1)
-        h = hidden
-        outs = []
-        for t in range(T):
-            mask = (1.0 - done_seq[t].float()).view(1, B, 1)
-            h = h * mask
-            y, h = self.gru(feat[t:t + 1], h)
-            outs.append(y)
-        return torch.cat(outs, dim=0), h
-
-    def _heads(self, x):
-        return self.actor(x), self.critic(x).squeeze(-1)
-
-    def get_action_and_value(self, obs, hidden, done, action=None):
-        obs_seq = {k: v.unsqueeze(0) for k, v in obs.items()}
-        gru_out, h_new = self._gru_forward(obs_seq, done.unsqueeze(0), hidden)
-        x = gru_out.squeeze(0)
-        logits, value = self._heads(x)
-        cat = Categorical(logits=logits)
-        if action is None:
-            action = cat.sample()
-        return action, cat.log_prob(action), cat.entropy(), value, h_new
-
-    def evaluate(self, obs_seq, done_seq, hidden, actions):
-        gru_out, _ = self._gru_forward(obs_seq, done_seq, hidden)
-        T, B = gru_out.shape[:2]
-        x = gru_out.reshape(T * B, -1)
-        logits, value = self._heads(x)
-        cat = Categorical(logits=logits)
-        a = actions.reshape(T * B)
-        return (cat.log_prob(a).reshape(T, B), cat.entropy().reshape(T, B),
-                value.reshape(T, B))
-
-
 # =============================================================== training
 
 def _to_device(obs: dict, device):
@@ -218,6 +114,9 @@ def _to_device(obs: dict, device):
 def main():
     parser = argparse.ArgumentParser()
     # env / data
+    parser.add_argument("--variant", choices=("bt", "btc"), default="bt",
+                        help="bt: base (place/mine always active); "
+                             "btc: implicit build/mine commitment + 3 map categories")
     parser.add_argument("--env-size", type=int, default=32, help="map height")
     parser.add_argument("--env-width", type=int, default=None,
                         help="map width (default = env-size, i.e. square)")
@@ -230,9 +129,11 @@ def main():
     parser.add_argument("--rock-frac", type=float, default=0.14, help="natural: rock coverage")
     parser.add_argument("--tree-frac", type=float, default=0.03,
                         help="natural: impassable tree coverage")
-    parser.add_argument("--goal-half", type=int, default=-1,
-                        help="natural goal: <0 ⇒ whole right wall (diverse endpoints); "
-                             "N ⇒ central door of half-height N (funnels to centre)")
+    parser.add_argument("--goal-half", type=int, default=1,
+                        help="natural goal: <0 ⇒ whole right wall; N ⇒ central door of half-height N")
+    parser.add_argument("--categories", nargs="+", default=["balanced", "lakes", "rocky"],
+                        choices=("balanced", "lakes", "rocky"),
+                        help="btc: map categories drawn uniformly each reset")
     parser.add_argument("--max-steps", type=int, default=1000,
                         help="generous episode timeout — success measures whether "
                              "the agent reaches the target at all, not its speed")
@@ -247,6 +148,10 @@ def main():
     parser.add_argument("--build-cost", type=float, default=0.05,
                         help="extra penalty per successful PLACE/MINE — makes "
                              "crossing an obstacle cost more than walking around it")
+    parser.add_argument("--commit-cost", type=float, default=0.05,
+                        help="btc: one-time cost on the committing build/mine")
+    parser.add_argument("--illegal-penalty", type=float, default=0.02,
+                        help="btc: penalty for using the locked opposite tool")
     # PPO
     parser.add_argument("--update-epochs", type=int, default=4)
     parser.add_argument("--num-minibatches", type=int, default=4)
@@ -291,12 +196,12 @@ def main():
 
     assert args.num_envs % args.num_minibatches == 0
 
-    run_name = args.run_name or f"ppo_bridge_tunnel_size{args.env_size}_seed{args.seed}_{int(time.time())}"
+    run_name = args.run_name or f"ppo_{args.variant}_size{args.env_size}_seed{args.seed}_{int(time.time())}"
     wandb.init(
         project=args.wandb_project, name=run_name, config=vars(args),
-        mode=args.wandb_mode, save_code=True,
+        mode=args.wandb_mode, save_code=True, group=args.variant,
         tags=["algo=ppo_gru", f"map={args.env_size}", "env=bridge_tunnel",
-              f"orientation={args.orientation}"],
+              f"variant={args.variant}", f"obs={args.obs_encoding}"],
     )
     device = torch.device(args.device)
     print(f"device={device}  run_name={run_name}")
@@ -304,15 +209,21 @@ def main():
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    vec = VecBridgeTunnelEnv(
-        args.num_envs, size=args.env_size, width=args.env_width,
+    env_kw = dict(
+        variant=args.variant, size=args.env_size, width=args.env_width,
         view_size=args.view_size, orientation=args.orientation,
         max_steps=args.max_steps, slack_penalty=args.slack_penalty,
         shaping_coef=args.shaping_coef, reach_bonus=args.reach_bonus,
         build_cost=args.build_cost, gamma=args.gamma, seed=args.seed,
-        water_frac=args.water_frac, rock_frac=args.rock_frac, tree_frac=args.tree_frac,
+        tree_frac=args.tree_frac,
         goal_half=(args.goal_half if args.goal_half >= 0 else None),
     )
+    if args.variant == "btc":
+        env_kw.update(categories=tuple(args.categories),
+                      commit_cost=args.commit_cost, illegal_penalty=args.illegal_penalty)
+    else:
+        env_kw.update(water_frac=args.water_frac, rock_frac=args.rock_frac)
+    vec = VecBridgeTunnelEnv(args.num_envs, **env_kw)
     policy = PPOGRUPolicy(
         vec.single_observation_space, num_actions=vec.single_action_space.n,
         gru_hidden=args.gru_hidden, embed_dim=args.embed_dim,
@@ -360,7 +271,8 @@ def main():
         ent_coef = args.ent_coef * frac if args.anneal_ent else args.ent_coef
 
         initial_hidden = next_hidden.clone()
-        ep_returns, ep_lengths, ep_reached, ep_thin = [], [], [], []
+        ep_returns, ep_lengths, ep_reached = [], [], []
+        ep_commit, ep_cat_reached = [], {}        # btc: commit choice + per-category success
 
         for step in range(args.num_steps):
             global_step += args.num_envs
@@ -383,8 +295,10 @@ def main():
                     ep_returns.append(ep["return"])
                     ep_lengths.append(ep["length"])
                     ep_reached.append(float(ep["reached_target"]))
-                    if ep["thin_total"] > 0:
-                        ep_thin.append(ep["thin_correct"] / ep["thin_total"])
+                    if args.variant == "btc":
+                        ep_commit.append(ep["commit"])
+                        ep_cat_reached.setdefault(ep["category"], []).append(
+                            float(ep["reached_target"]))
 
         with torch.no_grad():
             _, _, _, next_value, _ = policy.get_action_and_value(next_obs_t, next_hidden, next_done)
@@ -454,16 +368,22 @@ def main():
                 "rollout/episode_length": float(np.mean(ep_lengths)),
                 "return/min_over_steps": float(np.mean([min_steps / max(L, 1) for L in ep_lengths])),
             })
-            if ep_thin:
-                log["thin_side/mean"] = float(np.mean(ep_thin))
-                log["thin_side/rolling100"] = float(np.mean(ep_thin[-100:]))
+            if args.variant == "btc" and ep_commit:
+                ec = np.asarray(ep_commit)
+                log["commit/frac_build"] = float((ec == 1).mean())
+                log["commit/frac_mine"] = float((ec == 2).mean())
+                log["commit/frac_none"] = float((ec == 0).mean())
+                for cat, vals in ep_cat_reached.items():
+                    if cat is not None:
+                        log[f"success/{cat}"] = float(np.mean(vals))
         wandb.log(log, step=global_step)
 
         if iteration % 5 == 0 or iteration == 1:
             print(f"iter={iteration:4d}/{num_iterations} step={global_step:>9d} sps={sps:.0f} "
                   f"ret={log.get('return/mean', float('nan')):+.2f} "
                   f"succ={log.get('success/mean', float('nan')):.2f} "
-                  f"thin={log.get('thin_side/mean', float('nan')):.2f} "
+                  f"build={log.get('commit/frac_build', float('nan')):.2f} "
+                  f"mine={log.get('commit/frac_mine', float('nan')):.2f} "
                   f"len={log.get('rollout/episode_length', float('nan')):.0f} "
                   f"kl={log['train/approx_kl']:.4f}")
 
