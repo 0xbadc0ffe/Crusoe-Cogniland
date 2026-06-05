@@ -433,6 +433,7 @@ def main():
     manifest = {
         "env": args.env, "checkpoint": str(args.checkpoint), "agent_sha": agent_sha,
         "obs_encoding": obs_enc, "n_tiles": int(T.NUM_TILES), "view_size": view,
+        "max_steps": int(args.max_steps),
         "n_scalars": n_scalars, "n_actions": n_act, "action_names": cfg["action_names"],
         "natural_kwargs": args._natkw, "n_maps": len(maps), "n_traj_per_map": args.n_traj,
         "n_rows": N, "n_decisions": len(all_dec),
@@ -463,10 +464,15 @@ def main():
         },
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
-    # ship the standalone decoder + reproduction doc with the data
+    # ship the standalone decoder + steering kit (env_min/policy_min/steer) so the
+    # folder + a checkpoint is all a colleague needs — no repo / cogniland import.
     dec_src = _ROOT / "scripts" / "mechinterp" / "decode_dataset.py"
     if dec_src.exists():
         shutil.copy(dec_src, out_dir / "decode_dataset.py")
+    kit = _ROOT / "scripts" / "mechinterp" / "steering_kit"
+    for fn in ("env_min.py", "policy_min.py", "steer.py"):
+        if (kit / fn).exists():
+            shutil.copy(kit / fn, out_dir / fn)
     _write_reproduce_md(out_dir, manifest, args)
 
     # ── summary ──
@@ -487,9 +493,10 @@ def main():
 def _write_reproduce_md(out_dir, manifest, args):
     md = f"""# Reproducing the `{manifest['env']}` PPO activation dataset
 
-This bundle is **self-contained for analysis**: `activations.h5`, `labels.*`,
-`decisions.*`, `maps.npz`, `manifest.json` need **no repository access**. Use the
-shipped `decode_dataset.py` to render frames / trajectories / videos.
+This bundle is **fully self-contained** — analysis, decoding, *and* reproduction +
+steering need **no repository / cogniland install** (only numpy, torch, h5py,
+pandas, matplotlib). Bring your own checkpoint `.pt` and use the shipped
+`decode_dataset.py` (render) and `steer.py` (reproduce + steer `gru_h`).
 
 ## Files
 | file | contents |
@@ -499,6 +506,8 @@ shipped `decode_dataset.py` to render frames / trajectories / videos.
 | `decisions.*` | one row per (trajectory, obstacle) — steering contrast sets |
 | `maps.npz` | raw `terrain` (N,H,W int8), `spawn`, `target`, `goal_mask`{', `category`' if manifest['is_commit'] else ''}, `map_seed` |
 | `manifest.json` | schema, tile palette, agent sha, reproduction recipe |
+| `decode_dataset.py` | standalone renderer (frame / trajectory / video) |
+| `env_min.py`, `policy_min.py`, `steer.py` | standalone reproduce + steer kit (numpy/torch only) |
 
 ## Decode (no repo needed)
 ```bash
@@ -508,23 +517,27 @@ python decode_dataset.py --traj <map_id> <traj_seed> --plot path.png
 ```
 Every rendered frame is captioned with its `row_id`, `t`, action and (commit) state.
 
-## Exact trajectory reproduction (needs the repo, for re-rollout / steering)
-A trajectory is fully determined by `(map_seed, traj_seed)`; `traj_seed = {manifest['traj_seed_formula']}`.
-The map is `gen(seed=map_seed{', category=category' if manifest['is_commit'] else ''})` with
-`natural_kwargs = {manifest['natural_kwargs']}`. Then:
+## Reproduce + steer (no repo needed — bring a checkpoint `.pt`)
+A trajectory is fully determined by `(map_id, traj_seed)`; `traj_seed = {manifest['traj_seed_formula']}`.
+`steer.py` rebuilds the episode from `maps.npz[map_id]` with the bundled minimal env
+(no map generation needed — the terrain is stored), seeds `torch.manual_seed(traj_seed)`
+on cpu, and rolls out — reproducing the stored actions **byte-for-byte**:
 
-```
-torch.manual_seed(traj_seed)            # the ONLY randomness = action sampling
-env = <{manifest['env']} Env>(map_record=map, view_size={manifest['view_size']}, max_steps={args.max_steps})
-obs = env.reset()[0]
-# step: a ~ Categorical(actor(GRU(encode(obs), h)));  device = cpu
-```
-Run on **cpu** for bit-exact cross-machine reproduction. Use
-`scripts/mechinterp/replay_trajectory.py --env {manifest['env']} --checkpoint <ckpt> --map-seed M --traj-seed S`
-to replay (and assert it matches the stored obs/actions), and `--inject vec.npy --alpha A --rows a:b`
-to add a steering vector to `gru_h` over a row range and log the perturbed behaviour.
+```bash
+# verify exact reproduction
+python steer.py --checkpoint agent.pt --map-id <M> --traj-seed <S>
 
-Agent: `{manifest['checkpoint']}` (sha `{manifest['agent_sha']}`), obs_encoding `{manifest['obs_encoding']}`.
+# STEER: add alpha*vec to the GRU hidden gru_h over steps [a,b)
+python steer.py --checkpoint agent.pt --map-id <M> --traj-seed <S> \
+    --inject mine_dir.npy --alpha -6 --rows 20:80
+```
+Derive `mine_dir.npy` as a (128,) difference-of-means in `gru_h` (e.g.
+mean[final_commit=mine] − mean[final_commit=build] from `activations.h5` + `labels`)
+to push the agent off / onto a skill. Run on **cpu** for bit-exact reproduction.
+
+Agent (the one that produced this dataset): `{manifest['checkpoint']}` (sha
+`{manifest['agent_sha']}`), variant `{'btc' if manifest['is_commit'] else 'bt'}`,
+obs_encoding `{manifest['obs_encoding']}`.
 """
     (out_dir / "REPRODUCE.md").write_text(md)
 
