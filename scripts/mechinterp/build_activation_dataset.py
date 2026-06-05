@@ -78,8 +78,8 @@ def _env_cfg(env_name: str):
             gen=lambda seed, cat, kw: generate_bridge_tunnel_map(seed=seed, **kw),
         )
     elif env_name == "bridge_tunnel_commit":
-        from cogniland.bridge_tunnel_commit import generate_commit_map, tiles as T
-        from cogniland.bridge_tunnel_commit.env import BridgeTunnelCommitEnv
+        from cogniland.bridge_tunnel import generate_commit_map, tiles as T
+        from cogniland.bridge_tunnel.env import BridgeTunnelCommitEnv
         from cogniland.bridge_tunnel.policy import PPOGRUPolicy
         # commit-aware ctg: index 0 = 'none' field (both obstacles crossable)
         ctg_fn = lambda terr, tgt: BridgeTunnelCommitEnv._compute_all_ctg(terr, tgt)[0].astype(np.float32)

@@ -32,8 +32,8 @@ def _cfg(env):
         return dict(Env=BridgeTunnelEnv, Policy=PPOGRUPolicy, commit=False,
                     gen=lambda s, c, kw: generate_bridge_tunnel_map(seed=s, **kw),
                     anames=["up", "down", "left", "right", "place", "mine"])
-    from cogniland.bridge_tunnel_commit import generate_commit_map
-    from cogniland.bridge_tunnel_commit.env import BridgeTunnelCommitEnv
+    from cogniland.bridge_tunnel import generate_commit_map
+    from cogniland.bridge_tunnel.env import BridgeTunnelCommitEnv
     from cogniland.bridge_tunnel.policy import PPOGRUPolicy
     return dict(Env=BridgeTunnelCommitEnv, Policy=PPOGRUPolicy, commit=True,
                 gen=lambda s, c, kw: generate_commit_map(seed=s, category=c, **kw),

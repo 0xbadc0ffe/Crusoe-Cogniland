@@ -24,7 +24,7 @@ jax = pytest.importorskip("jax")
 import jax.numpy as jnp  # noqa: E402
 
 from cogniland.bridge_tunnel.env import BridgeTunnelEnv  # noqa: E402
-from cogniland.bridge_tunnel_jax import (  # noqa: E402
+from cogniland.bridge_tunnel.jax import (  # noqa: E402
     EnvParams,
     BridgeTunnelJaxEnv,
     records_to_arrays,

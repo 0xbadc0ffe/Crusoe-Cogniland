@@ -16,14 +16,15 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from cogniland.bridge_tunnel_commit import (
+from cogniland.bridge_tunnel import (
     BridgeTunnelCommitEnv, generate_commit_map, is_winnable, tiles as T,
 )
-from cogniland.bridge_tunnel_commit.env import (
+from cogniland.bridge_tunnel.env import (
     A_UP, A_DOWN, A_LEFT, A_RIGHT, A_BUILD, A_MINE,
-    COMMIT_NONE, COMMIT_BUILD, COMMIT_MINE, N_SCALARS, F_RIGHT,
+    COMMIT_NONE, COMMIT_BUILD, COMMIT_MINE, F_RIGHT,
 )
-from cogniland.bridge_tunnel_commit.mapgen import (
+N_SCALARS = 7   # btc obs: facing one-hot(4) + step/max + commit_build + commit_mine
+from cogniland.bridge_tunnel.mapgen import (
     CATEGORIES, MapRecord, _can_reach_goal, _CATEGORY_FRACS,
 )
 
@@ -72,7 +73,7 @@ def test_deterministic_by_seed():
 
 
 def test_make_split_balanced():
-    from cogniland.bridge_tunnel_commit.mapgen import make_split
+    from cogniland.bridge_tunnel.mapgen import make_split
     recs = make_split(n_per_category=4)
     assert len(recs) == 12
     counts = {c: sum(r.category == c for r in recs) for c in CATEGORIES}
@@ -205,7 +206,7 @@ def test_ctg_wrong_commit_costs_more():
 
 @pytest.mark.parametrize("category", CATEGORIES)
 def test_handcrafted_solver_reaches_target(category):
-    from cogniland.bridge_tunnel_commit._solver import scripted_solve
+    from cogniland.bridge_tunnel._solver import scripted_solve
     for s in range(4):
         rec = generate_commit_map(seed=s, category=category)
         env = BridgeTunnelCommitEnv(map_record=rec, max_steps=800)

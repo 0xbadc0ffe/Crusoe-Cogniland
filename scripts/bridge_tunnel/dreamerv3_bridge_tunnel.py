@@ -4,7 +4,7 @@ Trains the in-tree ``purejaxwm`` DreamerV3 on EXACTLY the task the PyTorch
 PPO+GRU ``natural_agent`` was trained on (``released_models/bridge_tunnel/natural_agent.yaml``):
 open procedural 32×64 terrain, water/rock obstacles the agent can bridge / mine
 or walk around, a central goal door (goal_half=4). The env is the pure-JAX
-``cogniland.bridge_tunnel_jax`` port, proven bit-for-bit equivalent to the PyTorch
+``cogniland.bridge_tunnel.jax`` port, proven bit-for-bit equivalent to the PyTorch
 ``BridgeTunnelEnv`` in ``tests/test_bridge_tunnel_jax_parity.py``.
 
 * Obs: dict ``{minimap: (V,V) int8, scalars: (5,) float32}`` flattened to
@@ -41,7 +41,7 @@ import orbax.checkpoint as ocp
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))   # so `purejaxwm` resolves
 
-from cogniland.bridge_tunnel_jax import (  # noqa: E402
+from cogniland.bridge_tunnel.jax import (  # noqa: E402
     EnvParams,
     BridgeTunnelJaxEnv,
     constants as C,

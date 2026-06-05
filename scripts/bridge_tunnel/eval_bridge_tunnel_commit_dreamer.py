@@ -39,9 +39,9 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT / "src"))
 sys.path.insert(0, str(_ROOT))
 
-from cogniland.bridge_tunnel_commit import generate_commit_map, tiles as T  # noqa: E402
-from cogniland.bridge_tunnel_commit.mapgen import CATEGORIES  # noqa: E402
-from cogniland.bridge_tunnel_commit_jax import (  # noqa: E402
+from cogniland.bridge_tunnel import generate_commit_map, tiles as T  # noqa: E402
+from cogniland.bridge_tunnel.mapgen import CATEGORIES  # noqa: E402
+from cogniland.bridge_tunnel.jax import (  # noqa: E402
     EnvParams, BridgeTunnelCommitJaxEnv, constants as C, records_to_arrays,
 )
 import purejaxwm.dreamerv3.behavior as ac  # noqa: E402

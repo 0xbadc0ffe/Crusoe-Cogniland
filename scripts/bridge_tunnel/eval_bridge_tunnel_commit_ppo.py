@@ -33,9 +33,9 @@ from matplotlib.collections import LineCollection
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from cogniland.bridge_tunnel_commit import generate_commit_map, tiles as T  # noqa: E402
-from cogniland.bridge_tunnel_commit.env import BridgeTunnelCommitEnv  # noqa: E402
-from cogniland.bridge_tunnel_commit.mapgen import CATEGORIES  # noqa: E402
+from cogniland.bridge_tunnel import generate_commit_map, tiles as T  # noqa: E402
+from cogniland.bridge_tunnel.env import BridgeTunnelCommitEnv  # noqa: E402
+from cogniland.bridge_tunnel.mapgen import CATEGORIES  # noqa: E402
 from cogniland.bridge_tunnel.policy import PPOGRUPolicy
 
 _FACE_DELTA = {0: (-1, 0), 1: (1, 0), 2: (0, -1), 3: (0, 1)}

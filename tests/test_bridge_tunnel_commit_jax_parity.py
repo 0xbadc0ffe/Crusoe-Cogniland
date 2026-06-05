@@ -14,9 +14,9 @@ import pytest
 jax = pytest.importorskip("jax")
 import jax.numpy as jnp  # noqa: E402
 
-from cogniland.bridge_tunnel_commit.env import BridgeTunnelCommitEnv  # noqa: E402
-from cogniland.bridge_tunnel_commit.mapgen import CATEGORIES, generate_commit_map  # noqa: E402
-from cogniland.bridge_tunnel_commit_jax import (  # noqa: E402
+from cogniland.bridge_tunnel.env import BridgeTunnelCommitEnv  # noqa: E402
+from cogniland.bridge_tunnel.mapgen import CATEGORIES, generate_commit_map  # noqa: E402
+from cogniland.bridge_tunnel.jax import (  # noqa: E402
     EnvParams,
     BridgeTunnelCommitJaxEnv,
     records_to_arrays,

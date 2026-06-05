@@ -53,14 +53,14 @@ sys.path.insert(0, str(_ROOT / "src"))
 sys.path.insert(0, str(_ROOT))   # so `purejaxwm` resolves
 
 from cogniland.bridge_tunnel import generate_bridge_tunnel_map, tiles as T  # noqa: E402
-from cogniland.bridge_tunnel_jax import (  # noqa: E402
+from cogniland.bridge_tunnel.jax import (  # noqa: E402
     EnvParams,
     BridgeTunnelJaxEnv,
     constants as C,
     records_to_arrays,
 )
-from cogniland.bridge_tunnel_jax.render import build_obs  # noqa: E402
-from cogniland.bridge_tunnel_jax import dynamics as dyn  # noqa: E402
+from cogniland.bridge_tunnel.jax.render import build_obs  # noqa: E402
+from cogniland.bridge_tunnel.jax import dynamics as dyn  # noqa: E402
 
 import purejaxwm.dreamerv3.behavior as ac  # noqa: E402
 from purejaxwm.dreamerv3.world_model import MLPHead, RSSM  # noqa: E402
