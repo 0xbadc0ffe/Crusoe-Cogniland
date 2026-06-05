@@ -20,7 +20,8 @@ class AnalysisConfig:
     seed: int = 0
 
     # --- dimensionality reduction ---
-    pca_components: int = 10               # kept for tables; first 2 used for scatter
+    pca_components: int = 10               # kept for tables; first `scatter_dims` plotted
+    scatter_dims: int = 3                  # 3 = 3-D scatter/centroid/trajectory plots; 2 = flat
     do_umap: bool = True
     do_tsne: bool = False                  # slower; off by default
     umap_neighbors: int = 30

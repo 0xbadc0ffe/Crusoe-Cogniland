@@ -129,9 +129,10 @@ def _run_source(cfg, b, run, src, is_primary, Xa, Xp, adf, pdf, projdf, ep_keys,
 
     # ---------- dimensionality reduction ----------
     pca = G.pca_project(Xa, cfg.pca_components, cfg.seed)
-    adf[f"{src}_pc1"] = pca.coords[:, 0]
-    adf[f"{src}_pc2"] = pca.coords[:, 1]
-    coord_cols.extend([f"{src}_pc1", f"{src}_pc2"])
+    dims = cfg.scatter_dims
+    for j in range(min(dims, pca.coords.shape[1])):
+        adf[f"{src}_pc{j+1}"] = pca.coords[:, j]
+        coord_cols.append(f"{src}_pc{j+1}")
     summary[f"{pre}/pca_var_pc1"] = float(pca.explained[0])
     summary[f"{pre}/pca_var_pc2"] = float(pca.explained[1])
 
@@ -139,13 +140,13 @@ def _run_source(cfg, b, run, src, is_primary, Xa, Xp, adf, pdf, projdf, ep_keys,
     if cfg.do_umap:
         try:
             umap_coords = G.umap_project(Xa, cfg.umap_neighbors, cfg.umap_min_dist,
-                                         cfg.seed).coords
-            adf[f"{src}_umap1"] = umap_coords[:, 0]
-            adf[f"{src}_umap2"] = umap_coords[:, 1]
-            coord_cols.extend([f"{src}_umap1", f"{src}_umap2"])
+                                         cfg.seed, n_components=dims).coords
+            for j in range(umap_coords.shape[1]):
+                adf[f"{src}_umap{j+1}"] = umap_coords[:, j]
+                coord_cols.append(f"{src}_umap{j+1}")
         except Exception as e:
             print(f"  [umap skipped: {e}]")
-    tsne_coords = G.tsne_project(Xa, cfg.seed).coords if cfg.do_tsne else None
+    tsne_coords = G.tsne_project(Xa, cfg.seed, n_components=dims).coords if cfg.do_tsne else None
 
     # ---------- probes ----------
     belief_dirs, skill_dirs = {}, {}
@@ -201,41 +202,42 @@ def _run_source(cfg, b, run, src, is_primary, Xa, Xp, adf, pdf, projdf, ep_keys,
     if b.has_skill and skill_col != "skill":
         adf["skill"] = adf[skill_col]
 
-    # ---------- scatter plots ----------
-    for proj_name, coords in [("pca", pca.coords[:, :2]), ("umap", umap_coords),
+    # ---------- scatter plots (3-D by default, see cfg.scatter_dims) ----------
+    for proj_name, coords in [("pca", pca.coords), ("umap", umap_coords),
                               ("tsne", tsne_coords)]:
         if coords is None:
             continue
+        cc = coords[:, :dims]
         if b.has_belief:
             _log_fig(run, cfg, f"{pre}/{proj_name}_by_category",
-                     plots.categorical_scatter(coords, adf["category"], "category",
+                     plots.categorical_scatter(cc, adf["category"], "category", dims=dims,
                                                title=f"{src} {proj_name}: belief"))
         if b.has_skill:
             _log_fig(run, cfg, f"{pre}/{proj_name}_by_skill",
-                     plots.categorical_scatter(coords, adf["skill"], "skill",
+                     plots.categorical_scatter(cc, adf["skill"], "skill", dims=dims,
                                                centroid_path=False,
                                                title=f"{src} {proj_name}: skill"))
         if is_primary and "belief_ordinal_pred" in adf:
             _log_fig(run, cfg, f"{pre}/{proj_name}_by_belief_score",
-                     plots.continuous_scatter(coords, adf["belief_ordinal_pred"],
+                     plots.continuous_scatter(cc, adf["belief_ordinal_pred"], dims=dims,
                                               title=f"{src} {proj_name}: decoded belief",
                                               label="P(lakes)−P(rocky)"))
 
     # ---------- centroids ----------
     if b.has_belief:
         _log_fig(run, cfg, f"{pre}/centroids_category",
-                 plots.centroid_plot(pca.coords[:, :2], adf["category"], "category",
-                                     title=f"{src}: belief centroids"))
+                 plots.centroid_plot(pca.coords[:, :dims], adf["category"], "category",
+                                     dims=dims, title=f"{src}: belief centroids"))
     if b.has_skill:
         _log_fig(run, cfg, f"{pre}/centroids_skill",
-                 plots.centroid_plot(pca.coords[:, :2], adf["skill"], "skill",
-                                     title=f"{src}: skill centroids"))
+                 plots.centroid_plot(pca.coords[:, :dims], adf["skill"], "skill",
+                                     dims=dims, title=f"{src}: skill centroids"))
 
     # ---------- trajectory paths ----------
     traj_df, traj_coords = _episode_coords(b, src, ep_keys, pca.model)
     if traj_df is not None:
         _log_fig(run, cfg, f"{pre}/pca_trajectories",
-                 plots.trajectory_paths(traj_coords[:, :2], traj_df,
+                 plots.trajectory_paths(traj_coords[:, :dims], traj_df, dims=dims,
                                         color_kind="skill" if b.has_skill else None,
                                         title=f"{src}: PCA episode trajectories"))
 
@@ -259,20 +261,21 @@ def _run_source(cfg, b, run, src, is_primary, Xa, Xp, adf, pdf, projdf, ep_keys,
                  plots.entanglement_plane(Xa, belief_dirs["lakes−rocky"],
                                           skill_dirs["build−mine"], adf, source=src))
 
-    # ---------- interactive plotly (primary source) ----------
+    # ---------- interactive plotly (primary source; 3-D rotatable) ----------
     if is_primary:
+        pcc = pca.coords[:, :dims]
         if b.has_belief:
             run.log({f"{pre}/interactive_pca_category":
-                     wandb.Plotly(wandb_io.plotly_scatter(pca.coords[:, :2], adf,
+                     wandb.Plotly(wandb_io.plotly_scatter(pcc, adf,
                                   "category", title=f"{src} PCA — true map type"))})
             if "belief_ordinal_pred" in adf:
                 run.log({f"{pre}/interactive_pca_belief_score":
-                         wandb.Plotly(wandb_io.plotly_scatter(pca.coords[:, :2], adf,
+                         wandb.Plotly(wandb_io.plotly_scatter(pcc, adf,
                                       "belief_ordinal_pred", continuous=True,
                                       title=f"{src} PCA — decoded belief score"))})
         if b.has_skill:
             run.log({f"{pre}/interactive_pca_skill":
-                     wandb.Plotly(wandb_io.plotly_scatter(pca.coords[:, :2], adf,
+                     wandb.Plotly(wandb_io.plotly_scatter(pcc, adf,
                                   "skill", title=f"{src} PCA — committed skill"))})
 
         # ---------- embedding projector table (raw dims + metadata) ----------

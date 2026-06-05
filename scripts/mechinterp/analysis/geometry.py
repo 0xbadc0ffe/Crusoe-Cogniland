@@ -30,17 +30,17 @@ def pca_project(X: np.ndarray, n_components: int = 10, seed: int = 0) -> Project
                       explained=p.explained_variance_ratio_, model=p)
 
 
-def umap_project(X, n_neighbors=30, min_dist=0.1, seed=0) -> Projection:
+def umap_project(X, n_neighbors=30, min_dist=0.1, seed=0, n_components=3) -> Projection:
     import umap
     reducer = umap.UMAP(n_neighbors=n_neighbors, min_dist=min_dist,
-                        n_components=2, random_state=seed)
+                        n_components=n_components, random_state=seed)
     return Projection(coords=reducer.fit_transform(X), name="umap")
 
 
-def tsne_project(X, seed=0) -> Projection:
+def tsne_project(X, seed=0, n_components=3) -> Projection:
     from sklearn.manifold import TSNE
     perp = min(30, max(5, X.shape[0] // 100))
-    coords = TSNE(n_components=2, perplexity=perp, random_state=seed,
+    coords = TSNE(n_components=n_components, perplexity=perp, random_state=seed,
                   init="pca").fit_transform(X)
     return Projection(coords=coords, name="tsne")
 

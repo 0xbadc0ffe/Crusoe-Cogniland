@@ -29,29 +29,41 @@ def _present(df):
 
 # ------------------------------------------------------------- plotly scatter
 def plotly_scatter(coords, df, color_col, *, title="", continuous=False):
-    """Interactive 2-D scatter; hover shows all present metadata columns."""
+    """Interactive scatter; hover shows all present metadata columns. Renders 3-D
+    (rotatable) when `coords` has >=3 columns, else 2-D."""
     import plotly.express as px
     meta = _present(df)
     d = df.copy()
-    d["_x"] = coords[:, 0]
-    d["_y"] = coords[:, 1]
-    kw = dict(x="_x", y="_y", hover_data=meta, title=title,
-              render_mode="webgl", opacity=0.65)
+    use3d = coords.shape[1] >= 3
+    d["_x"], d["_y"] = coords[:, 0], coords[:, 1]
+    if use3d:
+        d["_z"] = coords[:, 2]
+    kw = dict(hover_data=meta, title=title, opacity=0.7)
+    axkw = dict(x="_x", y="_y", z="_z") if use3d else dict(x="_x", y="_y")
+    scatter = px.scatter_3d if use3d else px.scatter
+    if not use3d:
+        kw["render_mode"] = "webgl"
     if continuous:
-        fig = px.scatter(d, color=color_col, color_continuous_scale="RdBu_r",
-                         range_color=[-1, 1], **kw)
+        fig = scatter(d, color=color_col, color_continuous_scale="RdBu_r",
+                      range_color=[-1, 1], **axkw, **kw)
     else:
         cmap = style.CATEGORY_COLORS if color_col == "category" else style.SKILL_COLORS
         order = style.CATEGORY_ORDER if color_col == "category" else style.SKILL_ORDER
         d[color_col] = d[color_col].astype(str)
-        fig = px.scatter(d, color=color_col, color_discrete_map=cmap,
-                         category_orders={color_col: order}, **kw)
-    fig.update_traces(marker=dict(size=5, line=dict(width=0)))
-    fig.update_layout(plot_bgcolor=style.PANEL, paper_bgcolor="white",
-                      xaxis_title="dim 1", yaxis_title="dim 2",
-                      legend_title=color_col, width=760, height=620)
-    fig.update_xaxes(showgrid=True, gridcolor="white", zeroline=False)
-    fig.update_yaxes(showgrid=True, gridcolor="white", zeroline=False)
+        fig = scatter(d, color=color_col, color_discrete_map=cmap,
+                      category_orders={color_col: order}, **axkw, **kw)
+    fig.update_traces(marker=dict(size=3 if use3d else 5, line=dict(width=0)))
+    fig.update_layout(paper_bgcolor="white", legend_title=color_col,
+                      width=820, height=680)
+    if use3d:
+        pane = dict(backgroundcolor=style.PANEL, gridcolor="white", showticklabels=False)
+        fig.update_layout(scene=dict(xaxis=dict(title="c1", **pane),
+                                     yaxis=dict(title="c2", **pane),
+                                     zaxis=dict(title="c3", **pane)))
+    else:
+        fig.update_layout(plot_bgcolor=style.PANEL, xaxis_title="c1", yaxis_title="c2")
+        fig.update_xaxes(showgrid=True, gridcolor="white", zeroline=False)
+        fig.update_yaxes(showgrid=True, gridcolor="white", zeroline=False)
     return fig
 
 

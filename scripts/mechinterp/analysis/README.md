@@ -76,12 +76,14 @@ Keyed by source (`gru_h/…`, `enc_embed/…`):
   preds); per-source `embedding_projector` (raw activation dims + metadata +
   **hover obs frame** → use W&B's PCA/UMAP/t-SNE projector, colour by any column);
   `tables/cosine_belief_skill`.
-- **Static figures** (Goodfire-styled PNGs): PCA/UMAP scatter by category / skill /
-  decoded-belief-score, class centroids (1σ ellipses) with centroid path, PCA
-  episode trajectories, **belief↔skill entanglement plane**, cosine heatmap,
-  belief & skill confusion matrices, cross-source probe-accuracy bars.
-- **Interactive** plotly scatters (hover metadata) coloured by true map type,
-  committed skill, and decoded belief score.
+- **Static figures** (Goodfire-styled PNGs, **3-D** by default — set `--scatter-dims 2`
+  for flat): PCA/UMAP/t-SNE scatter by category / skill / decoded-belief-score,
+  class centroids with centroid path, PCA episode trajectories, **belief↔skill
+  entanglement plane** (2-D by construction — a projection onto exactly the belief
+  and skill directions), cosine heatmap, belief & skill confusion matrices,
+  cross-source probe-accuracy bars.
+- **Interactive** plotly scatters — **rotatable 3-D** (hover shows metadata),
+  coloured by true map type, committed skill, and decoded belief score.
 - **Summary metrics** — probe accuracy / balanced-acc / ordinal R²+Spearman,
   `cos(belief, skill)`, `proj_frac[skill→belief]`, min/mean principal angle.
 

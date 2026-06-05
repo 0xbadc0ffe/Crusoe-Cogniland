@@ -29,7 +29,8 @@ def build_config(a) -> AnalysisConfig:
         dataset=Path(a.dataset), out_dir=Path(a.out_dir),
         sources=a.sources, analysis_rows=a.analysis_rows, probe_rows=a.probe_rows,
         projector_rows=a.projector_rows, traj_examples=a.traj_examples, seed=a.seed,
-        pca_components=a.pca_components, do_umap=not a.no_umap, do_tsne=a.tsne,
+        pca_components=a.pca_components, scatter_dims=a.scatter_dims,
+        do_umap=not a.no_umap, do_tsne=a.tsne,
         umap_neighbors=a.umap_neighbors, umap_min_dist=a.umap_min_dist,
         probe_label_skill=a.skill_label, probe_C=a.probe_c,
         probe_max_iter=a.probe_max_iter, group_test_frac=a.test_frac,
@@ -63,6 +64,8 @@ def main():
     p.add_argument("--seed", type=int, default=0)
     # DR
     p.add_argument("--pca-components", type=int, default=10)
+    p.add_argument("--scatter-dims", type=int, default=3, choices=[2, 3],
+                   help="3 = 3-D scatter/centroid/trajectory/plotly plots (default), 2 = flat")
     p.add_argument("--no-umap", action="store_true")
     p.add_argument("--tsne", action="store_true", help="also compute t-SNE (slow)")
     p.add_argument("--umap-neighbors", type=int, default=30)
