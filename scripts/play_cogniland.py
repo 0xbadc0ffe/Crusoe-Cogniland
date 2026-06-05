@@ -65,7 +65,7 @@ FACING_NAMES = {0: "up", 1: "down", 2: "left", 3: "right"}
 
 # Demo-maps dataset produced by ``scripts/generate_demo_maps.py``.
 DEMO_MAP_DIR = Path("data/demo_maps")
-CKPT_SEARCH_DIRS = (Path("checkpoints"), Path("runs"))
+CKPT_SEARCH_DIRS = (Path("outputs/ppo_checkpoints"), Path("runs"))
 
 
 # ============================================================ helpers (shared)

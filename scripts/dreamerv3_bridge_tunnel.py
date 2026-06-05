@@ -1,7 +1,7 @@
 """DreamerV3 on the bridge_tunnel NATURAL-maps task — single-file, pure-JAX.
 
 Trains the in-tree ``purejaxwm`` DreamerV3 on EXACTLY the task the PyTorch
-PPO+GRU ``natural_agent`` was trained on (``models/bridge_tunnel/natural_agent.yaml``):
+PPO+GRU ``natural_agent`` was trained on (``released_models/bridge_tunnel/natural_agent.yaml``):
 open procedural 32×64 terrain, water/rock obstacles the agent can bridge / mine
 or walk around, a central goal door (goal_half=4). The env is the pure-JAX
 ``cogniland.bridge_tunnel_jax`` port, proven bit-for-bit equivalent to the PyTorch
@@ -774,7 +774,7 @@ def main():
     p.add_argument("--wandb-project", default=None)
     p.add_argument("--wandb-mode", default=None, choices=("online", "offline", "disabled"))
     p.add_argument("--run-name", default=None)
-    p.add_argument("--run-dir", default="runs")
+    p.add_argument("--run-dir", default="outputs/dreamer_runs")
     p.add_argument("--maps-path", default=None)
     args = p.parse_args()
 

@@ -407,7 +407,7 @@ def main():
     parser.add_argument("--wandb-mode", default="online",
                         choices=("online", "offline", "disabled"))
     parser.add_argument("--run-name", default=None)
-    parser.add_argument("--checkpoint-dir", type=Path, default=Path("checkpoints"),
+    parser.add_argument("--checkpoint-dir", type=Path, default=Path("outputs/ppo_checkpoints"),
                         help="parent dir; each run writes into "
                              "<checkpoint-dir>/<run_name>/{iter<N>.pt,final.pt}")
     parser.add_argument("--save-every-iters", type=int, default=300)

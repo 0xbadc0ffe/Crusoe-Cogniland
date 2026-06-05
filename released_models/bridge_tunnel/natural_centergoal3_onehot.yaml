@@ -4,7 +4,7 @@
 # DreamerV3 categorical encoder, so the PPO vs DreamerV3 comparison is fair
 # (identical env AND identical observation representation; only the algorithm
 # differs).
-#   python scripts/train_ppo_bridge_tunnel.py --config models/bridge_tunnel/natural_centergoal3_onehot.yaml \
+#   python scripts/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel/natural_centergoal3_onehot.yaml \
 #       --run-name natural_centergoal3_onehot_ppo --wandb-mode online
 orientation: natural
 env_size: 32

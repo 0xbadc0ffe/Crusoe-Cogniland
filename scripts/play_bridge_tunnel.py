@@ -7,7 +7,7 @@ A small state-machine app (in the style of play_cogniland.py):
                 └─▶ PICK_AGENT ─▶ PICK_MAP ─▶ PLAY   (AI)
 
 * MAIN_MENU  — Play as Human / Play as AI.
-* PICK_AGENT — scrollable list of models/bridge_tunnel/*.pt (orientation shown).
+* PICK_AGENT — scrollable list of released_models/bridge_tunnel/*.pt (orientation shown).
 * PICK_MAP   — thumbnail grid of maps for the chosen agent's orientation
                (the curated validation maps for natural), plus a Random tile.
 * PLAY       — large egocentric Crafter-sprite view + small pixel minimap, with
@@ -50,7 +50,7 @@ from cogniland.bridge_tunnel import generate_bridge_tunnel_map, tiles as T  # no
 
 _REPO = Path(__file__).resolve().parents[1]
 _SPRITE_DIR = _REPO / "src/cogniland/assets/sprites"
-_MODELS_DIR = _REPO / "models/bridge_tunnel"
+_MODELS_DIR = _REPO / "released_models/bridge_tunnel"
 _VAL_MAPS = _REPO / "data/bridge_tunnel/val_maps.pkl"
 
 _BASE = {T.GRASS: "grass", T.WATER: "water", T.ROCK: "stone", T.WOOD: "path",
@@ -154,7 +154,7 @@ def _draw_pick_agent(win, big, font, small, agents, sel, w, h):
     win.blit(big.render("Pick an agent", True, (240, 240, 250)), (40, 24))
     _txt(win, small, ["↑/↓ navigate    Enter select    Esc back"], 40, 24 + big.get_height() + 6, (160, 160, 180))
     if not agents:
-        _txt(win, font, ["No agents in models/bridge_tunnel/*.pt"], 40, 120, (240, 120, 120))
+        _txt(win, font, ["No agents in released_models/bridge_tunnel/*.pt"], 40, 120, (240, 120, 120))
         return []
     top, row_h = 24 + big.get_height() + 46, 64
     rects = []

@@ -272,7 +272,7 @@ def main():
     parser.add_argument("--wandb-mode", default="online",
                         choices=("online", "offline", "disabled"))
     parser.add_argument("--run-name", default=None)
-    parser.add_argument("--checkpoint-dir", type=Path, default=Path("checkpoints"))
+    parser.add_argument("--checkpoint-dir", type=Path, default=Path("outputs/ppo_checkpoints"))
     parser.add_argument("--save-every-iters", type=int, default=300)
     parser.add_argument("--obs-encoding", choices=("embed", "onehot"), default="embed",
                         help="onehot = categorical one-hot minimap (matches the DreamerV3 "

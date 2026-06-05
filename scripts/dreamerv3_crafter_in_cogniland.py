@@ -766,7 +766,7 @@ def main():
     p.add_argument("--wandb-project", default=None)
     p.add_argument("--wandb-mode", default=None, choices=("online", "offline", "disabled"))
     p.add_argument("--run-name", default=None)
-    p.add_argument("--run-dir", default="runs")
+    p.add_argument("--run-dir", default="outputs/dreamer_runs")
     p.add_argument("--maps-path", default=None)
     args = p.parse_args()
 

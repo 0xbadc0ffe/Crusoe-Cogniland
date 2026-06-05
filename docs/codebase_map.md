@@ -127,7 +127,7 @@ flowchart LR
 | `scripts/play_bridge_tunnel.py` | pygame demo (human/AI) | ✅ core (entry) |
 | `scripts/make_bridge_tunnel_val_maps.py` | curate the fixed validation/demo maps | ✅ core (entry) |
 | `tests/test_bridge_tunnel.py`, `tests/test_bridge_tunnel_jax_parity.py` | env contract + JAX↔PyTorch parity gate | ✅ core |
-| `models/bridge_tunnel/*.pt` + `*.yaml` | released agents + reproducible configs | ✅ core (artifacts) |
+| `released_models/bridge_tunnel/*.pt` + `*.yaml` | released agents + reproducible configs | ✅ core (artifacts) |
 | `data/bridge_tunnel/val_maps.pkl`, `data/bridge_tunnel_jax/train_*.pkl` | demo/val maps; Dreamer training dataset (regenerable) | ✅ core (artifacts) |
 | `scripts/bridge_tunnel_natural_sweep.yaml`, `launch_bridge_tunnel_sweep.sh` | W&B sweeps (natural) | ✅ core (tools) |
 | `scripts/bridge_tunnel_sweep.yaml` | DEPRECATED stripe sweep (will error — references retired flags) | 🟡 legacy |
@@ -207,7 +207,7 @@ this cluster still use it.
 | `data/bridge_tunnel_jax/train_natural_*.pkl` | `dreamerv3_bridge_tunnel.py` (auto) or `maps.py` | Dreamer trainer | regenerable & deterministic; safe to delete |
 | `data/crafter_in_cogniland/train_*.pkl` | `generate_maps.py` | crafter Dreamer | regenerable |
 | `data/demo_maps/*.pkl` + `*.png` | `generate_demo_maps.py` | `play_cogniland.py`, `play_ppo_gru.py` | curated 12 demo maps |
-| `models/bridge_tunnel/*.pt` + `*.yaml` | training | demo, eval baselines | **released artifacts — keep** |
+| `released_models/bridge_tunnel/*.pt` + `*.yaml` | training | demo, eval baselines | **released artifacts — keep** |
 | `runs/<run>/checkpoints/step_*` | Dreamer trainers (orbax) | viz scripts | params only, not resumable |
 | `checkpoints/<run>/*.pt` | PPO trainers | eval/grid/demo | full state |
 | `mapgen_preview/*.png`, `paper/figures/*` | preview/paper scripts | — | generated output, safe to delete |
@@ -246,7 +246,7 @@ all — it has its own `tiles`/`mapgen`.
 
 | I want to… | File |
 |---|---|
-| train the current PPO agent | `scripts/train_ppo_bridge_tunnel.py --config models/bridge_tunnel/natural_wholewall.yaml` |
+| train the current PPO agent | `scripts/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel/natural_wholewall.yaml` |
 | train the current DreamerV3 agent | `scripts/dreamerv3_bridge_tunnel.py --size 25M` |
 | see an agent play | `scripts/play_bridge_tunnel.py` |
 | compare path diversity | `scripts/bridge_tunnel_traj_grid.py` (PPO) · `scripts/viz_dreamer_bridge_tunnel_traj.py` (Dreamer) |

@@ -14,7 +14,7 @@ with the success rate and the thin-side accuracy aggregated over all
 
     python scripts/bridge_tunnel_traj_grid.py \\
         --checkpoint checkpoints/bridge_tunnel_sweep/<run>/final.pt \\
-        --n-maps 6 --n-traj 200 --out mapgen_preview/bridge_tunnel_traj_<run>.png
+        --n-maps 6 --n-traj 200 --out outputs/previews/bridge_tunnel_traj_<run>.png
 """
 from __future__ import annotations
 
@@ -174,7 +174,7 @@ def main():
                  f"success {np.mean(all_succ):.0%}  ·  "
                  f"path=darkblue  mine=yellow  bridge=red", fontsize=11)
     fig.tight_layout()
-    out = args.out or Path(f"mapgen_preview/bridge_tunnel_traj_{args.checkpoint.parent.name}.png")
+    out = args.out or Path(f"outputs/previews/bridge_tunnel_traj_{args.checkpoint.parent.name}.png")
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=120)
     thin_all = all_tc / max(1, all_tt)

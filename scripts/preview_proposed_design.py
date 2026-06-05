@@ -17,7 +17,7 @@ slip simulated at every step. Viable-skill rollouts thread the matching
 barrier; wrong-skill rollouts pay the weight tax on every land cell while
 gaining nothing, so they wander and often time out.
 
-Out: mapgen_preview/proposed_design.png
+Out: outputs/previews/proposed_design.png
 """
 from __future__ import annotations
 

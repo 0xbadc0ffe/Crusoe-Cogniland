@@ -13,7 +13,7 @@ Reports aggregate success rate, mean episode length, and thin-side accuracy.
 
     python scripts/eval_bridge_tunnel_agent.py \\
         --checkpoint checkpoints/bridge_tunnel_sweep/<run>/final.pt \\
-        --n-maps 12 --out mapgen_preview/bridge_tunnel_eval.png
+        --n-maps 12 --out outputs/previews/bridge_tunnel_eval.png
 """
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ def main():
     p.add_argument("--stochastic", action="store_true",
                    help="sample actions instead of argmax")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    p.add_argument("--out", type=Path, default=Path("mapgen_preview/bridge_tunnel_eval.png"))
+    p.add_argument("--out", type=Path, default=Path("outputs/previews/bridge_tunnel_eval.png"))
     args = p.parse_args()
 
     ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)

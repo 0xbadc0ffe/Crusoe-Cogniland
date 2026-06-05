@@ -32,13 +32,13 @@ is fixed; the only randomness is action sampling). ``torch.manual_seed(traj_seed
 
     # bridge_tunnel_commit (class-balanced maps)
     python scripts/build_activation_dataset.py --env bridge_tunnel_commit \\
-        --checkpoint models/bridge_tunnel_commit/ppo_commit_onehot.pt \\
-        --maps-per-category 30 --n-traj 60 --out-dir datasets/btc_ppo
+        --checkpoint released_models/bridge_tunnel_commit/ppo_commit_onehot.pt \\
+        --maps-per-category 30 --n-traj 60 --out-dir activation_datasets/btc_ppo
 
     # bridge_tunnel
     python scripts/build_activation_dataset.py --env bridge_tunnel \\
-        --checkpoint models/bridge_tunnel/natural_centergoal3_onehot.pt \\
-        --n-maps 90 --n-traj 60 --out-dir datasets/bt_ppo
+        --checkpoint released_models/bridge_tunnel/natural_centergoal3_onehot.pt \\
+        --n-maps 90 --n-traj 60 --out-dir activation_datasets/bt_ppo
 """
 from __future__ import annotations
 

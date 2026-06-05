@@ -18,8 +18,8 @@ The figure highlights the crossed lake/mountain body (translucent) and the in->o
 path segment, so the bridging/mining is unambiguous.
 
     python scripts/bridge_tunnel_strategy_examples.py \\
-        --checkpoint models/bridge_tunnel/natural_centergoal3.pt \\
-        --out mapgen_preview/bridge_tunnel_strategy_examples.png
+        --checkpoint released_models/bridge_tunnel/natural_centergoal3.pt \\
+        --out outputs/previews/bridge_tunnel_strategy_examples.png
 """
 from __future__ import annotations
 
@@ -101,7 +101,7 @@ def crossings(path, terrain, tile, min_cross):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--checkpoint", type=Path, default=Path("models/bridge_tunnel/natural_centergoal3.pt"))
+    p.add_argument("--checkpoint", type=Path, default=Path("released_models/bridge_tunnel/natural_centergoal3.pt"))
     p.add_argument("--n-seeds", type=int, default=12)
     p.add_argument("--n-per-seed", type=int, default=40)
     p.add_argument("--eval-seed-start", type=int, default=10_000)
@@ -109,7 +109,7 @@ def main():
     p.add_argument("--min-cross", type=int, default=2,
                    help="min distinct obstacle cells crossed (in->out) to count as bridge/tunnel")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    p.add_argument("--out", type=Path, default=Path("mapgen_preview/bridge_tunnel_strategy_examples.png"))
+    p.add_argument("--out", type=Path, default=Path("outputs/previews/bridge_tunnel_strategy_examples.png"))
     args = p.parse_args()
 
     ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)

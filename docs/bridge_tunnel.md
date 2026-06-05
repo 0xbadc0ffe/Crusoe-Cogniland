@@ -37,7 +37,7 @@ scripts/
 
 tests/test_bridge_tunnel.py         env + mapgen contract tests (run: pytest tests/test_bridge_tunnel.py)
 
-models/bridge_tunnel/               RELEASED agents (weights + reproducible *.yaml configs) — see its README
+released_models/bridge_tunnel/               RELEASED agents (weights + reproducible *.yaml configs) — see its README
 data/bridge_tunnel/                 val_maps.pkl (the curated demo == validation maps) + preview
 ```
 
@@ -76,10 +76,10 @@ conda activate crusoe && pip install -e .          # one-time
 pytest tests/test_bridge_tunnel.py                     # sanity
 
 # play a released agent on the validation maps
-python scripts/play_bridge_tunnel.py --checkpoint models/bridge_tunnel/natural_agent.pt
+python scripts/play_bridge_tunnel.py --checkpoint released_models/bridge_tunnel/natural_agent.pt
 
 # train from scratch (reproduce the natural agent)
-python scripts/train_ppo_bridge_tunnel.py --config models/bridge_tunnel/natural_agent.yaml \
+python scripts/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel/natural_agent.yaml \
     --run-name natural_repro --wandb-mode disabled
 
 # regenerate the validation/demo maps
@@ -87,4 +87,4 @@ python scripts/make_bridge_tunnel_val_maps.py --orientation natural --n 16
 ```
 
 Training writes scratch checkpoints to `checkpoints/` (git-ignored). The curated,
-committed agents live in `models/bridge_tunnel/`.
+committed agents live in `released_models/bridge_tunnel/`.

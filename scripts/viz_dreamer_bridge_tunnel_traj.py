@@ -24,7 +24,7 @@ generator, proven bit-for-bit in tests/test_bridge_tunnel_jax_parity.py).
 
     python scripts/viz_dreamer_bridge_tunnel_traj.py \\
         --checkpoint runs/dreamerv3_bridge_tunnel_natural_25M_1780145070/checkpoints/step_1000000 \\
-        --n-maps 6 --n-traj 200 --out mapgen_preview/dreamer_natural_traj.png
+        --n-maps 6 --n-traj 200 --out outputs/previews/dreamer_natural_traj.png
 """
 from __future__ import annotations
 
@@ -264,7 +264,7 @@ def main():
     p.add_argument("--n-traj", type=int, default=200)
     p.add_argument("--eval-seed-start", type=int, default=10_000)
     p.add_argument("--max-steps", type=int, default=600)
-    p.add_argument("--out", type=Path, default=Path("mapgen_preview/dreamer_natural_traj.png"))
+    p.add_argument("--out", type=Path, default=Path("outputs/previews/dreamer_natural_traj.png"))
     args = p.parse_args()
 
     ckpt_dir = args.checkpoint.resolve()

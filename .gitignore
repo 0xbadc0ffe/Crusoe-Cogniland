@@ -231,11 +231,25 @@ sweep_logs/
 
 # Released DreamerV3 orbax checkpoint lives under models/ — keep it despite the
 # generic `checkpoints/` ignore above (stored via git-LFS, see .gitattributes).
-!models/bridge_tunnel/dreamer_natural_categorical/checkpoints/
-!models/bridge_tunnel/dreamer_natural_categorical/checkpoints/**
+!released_models/bridge_tunnel/dreamer_natural_categorical/checkpoints/
+!released_models/bridge_tunnel/dreamer_natural_categorical/checkpoints/**
 
 # bridge_tunnel_commit generated JAX map datasets (regenerable)
 data/bridge_tunnel_commit_jax/
 
 # large activation-dataset bundles (shared out-of-band, not in git)
 datasets/
+
+# reorganized layout
+outputs/
+activation_datasets/
+
+# regenerable JAX map datasets + latex aux + backups
+data/bridge_tunnel_jax/
+data/crafter_in_cogniland_jax/
+*.bak
+paper/*.aux
+paper/*.fls
+paper/*.fdb_latexmk
+paper/*.log
+paper/*.out
