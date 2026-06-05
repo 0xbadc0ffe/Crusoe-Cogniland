@@ -1,41 +1,36 @@
-# crafter_in_cogniland — Architecture & Developer Guide
+# Crusoe-Cogniland — Architecture & Developer Guide
 
-Pure-JAX DreamerV3 + PyTorch PPO on a small POMDP navigation env with a
-one-shot **build commitment** (raft vs harness). The repo is structured
-to make research-grade experiments easy: shared W&B metrics across
-algos, frozen-model loaders for mech interp, paper-aligned model size
-presets, single-file trainers.
+Pure-JAX DreamerV3 + PyTorch PPO on small POMDP navigation envs, built as a
+substrate for mechanistic interpretability (belief/skill probing + steering).
+The **active** env is `bridge_tunnel`; `crafter_in_cogniland` + `nav` are a
+legacy/secondary cluster. See `docs/codebase_map.md` for the full navigation
+guide and `configs/bridge_tunnel/REGISTRY.md` for the released agents.
 
 ## Layout
 
 ```
 src/cogniland/
-  crafter_in_cogniland/         pure-JAX env (Gymnax-style)
-    constants.py                tile / action / object ids
-    state.py                    EnvState + EnvParams pytrees
-    dynamics.py                 step logic (jnp.where-driven)
-    render.py                   tile-id minimap + scalars
-    env.py                      CrafterInCognilandEnv class
-    maps.py                     numpy mapgen helper (loads to JAX)
-  nav/                          PyTorch env (for PPO + demo)
-  assets/sprites/               Crafter PNG sprites used by the renderer
+  bridge_tunnel/                ← ACTIVE env: ONE package, two variants
+    tiles.py ctg.py mapgen.py   variant="bt" (base) | "btc" (implicit commitment
+    env.py policy.py _solver.py  + 3 map categories). Discrete(6); PPO+GRU & DreamerV3.
+    jax/                        pure-JAX port (Gymnax-style); EnvParams.commit static flag
+  crafter_in_cogniland/  nav/   legacy/secondary (crafter JAX env + nav PyTorch env+mapgen)
+  assets/sprites/               Crafter PNG sprites
+purejaxwm/                      vendored DreamerV3 (RSSM, TwoHot, LaProp, RetNorm, …)
 
-purejaxwm/                      DreamerV3 algorithm library (vendored)
-  dreamerv3/                    RSSM (block GRU), TwoHotDist, LaProp,
-                                RetNorm, slow critic, lambda returns
-  commons/                      Gymnax wrappers + dtype helpers
+scripts/bridge_tunnel/          train_ppo / dreamerv3 (both --variant), eval, play, viz, sweeps
+scripts/mechinterp/             build_activation_dataset, decode_dataset, replay_trajectory
+scripts/crafter/  scripts/figures/   legacy crafter+nav scripts ; figure drawers
 
-scripts/
-  dreamerv3_crafter_in_cogniland.py  JAX Dreamer trainer
-  viz_dreamer_trajectory.py          Roll out + visualise a frozen ckpt
-  train_ppo_gru.py                   PyTorch PPO trainer
-  play_ppo_gru.py                    Visualise a trained PPO policy
-  play_cogniland.py                  Playable pygame demo
-
-tests/
-  test_nav_env.py + test_nav_mapgen.py  PyTorch env contract
-  purejaxwm/                            Algorithm-library unit tests
+configs/bridge_tunnel/          experiment configs + REGISTRY.md
+released_models/                frozen agents (+ as-trained yaml; git-LFS orbax)
+data/                           procedural maps (val + regenerable jax train sets)
+activation_datasets/  outputs/  mech-interp bundles ; ALL generated artifacts  [gitignored]
+tests/                          env contract + JAX↔PyTorch parity + purejaxwm/
 ```
+
+The PyTorch `BridgeTunnelEnv` and pure-JAX `bridge_tunnel.jax` env are proven
+**bit-for-bit equivalent** for both variants (`tests/test_bridge_tunnel*parity.py`).
 
 ## How to run
 
@@ -43,19 +38,21 @@ tests/
 conda env create -f environment.yml && conda activate crusoe
 pip install -e .
 
-# Dreamer (25M default — paper Table 3)
-python scripts/crafter/dreamerv3_crafter_in_cogniland.py \
-  --size 25M --total-env-steps 1_000_000 --num-envs 32 \
-  --train-ratio 64 --wandb-mode online
+# PPO+GRU  (--variant bt | btc)
+python scripts/bridge_tunnel/train_ppo_bridge_tunnel.py \
+  --config configs/bridge_tunnel/btc_ppo_onehot.yaml --device cuda
 
-# Quick smoke (12M, no wandb)
-python scripts/crafter/dreamerv3_crafter_in_cogniland.py \
-  --size 12M --total-env-steps 50000 --num-envs 16 \
-  --train-ratio 16 --map-size 32 --view-size 11 --wandb-mode disabled
+# DreamerV3 (25M; --variant bt | btc)
+python scripts/bridge_tunnel/dreamerv3_bridge_tunnel.py \
+  --variant btc --size 25M --decoder categorical \
+  --total-env-steps 1_500_000 --num-envs 32 --train-ratio 64 --wandb-mode online
 
-# PPO baseline
-python scripts/crafter/train_ppo_gru.py --total-timesteps 5_000_000 \
-  --num-envs 32 --num-steps 128 --device cuda
+# evaluate / play
+python scripts/bridge_tunnel/eval_bridge_tunnel_commit_ppo.py --checkpoint released_models/bridge_tunnel_commit/ppo_commit_onehot.pt
+python scripts/bridge_tunnel/play_bridge_tunnel.py
+
+# legacy crafter cluster
+python scripts/crafter/dreamerv3_crafter_in_cogniland.py --size 25M --wandb-mode online
 
 # Inspect a frozen Dreamer checkpoint
 python scripts/crafter/viz_dreamer_trajectory.py \
