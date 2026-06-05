@@ -1,30 +1,16 @@
-"""Pure-JAX (Gymnax-style) port of the bridge_tunnel_commit task.
+"""DEPRECATED shim → cogniland.bridge_tunnel.jax (variant=btc).
 
-Behaviourally identical to ``cogniland.bridge_tunnel_commit.BridgeTunnelCommitEnv``
-on the SAME map + action sequence (proven in
-``tests/test_bridge_tunnel_commit_jax_parity.py``), expressed as a vmappable /
-jittable Gymnax env so it can drive the pure-JAX DreamerV3 trainer
-(``scripts/dreamerv3_bridge_tunnel_commit.py``).
+The JAX env is now unified; use cogniland.bridge_tunnel.jax with the static
+EnvParams.commit flag. This re-exports it for backward compatibility.
 """
-from __future__ import annotations
-
-from . import constants
-from .env import BridgeTunnelCommitJaxEnv
-from .maps import (
-    generate_map_dataset,
-    load_map_arrays,
-    records_to_arrays,
-    save_map_arrays,
+from cogniland.bridge_tunnel.jax import (  # noqa: F401
+    constants, EnvParams, EnvState, BridgeTunnelJaxEnv, BridgeTunnelCommitJaxEnv,
+    records_to_arrays, load_map_arrays, save_map_arrays,
 )
-from .state import EnvParams, EnvState
+from . import maps as _maps
+generate_map_dataset = _maps.generate_map_dataset
 
-__all__ = [
-    "BridgeTunnelCommitJaxEnv",
-    "EnvParams",
-    "EnvState",
-    "constants",
-    "generate_map_dataset",
-    "records_to_arrays",
-    "load_map_arrays",
-    "save_map_arrays",
-]
+__all__ = ["constants", "EnvParams", "EnvState", "BridgeTunnelCommitJaxEnv",
+           "BridgeTunnelJaxEnv", "BridgeTunnelCommitJaxEnv",
+           "generate_map_dataset", "records_to_arrays",
+           "load_map_arrays", "save_map_arrays"]
