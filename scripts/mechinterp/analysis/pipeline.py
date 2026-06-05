@@ -173,7 +173,8 @@ def _run_source(cfg, b, run, src, is_primary, Xa, Xp, adf, pdf, projdf, ep_keys,
             "ordinal(probe)": op.weight,
         }
         if is_primary:
-            adf.update(P.proba_columns(bp, Xa, "belief"))
+            for k, v in P.proba_columns(bp, Xa, "belief").items():
+                adf[k] = v
             adf["belief_ordinal_pred"] = op.predict(Xa)
 
     if b.has_skill:
@@ -193,7 +194,8 @@ def _run_source(cfg, b, run, src, is_primary, Xa, Xp, adf, pdf, projdf, ep_keys,
             "committed−none": G.diff_of_means(Xp, sk, ["build", "mine"], "none"),
         }
         if is_primary:
-            adf.update(P.proba_columns(sp, Xa, "skill"))
+            for k, v in P.proba_columns(sp, Xa, "skill").items():
+                adf[k] = v
 
     # canonical label columns for plots (skill column aliased to 'skill')
     if b.has_skill and skill_col != "skill":
@@ -273,7 +275,7 @@ def _run_source(cfg, b, run, src, is_primary, Xa, Xp, adf, pdf, projdf, ep_keys,
                      wandb.Plotly(wandb_io.plotly_scatter(pca.coords[:, :2], adf,
                                   "skill", title=f"{src} PCA — committed skill"))})
 
-        # ---------- embedding projector table (raw dims + hover obs) ----------
+        # ---------- embedding projector table (raw dims + metadata) ----------
         Xproj = b.load_activations(src, projdf["row_id"])
         pj = projdf.copy()
         # bring canonical predictions onto the projector subset
@@ -281,9 +283,21 @@ def _run_source(cfg, b, run, src, is_primary, Xa, Xp, adf, pdf, projdf, ep_keys,
                     "skill_conf", "belief_p_lakes", "belief_p_rocky", "belief_p_balanced"]:
             if col in adf:
                 pj = pj.merge(adf[["row_id", col]], on="row_id", how="left")
-        run.log({f"{pre}/embedding_projector":
-                 wandb_io.projector_table(b, pj, Xproj,
-                                          with_images=cfg.projector_images)})
+        run.log({f"{pre}/embedding_projector": wandb_io.projector_table(b, pj, Xproj)})
+
+        # ---------- hover-frame interactive scatter (rendered obs on hover) ----------
+        if cfg.projector_images:
+            hov = pj.iloc[:min(len(pj), 1200)].reset_index(drop=True)
+            hcoords = pca.model.transform(
+                b.load_activations(src, hov["row_id"]))[:, :2]
+            thumbs = wandb_io.render_thumbs(b, hov["row_id"])
+            specs = ([("category", "category")] if b.has_belief else []) + \
+                    ([("skill", skill_col)] if b.has_skill else [])
+            for ck, col in specs:
+                if col in hov:
+                    run.log({f"{pre}/hover_frames_{ck}": wandb.Html(
+                        wandb_io.hover_html(hcoords, hov, thumbs, col,
+                                            title=f"{src} PCA — hover shows agent frame"))})
 
 
 def _episode_coords(b, src, ep_keys, pca_model):
