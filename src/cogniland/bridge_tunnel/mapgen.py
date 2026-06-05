@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .tiles import DIRT, GRASS, ROCK, SAND, TARGET, TREE, WATER
+from .tiles import DIRT, GRASS, ROCK, SAND, TARGET, TREE, WATER, WOOD
 
 
 @dataclass
@@ -32,6 +32,8 @@ class MapRecord:
     orientation: str = "natural"
     # natural maps: every cell on the goal wall/door is a target (touch to win)
     goal_cells: list[tuple[int, int]] = field(default_factory=list)
+    # btc variant only: map category label (balanced/lakes/rocky); None for bt.
+    category: str | None = None
 
 
 ORIENTATIONS = ("natural",)
@@ -310,4 +312,110 @@ def is_reachable(rec: MapRecord) -> bool:
     return False
 
 
-__all__ = ["MapRecord", "generate_bridge_tunnel_map", "is_reachable"]
+# ─────────────────── btc variant: 3 labelled categories ───────────────────
+
+CATEGORIES = ("balanced", "lakes", "rocky")
+
+# (water_frac, rock_frac) per category. lakes/rocky are strongly one-sided
+# (~87/13) so detouring the dominant obstacle is long — biases the matching tool.
+_CATEGORY_FRACS = {
+    "balanced": (0.14, 0.14),
+    "lakes":    (0.245, 0.035),
+    "rocky":    (0.035, 0.245),
+}
+_WALK = (GRASS, WOOD, TARGET, SAND, DIRT)
+
+
+def category_fracs(category: str) -> tuple[float, float]:
+    if category not in _CATEGORY_FRACS:
+        raise ValueError(f"category must be one of {CATEGORIES}, got {category!r}")
+    return _CATEGORY_FRACS[category]
+
+
+def _can_reach_goal(terrain: np.ndarray, spawn: tuple[int, int],
+                    crossable: frozenset) -> bool:
+    """BFS spawn → any TARGET treating walkable + ``crossable`` tiles as passable
+    (TREE + the non-crossable obstacle are walls). ``crossable=∅`` ⇒ walkable-only."""
+    from collections import deque
+    H, W = terrain.shape
+    sr, sc = spawn
+    seen = np.zeros((H, W), dtype=bool); seen[sr, sc] = True
+    q = deque([(sr, sc)])
+    while q:
+        r, c = q.popleft()
+        if terrain[r, c] == TARGET:
+            return True
+        for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < H and 0 <= nc < W and not seen[nr, nc]:
+                t = int(terrain[nr, nc])
+                if t in _WALK or t in crossable:
+                    seen[nr, nc] = True; q.append((nr, nc))
+    return False
+
+
+def generate_commit_map(size: int = 32, width: int | None = 64, seed: int = 0,
+                        category: str = "balanced", tree_frac: float = 0.03,
+                        goal_half: int | None = 1, require_cross: bool = False,
+                        max_resample: int = 400) -> MapRecord:
+    """One ``category`` map (btc variant), winnable under its intended commitment
+    (lakes→build, rocky→mine, balanced→either). Deterministic; resamples with a
+    prime seed offset if a guard fails. ``record.seed`` keeps the requested seed."""
+    wf, rf = category_fracs(category)
+    W = int(width) if width is not None else int(size)
+    s = int(seed)
+    for _ in range(max_resample):
+        base = _build_natural(int(size), W, s, wf, rf, tree_frac, goal_half=goal_half)
+        terr, spawn = base.terrain, base.spawn
+        build_ok = _can_reach_goal(terr, spawn, frozenset({WATER}))
+        mine_ok = _can_reach_goal(terr, spawn, frozenset({ROCK}))
+        intended = {"balanced": build_ok and mine_ok, "lakes": build_ok,
+                    "rocky": mine_ok}[category]
+        cross_needed = (not _can_reach_goal(terr, spawn, frozenset())) if require_cross else True
+        if intended and cross_needed:
+            return MapRecord(terrain=terr, spawn=spawn, target=base.target,
+                             seed=int(seed), orientation="natural",
+                             goal_cells=base.goal_cells, category=category)
+        s += 100003
+    raise RuntimeError(f"could not generate a winnable {category!r} map from seed {seed}")
+
+
+def generate_map(variant: str = "bt", seed: int = 0, size: int = 32,
+                 width: int | None = 64, category: str | None = None,
+                 water_frac: float = 0.14, rock_frac: float = 0.14,
+                 tree_frac: float = 0.03, goal_half: int | None = 1,
+                 **kw) -> MapRecord:
+    """Unified dispatcher. ``variant='bt'`` → single natural map (uses
+    water_frac/rock_frac); ``variant='btc'`` → category map (balanced/lakes/rocky)."""
+    if variant == "bt":
+        return generate_bridge_tunnel_map(
+            seed=seed, size=size, width=width, water_frac=water_frac,
+            rock_frac=rock_frac, tree_frac=tree_frac, goal_half=goal_half)
+    if variant == "btc":
+        return generate_commit_map(
+            size=size, width=width, seed=seed, category=category or "balanced",
+            tree_frac=tree_frac, goal_half=goal_half, **kw)
+    raise ValueError(f"variant must be 'bt' or 'btc', got {variant!r}")
+
+
+def is_winnable(rec: MapRecord) -> bool:
+    """True if the goal is reachable under at least one commitment (build or mine)."""
+    return (_can_reach_goal(rec.terrain, rec.spawn, frozenset({WATER}))
+            or _can_reach_goal(rec.terrain, rec.spawn, frozenset({ROCK})))
+
+
+def make_split(n_per_category: int, seed_start: int = 0,
+               categories: tuple[str, ...] = CATEGORIES, **map_kwargs) -> list[MapRecord]:
+    """Class-balanced list of ``n_per_category`` maps per category (distinct
+    per-category seed blocks so every map seed is globally unique)."""
+    recs = []
+    for ci, cat in enumerate(categories):
+        base = seed_start + ci * 100_000
+        for i in range(n_per_category):
+            recs.append(generate_commit_map(seed=base + i, category=cat, **map_kwargs))
+    return recs
+
+
+__all__ = ["MapRecord", "generate_bridge_tunnel_map", "generate_commit_map",
+           "generate_map", "is_reachable", "is_winnable", "make_split",
+           "category_fracs", "CATEGORIES"]

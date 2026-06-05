@@ -1,18 +1,25 @@
-"""Natural-terrain POMDP navigation env (bridge_tunnel).
+"""bridge_tunnel — natural-terrain POMDP navigation, two variants.
 
-An open procedural grid where the agent spawns at the centre of the left edge
-and must reach the goal on the right wall (a central door by default). The
-terrain mixes water (cross by PLACE → wood bridge), rock (cross by MINE → grass)
-and impassable TREE patches (walk around). Trees are biased toward the top &
-bottom walls so naive wall-hugging to the centre door is blocked by forest. The
-agent chooses per obstacle whether to cross or detour. POMDP via an egocentric
-crop. (The earlier diagonal/vertical stripe orientations + obsidian/cue tiles
-have been retired.)
+One env, two variants (select with ``variant=``):
 
-See ``BridgeTunnelEnv`` / ``generate_bridge_tunnel_map``.
+* ``bt``  — cross water (place a wood bridge) / rock (mine to grass) or detour;
+  both tools always available.
+* ``btc`` — the agent must irreversibly **commit** to one tool (implicitly, via
+  its first successful build/mine); maps come in 3 categories
+  (balanced/lakes/rocky).
+
+See ``BridgeTunnelEnv(variant=...)`` and ``generate_map(variant=...)``.
 """
-from .env import BridgeTunnelEnv
-from .mapgen import MapRecord, generate_bridge_tunnel_map
+from .env import BridgeTunnelEnv, BridgeTunnelCommitEnv, VARIANTS
+from .mapgen import (
+    CATEGORIES, MapRecord, generate_bridge_tunnel_map, generate_commit_map,
+    generate_map, is_reachable, is_winnable, make_split,
+)
 from . import tiles
 
-__all__ = ["BridgeTunnelEnv", "MapRecord", "generate_bridge_tunnel_map", "tiles"]
+__all__ = [
+    "BridgeTunnelEnv", "BridgeTunnelCommitEnv", "VARIANTS",
+    "MapRecord", "CATEGORIES",
+    "generate_map", "generate_bridge_tunnel_map", "generate_commit_map",
+    "is_reachable", "is_winnable", "make_split", "tiles",
+]
