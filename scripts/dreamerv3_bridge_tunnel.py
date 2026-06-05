@@ -86,14 +86,14 @@ SCALAR_DIM = 5   # [facing one-hot (4), step/max]
 class FlattenObsWrapper(GymnaxWrapper):
     """Flattens ``{minimap, scalars}`` into one float32 vector."""
 
-    def __init__(self, env, view_size: int, decoder: str = "mse"):
+    def __init__(self, env, view_size: int, decoder: str = "mse", scalar_dim: int = SCALAR_DIM):
         super().__init__(env)
         self.view_size = view_size
         self.decoder = decoder
         if decoder == "categorical":
-            self.flat_dim = view_size * view_size * C.NUM_TILES + SCALAR_DIM
+            self.flat_dim = view_size * view_size * C.NUM_TILES + scalar_dim
         else:
-            self.flat_dim = view_size * view_size + SCALAR_DIM
+            self.flat_dim = view_size * view_size + scalar_dim
 
     def _flatten(self, obs: dict) -> jax.Array:
         if self.decoder == "categorical":
@@ -177,8 +177,9 @@ class Transition(NamedTuple):
 def _resolve_maps_path(cfg) -> Path:
     if cfg.get("maps_path"):
         return Path(cfg["maps_path"])
+    variant = cfg.get("variant", "bt")
     return Path(
-        f"data/bridge_tunnel_jax/train_natural_n{cfg['num_train_maps']}.pkl"
+        f"data/bridge_tunnel_jax/train_{variant}_n{cfg['num_train_maps']}.pkl"
     )
 
 
@@ -191,6 +192,7 @@ def _make_env_params(cfg) -> EnvParams:
               flush=True)
         arrays = generate_map_dataset(
             n_maps=cfg["num_train_maps"], seed_start=cfg.get("map_gen_seed", 0),
+            variant=cfg.get("variant", "bt"),
         )
         save_map_arrays(arrays, maps_path)
     arrays = load_map_arrays(maps_path)
@@ -202,6 +204,8 @@ def _make_env_params(cfg) -> EnvParams:
         reach_bonus=cfg["reach_bonus"],
         shaping_coef=cfg["shaping_coef"],
         build_cost=cfg["build_cost"],
+        commit_cost=cfg.get("commit_cost", 0.05),
+        illegal_penalty=cfg.get("illegal_penalty", 0.02),
         gamma=cfg["gamma"],
     )
 
@@ -211,14 +215,16 @@ def make_train(cfg, log_cb=None):
     decoder_mode = cfg.get("decoder", "mse")
     V = cfg["view_size"]
     K = C.NUM_TILES
+    scalar_dim = 7 if cfg.get("variant", "bt") == "btc" else 5
     if decoder_mode == "categorical":
-        flat_dim = V * V * K + SCALAR_DIM
+        flat_dim = V * V * K + scalar_dim
     else:
-        flat_dim = V * V + SCALAR_DIM
+        flat_dim = V * V + scalar_dim
     base_env = BridgeTunnelJaxEnv(default_params=env_params)
     env = BatchEnvWrapper(
         AutoResetEnvWrapper(LogWrapper(
-            FlattenObsWrapper(base_env, cfg["view_size"], decoder=decoder_mode))),
+            FlattenObsWrapper(base_env, cfg["view_size"], decoder=decoder_mode,
+                              scalar_dim=scalar_dim))),
         num_envs=cfg["num_envs"],
     )
     action_dim = C.NUM_ACTIONS
@@ -675,7 +681,8 @@ def _save_final_checkpoint(final_state, run_dir: Path, env_step: int) -> None:
 def _default_cfg() -> dict:
     """Paper-aligned Dreamer defaults; env block matches natural_agent.yaml."""
     return {
-        # env (natural_agent.yaml task)
+        # env
+        "variant": "bt",          # "bt" (base) or "btc" (commit + 3 categories)
         "env_id": "bridge_tunnel",
         "maps_path": None,
         "num_train_maps": 4096,
@@ -691,6 +698,8 @@ def _default_cfg() -> dict:
         "reach_bonus": 3.0,
         "shaping_coef": 0.015,
         "build_cost": 0.0,
+        "commit_cost": 0.05,      # btc only
+        "illegal_penalty": 0.02,  # btc only
         # train budget
         "num_envs": 32,
         "total_env_steps": 1_000_000,
@@ -764,6 +773,8 @@ def main():
     import argparse
     p = argparse.ArgumentParser()
     p.add_argument("--size", default="25M", choices=list(SIZE_PRESETS))
+    p.add_argument("--variant", default="bt", choices=("bt", "btc"),
+                   help="bt (base) or btc (implicit commitment + 3 map categories)")
     p.add_argument("--decoder", default=None, choices=("mse", "categorical"),
                    help="obs reconstruction mode (default mse)")
     p.add_argument("--total-env-steps", type=int, default=None)
@@ -784,6 +795,8 @@ def main():
         v = getattr(args, k)
         if v is not None:
             cfg[k] = v
+    cfg["variant"] = args.variant
+    cfg["env_id"] = "bridge_tunnel" if args.variant == "bt" else "bridge_tunnel_commit"
     cfg["seed"] = args.seed
     # persisted so the viz can reconstruct the decoder head + obs layout.
     cfg["num_tiles"] = int(C.NUM_TILES)
@@ -801,11 +814,13 @@ def main():
             name=run_id,
             mode=cfg["wandb_mode"],
             config=cfg,
+            group=cfg["variant"],
             tags=[
                 f"size={args.size}",
                 "algo=dreamerv3",
                 f"env={cfg['env_id']}",
-                "task=natural",
+                f"variant={cfg['variant']}",
+                f"decoder={cfg['decoder']}",
             ],
             settings=wandb.Settings(_disable_stats=True),
         )
