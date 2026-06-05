@@ -1,0 +1,39 @@
+variant: bt
+# Natural-maps agent, goal = a 3-CELL central door on the right wall
+# (goal_half: 1 -> rows [mid-1, mid+1]). Mapgen biases tree patches toward the
+# top & bottom edges so hugging the wall to reach the door is less effective on
+# average -> the agent is pushed through the obstacle-filled middle (avoid /
+# bridge / tunnel). Recipe otherwise unchanged: NO entropy annealing + entropy
+# 0.045, build_cost 0, min-action shaping.
+#   python scripts/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel/natural_centergoal3.yaml \
+#       --run-name natural_centergoal3_ppo --wandb-mode online
+orientation: natural
+env_size: 32
+env_width: 64
+view_size: 21
+max_steps: 800
+water_frac: 0.14
+rock_frac: 0.14
+tree_frac: 0.03
+goal_half: 1
+build_cost: 0.0
+reach_bonus: 3.0
+shaping_coef: 0.015
+slack_penalty: -0.01
+seed: 0
+num_envs: 32
+num_steps: 128
+num_minibatches: 4
+total_timesteps: 2000000
+learning_rate: 0.0003
+anneal_lr: false
+anneal_ent: false
+gamma: 0.997
+gae_lambda: 0.95
+clip_coef: 0.2
+ent_coef: 0.045
+vf_coef: 0.5
+update_epochs: 4
+max_grad_norm: 0.5
+gru_hidden: 128
+embed_dim: 256
