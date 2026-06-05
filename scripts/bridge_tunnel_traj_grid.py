@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cogniland.bridge_tunnel import generate_bridge_tunnel_map, tiles as T  # noqa: E402
 from cogniland.bridge_tunnel.env import BridgeTunnelEnv  # noqa: E402
-from train_ppo_bridge_tunnel import PPOGRUPolicy  # noqa: E402
+from cogniland.bridge_tunnel.policy import PPOGRUPolicy
 
 
 # facing-id → (dr, dc); matches env F_UP/F_DOWN/F_LEFT/F_RIGHT = 0/1/2/3

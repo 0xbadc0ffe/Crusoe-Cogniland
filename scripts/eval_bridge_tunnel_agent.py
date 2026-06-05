@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cogniland.bridge_tunnel import generate_bridge_tunnel_map, tiles as T  # noqa: E402
 from cogniland.bridge_tunnel.env import BridgeTunnelEnv, A_PLACE, A_MINE  # noqa: E402
-from train_ppo_bridge_tunnel import PPOGRUPolicy  # noqa: E402
+from cogniland.bridge_tunnel.policy import PPOGRUPolicy
 
 
 @torch.no_grad()

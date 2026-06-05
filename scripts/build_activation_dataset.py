@@ -69,7 +69,7 @@ def _env_cfg(env_name: str):
     if env_name == "bridge_tunnel":
         from cogniland.bridge_tunnel import generate_bridge_tunnel_map, tiles as T
         from cogniland.bridge_tunnel.env import BridgeTunnelEnv
-        from train_ppo_bridge_tunnel import PPOGRUPolicy
+        from cogniland.bridge_tunnel.policy import PPOGRUPolicy
         ctg_fn = lambda terr, tgt: BridgeTunnelEnv._compute_ctg(terr, tgt).astype(np.float32)
         return dict(
             T=T, Env=BridgeTunnelEnv, Policy=PPOGRUPolicy, ctg_fn=ctg_fn,
@@ -80,7 +80,7 @@ def _env_cfg(env_name: str):
     elif env_name == "bridge_tunnel_commit":
         from cogniland.bridge_tunnel_commit import generate_commit_map, tiles as T
         from cogniland.bridge_tunnel_commit.env import BridgeTunnelCommitEnv
-        from train_ppo_bridge_tunnel_commit import PPOGRUPolicy
+        from cogniland.bridge_tunnel.policy import PPOGRUPolicy
         # commit-aware ctg: index 0 = 'none' field (both obstacles crossable)
         ctg_fn = lambda terr, tgt: BridgeTunnelCommitEnv._compute_all_ctg(terr, tgt)[0].astype(np.float32)
         return dict(

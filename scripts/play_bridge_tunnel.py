@@ -369,7 +369,7 @@ def main():
     p.add_argument("--main-px", type=int, default=600, help="target pixel size of the main play view")
     args = p.parse_args()
 
-    from train_ppo_bridge_tunnel import PPOGRUPolicy
+    from cogniland.bridge_tunnel.policy import PPOGRUPolicy
     device = torch.device("cuda" if (torch is not None and torch.cuda.is_available()) else "cpu")
 
     pygame.init()

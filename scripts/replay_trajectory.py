@@ -28,13 +28,13 @@ def _cfg(env):
     if env == "bridge_tunnel":
         from cogniland.bridge_tunnel import generate_bridge_tunnel_map
         from cogniland.bridge_tunnel.env import BridgeTunnelEnv
-        from train_ppo_bridge_tunnel import PPOGRUPolicy
+        from cogniland.bridge_tunnel.policy import PPOGRUPolicy
         return dict(Env=BridgeTunnelEnv, Policy=PPOGRUPolicy, commit=False,
                     gen=lambda s, c, kw: generate_bridge_tunnel_map(seed=s, **kw),
                     anames=["up", "down", "left", "right", "place", "mine"])
     from cogniland.bridge_tunnel_commit import generate_commit_map
     from cogniland.bridge_tunnel_commit.env import BridgeTunnelCommitEnv
-    from train_ppo_bridge_tunnel_commit import PPOGRUPolicy
+    from cogniland.bridge_tunnel.policy import PPOGRUPolicy
     return dict(Env=BridgeTunnelCommitEnv, Policy=PPOGRUPolicy, commit=True,
                 gen=lambda s, c, kw: generate_commit_map(seed=s, category=c, **kw),
                 anames=["up", "down", "left", "right", "build", "mine"])
