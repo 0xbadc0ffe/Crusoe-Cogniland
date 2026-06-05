@@ -220,10 +220,7 @@ artifacts/
 artifacts_sweep/
 logs/
 sweep_artifacts/.claude/worktrees/
-data/maps/*.pt
-data/maps_classic/*.pt
 runs/
-data/crafter_in_cogniland/
 
 # bridge_tunnel scratch
 mapgen_preview/

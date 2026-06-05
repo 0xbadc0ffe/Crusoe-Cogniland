@@ -1,10 +1,9 @@
 # Crusoe-Cogniland — Architecture & Developer Guide
 
-Pure-JAX DreamerV3 + PyTorch PPO on small POMDP navigation envs, built as a
-substrate for mechanistic interpretability (belief/skill probing + steering).
-The **active** env is `bridge_tunnel`; `crafter_in_cogniland` + `nav` are a
-legacy/secondary cluster. See `docs/codebase_map.md` for the full navigation
-guide and `configs/bridge_tunnel/REGISTRY.md` for the released agents.
+Pure-JAX DreamerV3 + PyTorch PPO on the `bridge_tunnel` POMDP navigation env,
+built as a substrate for mechanistic interpretability (belief/skill probing +
+steering). See `docs/codebase_map.md` for the navigation guide and
+`configs/bridge_tunnel/REGISTRY.md` for the released agents.
 
 ## Layout
 
@@ -14,13 +13,12 @@ src/cogniland/
     tiles.py ctg.py mapgen.py   variant="bt" (base) | "btc" (implicit commitment
     env.py policy.py _solver.py  + 3 map categories). Discrete(6); PPO+GRU & DreamerV3.
     jax/                        pure-JAX port (Gymnax-style); EnvParams.commit static flag
-  crafter_in_cogniland/  nav/   legacy/secondary (crafter JAX env + nav PyTorch env+mapgen)
-  assets/sprites/               Crafter PNG sprites
+  assets/sprites/               Crafter PNG sprites (pygame demo / imagination viz)
 purejaxwm/                      vendored DreamerV3 (RSSM, TwoHot, LaProp, RetNorm, …)
 
 scripts/bridge_tunnel/          train_ppo / dreamerv3 (both --variant), eval, play, viz, sweeps
-scripts/mechinterp/             build_activation_dataset, decode_dataset, replay_trajectory
-scripts/crafter/  scripts/figures/   legacy crafter+nav scripts ; figure drawers
+scripts/mechinterp/             build_activation_dataset, decode_dataset, replay_trajectory, steering_kit/
+scripts/figures/                architecture / training-curve drawing scripts
 
 configs/bridge_tunnel/          experiment configs + REGISTRY.md
 released_models/                frozen agents (+ as-trained yaml; git-LFS orbax)
@@ -50,9 +48,6 @@ python scripts/bridge_tunnel/dreamerv3_bridge_tunnel.py \
 # evaluate / play
 python scripts/bridge_tunnel/eval_bridge_tunnel_commit_ppo.py --checkpoint released_models/bridge_tunnel_commit/ppo_commit_onehot.pt
 python scripts/bridge_tunnel/play_bridge_tunnel.py
-
-# legacy crafter cluster
-python scripts/crafter/dreamerv3_crafter_in_cogniland.py --size 25M --wandb-mode online
 
 # Inspect a frozen Dreamer checkpoint
 python scripts/crafter/viz_dreamer_trajectory.py \

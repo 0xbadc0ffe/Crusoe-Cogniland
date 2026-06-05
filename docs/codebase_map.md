@@ -6,10 +6,8 @@ Navigation guide for the repo after the unification + reorg.
 
 ```
 src/cogniland/          the library
-  bridge_tunnel/        ← ACTIVE env. ONE package, two variants (variant="bt"|"btc")
-  crafter_in_cogniland/ legacy/secondary JAX env (original build-commitment task)
-  nav/                  legacy PyTorch env + mapgen (only the crafter cluster uses it)
-  inference.py          PPO .pt loader (legacy helpers)
+  bridge_tunnel/        the env. ONE package, two variants (variant="bt"|"btc")
+  assets/sprites/       Crafter PNG sprites used by the pygame demo / imagination viz
 purejaxwm/              vendored DreamerV3 (RSSM, behavior, TwoHot, LaProp, RetNorm)
 scripts/                grouped by purpose (see below)
 configs/bridge_tunnel/  experiment configs + REGISTRY.md
@@ -48,8 +46,7 @@ The PyTorch and JAX envs are proven **bit-for-bit equivalent** for both variants
 | dir | contents |
 |---|---|
 | `scripts/bridge_tunnel/` | `train_ppo_bridge_tunnel.py` / `dreamerv3_bridge_tunnel.py` (both `--variant bt|btc`), `eval_bridge_tunnel_agent.py`, `eval_bridge_tunnel_commit_{ppo,dreamer}.py`, `bridge_tunnel_traj_grid.py`, `bridge_tunnel_strategy_examples.py`, `viz_dreamer_bridge_tunnel_{traj,imagine}.py`, `play_bridge_tunnel.py`, `make_bridge_tunnel_val_maps.py`, sweeps |
-| `scripts/mechinterp/` | `build_activation_dataset.py` (`--env bridge_tunnel[_commit]`), `decode_dataset.py` (standalone), `replay_trajectory.py` (replay + gru_h steering) |
-| `scripts/crafter/` | the legacy crafter_in_cogniland + nav scripts (trainers, demos, mapgen) |
+| `scripts/mechinterp/` | `build_activation_dataset.py` (`--env bridge_tunnel[_commit]`), `decode_dataset.py` (standalone), `replay_trajectory.py` (replay + gru_h steering), `steering_kit/` (shipped into bundles) |
 | `scripts/figures/` | architecture / training-curve drawing scripts |
 
 ## Where do I start
@@ -64,10 +61,5 @@ The PyTorch and JAX envs are proven **bit-for-bit equivalent** for both variants
 | decode a dataset frame/traj | `python activation_datasets/<name>/decode_dataset.py --row N` (no repo needed) |
 | change env rules | `src/cogniland/bridge_tunnel/env.py` (+ keep `jax/` in parity — run the parity tests) |
 | released agents + how to reproduce | `configs/bridge_tunnel/REGISTRY.md` |
-
-## Legacy clusters
-`crafter_in_cogniland/` (JAX) + `nav/` (PyTorch; its mapgen/tiles/skills back
-crafter) are a separate, secondary line of work. `bridge_tunnel` does not depend
-on them. Their scripts live under `scripts/crafter/`.
 
 See also `docs/bridge_tunnel.md` (task guide) and `CLAUDE.md` (architecture + invariants).
