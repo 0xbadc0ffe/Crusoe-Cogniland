@@ -49,6 +49,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0.0"]
+# mech-interp activation-geometry analysis pipeline (scripts/mechinterp/analysis/)
+analysis = [
+    "scikit-learn>=1.3",
+    "umap-learn>=0.5",
+    "plotly>=5.18",
+]
 
 [tool.setuptools.packages.find]
 where = ["src", "."]
