@@ -233,7 +233,7 @@ def _draw_play(win, env, sprites, tp, main_px, panel_x, cell, effects, font, lin
 # ──────────────────────── action-distribution pad ─────────────────────────
 
 _ACT_LABEL = {A_PLACE: "build", A_MINE: "mine"}
-FLASH_DUR = 10                      # frames the chosen action blinks
+FLASH_DUR = 12                      # frames the chosen action stays lit before fading
 
 
 def _prob_color(p):
@@ -267,11 +267,15 @@ def _shadow_text(win, font, text, cx, by):
     win.blit(sh, (x + 1, by + 1)); win.blit(fg, (x, by))
 
 
-def _pad_button(win, rect, action, prob, flash_on, small, small_bold):
-    col = (255, 232, 64) if flash_on else _prob_color(prob)
+def _pad_button(win, rect, action, prob, flash_k, small, small_bold):
+    """flash_k in [0, 1]: 1=just chosen (full highlight), 0=back to prob color."""
+    base = _prob_color(prob)
+    hi = (255, 232, 64)
+    col = tuple(int(base[i] + (hi[i] - base[i]) * flash_k) for i in range(3))
     pygame.draw.rect(win, col, rect, border_radius=7)
-    pygame.draw.rect(win, (255, 255, 255) if flash_on else (120, 140, 175),
-                     rect, 2 if flash_on else 1, border_radius=7)
+    edge_lo, edge_hi = (120, 140, 175), (255, 255, 255)
+    edge = tuple(int(edge_lo[i] + (edge_hi[i] - edge_lo[i]) * flash_k) for i in range(3))
+    pygame.draw.rect(win, edge, rect, 2 if flash_k > 0.05 else 1, border_radius=7)
     if action in (A_UP, A_DOWN, A_LEFT, A_RIGHT):
         _draw_arrow(win, rect, action, (245, 247, 250))
     else:                                            # build / mine — bold label
@@ -285,7 +289,7 @@ def _pad_button(win, rect, action, prob, flash_on, small, small_bold):
 
 def _draw_action_pad(win, x0, Wp, bottom_y, probs, flash, font, small, small_bold):
     """A 4-way d-pad + build/mine buttons, each shaded by its policy probability;
-    the most-recently-taken action blinks bright yellow."""
+    the most-recently-taken action lights up bright yellow once and fades out."""
     bs = max(40, min(64, Wp // 3 - 6))
     cx0 = x0 + (Wp - 3 * bs) // 2
     act_h = int(bs * 0.8)
@@ -294,17 +298,22 @@ def _draw_action_pad(win, x0, Wp, bottom_y, probs, flash, font, small, small_bol
     win.blit(font.render("policy  pi(a|s)", True, (175, 182, 200)), (x0, y0))
     gy = y0 + 22
     P = (lambda a: None) if probs is None else (lambda a: float(probs[a]))
-    on = lambda a: bool(flash) and flash["a"] == a and (flash["t"] // 2) % 2 == 0
+
+    def k(a):                          # smooth fade-out (ease-out cubic)
+        if not flash or flash["a"] != a:
+            return 0.0
+        f = max(0.0, min(1.0, flash["t"] / FLASH_DUR))
+        return f * f * f
     cells = {A_UP:    pygame.Rect(cx0 + bs, gy, bs, bs),
              A_LEFT:  pygame.Rect(cx0, gy + bs, bs, bs),
              A_RIGHT: pygame.Rect(cx0 + 2 * bs, gy + bs, bs, bs),
              A_DOWN:  pygame.Rect(cx0 + bs, gy + 2 * bs, bs, bs)}
     for a, rc in cells.items():
-        _pad_button(win, rc, a, P(a), on(a), small, small_bold)
+        _pad_button(win, rc, a, P(a), k(a), small, small_bold)
     ay, gap = gy + 3 * bs + 10, 8
     aw = (Wp - gap) // 2
     for i, a in enumerate((A_PLACE, A_MINE)):
-        _pad_button(win, pygame.Rect(x0 + i * (aw + gap), ay, aw, act_h), a, P(a), on(a), small, small_bold)
+        _pad_button(win, pygame.Rect(x0 + i * (aw + gap), ay, aw, act_h), a, P(a), k(a), small, small_bold)
 
 
 # ───────────────────────────── AI helper ──────────────────────────────────
