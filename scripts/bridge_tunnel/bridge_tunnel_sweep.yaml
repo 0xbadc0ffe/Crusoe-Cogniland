@@ -32,7 +32,7 @@ metric:
   name: thin_side/rolling100
   goal: maximize
 command:
-  - /home/filippo/miniconda3/envs/crusoe/bin/python
+  - python
   - ${program}
   - --env-size=32
   - --env-width=64                  # 32×64 vertical maps fit 4 walls (7-vs-3 thickness)

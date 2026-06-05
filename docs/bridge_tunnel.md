@@ -72,7 +72,7 @@ prefers detours.
 ## Quickstart
 
 ```bash
-conda activate crusoe && pip install -e .          # one-time
+python -m venv .venv && source .venv/bin/activate && pip install -e .   # one-time
 pytest tests/test_bridge_tunnel.py                     # sanity
 
 # play a released agent on the validation maps

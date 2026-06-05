@@ -13,7 +13,7 @@ with pdfLaTeX). Upload the whole `paper/` folder to Overleaf and build either.
 
 ## Regenerate the `bridge_tunnel` figures
 
-From the repo root in the `crusoe` conda env, then `cd paper && latexmk -pdf bridge_tunnel.tex`:
+From the repo root (venv activated, `pip install -e .`), then `cd paper && latexmk -pdf bridge_tunnel.tex`:
 
 ```bash
 python scripts/bridge_tunnel/make_bridge_tunnel_val_maps.py --orientation natural --n 16
@@ -32,20 +32,6 @@ cp videos/dreamer_imagine/imagine_strip_seed10001.png paper/figures/bridge_tunne
 `crafter_in_cogniland.tex` is a self-contained, Overleaf-compatible document
 (stock packages only, compiles with pdfLaTeX).
 
-## Regenerate its figures
-
-Run from the repo root in the `crusoe` conda env:
-
-```bash
-conda run -n crusoe python paper/gen_maps.py          # tile icons + size×biome + seed grids
-conda run -n crusoe python paper/gen_trajectories.py  # 100-rollout glow grid (uses the 4 PPO checkpoints)
-```
-
-Outputs land in `paper/figures/` (and `paper/figures/tiles/`).
-
-- `gen_maps.py` — composites sprite icons for the tile table and renders the
-  map-size×biome and 64×64 seed-variation grids.
-- `gen_trajectories.py` — loads `checkpoints/ppo_gru_size{32,64,96,128}_*_final.pt`,
-  fixes one map per (biome, size), runs 100 batched stochastic rollouts from the
-  same spawn/target, and overlays them as thin progress-coloured trajectories on
-  a darkened map.
+Its figures are committed under `paper/figures/` (and `paper/figures/tiles/`).
+The original generator scripts (`gen_maps.py`, `gen_trajectories.py`) were removed
+when the repo was refocused on `bridge_tunnel`; re-export from git history if needed.

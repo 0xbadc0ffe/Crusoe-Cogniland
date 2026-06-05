@@ -47,10 +47,12 @@ tests/
 ## Setup
 
 ```bash
-conda env create -f environment.yml
-conda activate crusoe
-pip install -e .
+python -m venv .venv && source .venv/bin/activate
+pip install -e .          # runtime;  pip install -e .[dev] for tests
 ```
+
+All dependencies (including GPU torch / `jax[cuda12]`) live in `pyproject.toml`
+— it is the single source of truth. See the GPU/CPU notes there.
 
 ## Quick start
 
@@ -105,9 +107,8 @@ Two sweep configs ship in `configs/sweeps/`:
 Cluster setup (do once):
 
 ```bash
-# 1. Conda env on the cluster
-conda env create -f environment.yml -p $CONDA_ENV
-conda activate $CONDA_ENV
+# 1. Python env on the cluster
+python -m venv $VENV_DIR && source $VENV_DIR/bin/activate
 pip install -e .
 
 # 2. Put your WANDB_API_KEY in $PROJECT_DIR/.env (one line: WANDB_API_KEY=...)

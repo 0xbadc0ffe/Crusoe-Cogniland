@@ -19,7 +19,7 @@ metric:
   name: success/rolling100
   goal: maximize
 command:
-  - /home/filippo/miniconda3/envs/crusoe/bin/python
+  - python
   - ${program}
   - --orientation=natural
   - --env-size=32

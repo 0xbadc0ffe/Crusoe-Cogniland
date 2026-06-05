@@ -25,16 +25,16 @@ RUNS_PER_AGENT=${RUNS_PER_AGENT:-1}
 
 # ── EDIT THESE PATHS FOR YOUR CLUSTER ───────────────────────────────
 PROJECT_DIR="/cluster/raid/home/fwang/Crusoe-Cogniland"
-CONDA_ENV="/cluster/raid/home/fwang/.conda/envs/crusoe"
+VENV_DIR="$PROJECT_DIR/.venv"   # python -m venv .venv && pip install -e .
 # ─────────────────────────────────────────────────────────────────────
 
 cd "$PROJECT_DIR"
-mkdir -p logs data/crafter_in_cogniland
+mkdir -p outputs/logs
 
-# Activate the conda env (without sourcing conda.sh by just prepending PATH —
-# the wandb agent only needs python + wandb to be the right ones).
-export PATH="$CONDA_ENV/bin:$PATH"
-export CONDA_PREFIX="$CONDA_ENV"
+# Activate the venv (just prepend its bin to PATH — the wandb agent only
+# needs python + wandb to be the right ones).
+export PATH="$VENV_DIR/bin:$PATH"
+export VIRTUAL_ENV="$VENV_DIR"
 
 # W&B auth (WANDB_API_KEY and anything else from .env)
 if [ -f "$PROJECT_DIR/.env" ]; then

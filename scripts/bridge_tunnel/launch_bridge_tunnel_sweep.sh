@@ -10,7 +10,7 @@ set -uo pipefail
 SWEEP="${1:?usage: launch_bridge_tunnel_sweep.sh <entity/project/sweep_id> [N] [COUNT]}"
 N="${2:-9}"
 COUNT="${3:-1}"
-WANDB=/home/filippo/miniconda3/envs/crusoe/bin/wandb
+WANDB=wandb   # resolves from the activated venv on PATH
 cd "$(dirname "$0")/.."
 mkdir -p sweep_logs
 for i in $(seq 1 "$N"); do

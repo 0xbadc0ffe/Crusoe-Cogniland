@@ -33,8 +33,8 @@ The PyTorch `BridgeTunnelEnv` and pure-JAX `bridge_tunnel.jax` env are proven
 ## How to run
 
 ```bash
-conda env create -f environment.yml && conda activate crusoe
-pip install -e .
+python -m venv .venv && source .venv/bin/activate
+pip install -e .          # all deps live in pyproject.toml (single source of truth)
 
 # PPO+GRU  (--variant bt | btc)
 python scripts/bridge_tunnel/train_ppo_bridge_tunnel.py \
