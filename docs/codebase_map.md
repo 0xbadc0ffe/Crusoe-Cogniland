@@ -118,19 +118,19 @@ flowchart LR
 |---|---|---|
 | `src/cogniland/bridge_tunnel/{tiles,mapgen,env,_solver,__init__}.py` | PyTorch env (training/demo/eval target) | ✅ core |
 | `src/cogniland/bridge_tunnel_jax/{constants,state,dynamics,render,env,maps,__init__}.py` | JAX port (Dreamer target + parity) | ✅ core |
-| `scripts/train_ppo_bridge_tunnel.py` | PPO+GRU trainer; defines `PPOGRUPolicy` reused by eval/grid scripts via importlib | ✅ core (entry) |
-| `scripts/dreamerv3_bridge_tunnel.py` | DreamerV3 trainer (single file) | ✅ core (entry) |
-| `scripts/eval_bridge_tunnel_agent.py` | deterministic eval grid + success (thin-side retired → 0) | ✅ core (entry) |
-| `scripts/bridge_tunnel_traj_grid.py` | N-rollout stochastic trajectory grid (PPO) | ✅ core (entry) |
-| `scripts/bridge_tunnel_strategy_examples.py` | one clean rollout per strategy (avoid/bridge/tunnel) | ✅ core (entry) |
-| `scripts/viz_dreamer_bridge_tunnel_traj.py` | trajectory grid for the **Dreamer** agent | ✅ core (entry) |
-| `scripts/play_bridge_tunnel.py` | pygame demo (human/AI) | ✅ core (entry) |
-| `scripts/make_bridge_tunnel_val_maps.py` | curate the fixed validation/demo maps | ✅ core (entry) |
+| `scripts/bridge_tunnel/train_ppo_bridge_tunnel.py` | PPO+GRU trainer; defines `PPOGRUPolicy` reused by eval/grid scripts via importlib | ✅ core (entry) |
+| `scripts/bridge_tunnel/dreamerv3_bridge_tunnel.py` | DreamerV3 trainer (single file) | ✅ core (entry) |
+| `scripts/bridge_tunnel/eval_bridge_tunnel_agent.py` | deterministic eval grid + success (thin-side retired → 0) | ✅ core (entry) |
+| `scripts/bridge_tunnel/bridge_tunnel_traj_grid.py` | N-rollout stochastic trajectory grid (PPO) | ✅ core (entry) |
+| `scripts/bridge_tunnel/bridge_tunnel_strategy_examples.py` | one clean rollout per strategy (avoid/bridge/tunnel) | ✅ core (entry) |
+| `scripts/bridge_tunnel/viz_dreamer_bridge_tunnel_traj.py` | trajectory grid for the **Dreamer** agent | ✅ core (entry) |
+| `scripts/bridge_tunnel/play_bridge_tunnel.py` | pygame demo (human/AI) | ✅ core (entry) |
+| `scripts/bridge_tunnel/make_bridge_tunnel_val_maps.py` | curate the fixed validation/demo maps | ✅ core (entry) |
 | `tests/test_bridge_tunnel.py`, `tests/test_bridge_tunnel_jax_parity.py` | env contract + JAX↔PyTorch parity gate | ✅ core |
 | `released_models/bridge_tunnel/*.pt` + `*.yaml` | released agents + reproducible configs | ✅ core (artifacts) |
 | `data/bridge_tunnel/val_maps.pkl`, `data/bridge_tunnel_jax/train_*.pkl` | demo/val maps; Dreamer training dataset (regenerable) | ✅ core (artifacts) |
-| `scripts/bridge_tunnel_natural_sweep.yaml`, `launch_bridge_tunnel_sweep.sh` | W&B sweeps (natural) | ✅ core (tools) |
-| `scripts/bridge_tunnel_sweep.yaml` | DEPRECATED stripe sweep (will error — references retired flags) | 🟡 legacy |
+| `scripts/bridge_tunnel/bridge_tunnel_natural_sweep.yaml`, `launch_bridge_tunnel_sweep.sh` | W&B sweeps (natural) | ✅ core (tools) |
+| `scripts/bridge_tunnel/bridge_tunnel_sweep.yaml` | DEPRECATED stripe sweep (will error — references retired flags) | 🟡 legacy |
 
 > **Reused-via-importlib pattern:** `eval_bridge_tunnel_agent.py`, `bridge_tunnel_traj_grid.py`,
 > and `bridge_tunnel_strategy_examples.py` import `PPOGRUPolicy` from `train_ppo_bridge_tunnel.py`
@@ -228,8 +228,8 @@ active loop. Verify against your own memory of what you still run before removin
 | `SWEEP_STATUS.md`, `OUTPUT_PROTOCOL.md` | historical status notes (verify they're stale) | low |
 
 **Conditional — tied to the paper.** Keep while iterating on the paper, remove
-once it's archived: `paper/gen_*.py`, `scripts/draw_dreamer_split.py`,
-`scripts/draw_ppo_architecture.py`, and the mapgen-preview tools
+once it's archived: `paper/gen_*.py`, `scripts/figures/draw_dreamer_split.py`,
+`scripts/figures/draw_ppo_architecture.py`, and the mapgen-preview tools
 `scripts/{gen_maps,gen_components,preview_simplex_maps}.py` (these are nice as
 docs — consider moving under `docs/mapgen/` rather than deleting).
 
@@ -246,11 +246,11 @@ all — it has its own `tiles`/`mapgen`.
 
 | I want to… | File |
 |---|---|
-| train the current PPO agent | `scripts/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel/natural_wholewall.yaml` |
-| train the current DreamerV3 agent | `scripts/dreamerv3_bridge_tunnel.py --size 25M` |
-| see an agent play | `scripts/play_bridge_tunnel.py` |
-| compare path diversity | `scripts/bridge_tunnel_traj_grid.py` (PPO) · `scripts/viz_dreamer_bridge_tunnel_traj.py` (Dreamer) |
-| see one example per strategy | `scripts/bridge_tunnel_strategy_examples.py` |
+| train the current PPO agent | `scripts/bridge_tunnel/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel/natural_wholewall.yaml` |
+| train the current DreamerV3 agent | `scripts/bridge_tunnel/dreamerv3_bridge_tunnel.py --size 25M` |
+| see an agent play | `scripts/bridge_tunnel/play_bridge_tunnel.py` |
+| compare path diversity | `scripts/bridge_tunnel/bridge_tunnel_traj_grid.py` (PPO) · `scripts/bridge_tunnel/viz_dreamer_bridge_tunnel_traj.py` (Dreamer) |
+| see one example per strategy | `scripts/bridge_tunnel/bridge_tunnel_strategy_examples.py` |
 | change the maps / goal | `src/cogniland/bridge_tunnel/mapgen.py` + `make_bridge_tunnel_val_maps.py` |
 | change the env rules | `src/cogniland/bridge_tunnel/env.py` (then keep `bridge_tunnel_jax/` in parity — run `tests/test_bridge_tunnel_jax_parity.py`) |
 | understand the Dreamer algorithm | `purejaxwm/dreamerv3/` |

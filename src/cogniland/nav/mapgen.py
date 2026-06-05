@@ -544,7 +544,7 @@ def _build_material_simplex(
 
 # ───────────────────────── composed generator ─────────────────────────────
 #
-# A second structured generator (prototyped in ``scripts/gen_maps.py``). It
+# A second structured generator (prototyped in ``scripts/crafter/gen_maps.py``). It
 # composes each map from a tiny vocabulary of analytic atoms placed under
 # per-biome constraints, then sprinkles perlin forest / dirt / sand:
 #
@@ -689,7 +689,7 @@ def _build_material_composed(
     spawn: tuple[int, int],
     target: tuple[int, int],
 ) -> np.ndarray:
-    """Composed terrain (see scripts/gen_maps.py). Returns the material array
+    """Composed terrain (see scripts/crafter/gen_maps.py). Returns the material array
     with spawn/target cells left as GRASS (the caller stamps TARGET)."""
     from scipy.ndimage import distance_transform_edt
 

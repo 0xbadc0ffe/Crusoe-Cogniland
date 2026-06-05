@@ -16,12 +16,12 @@ with pdfLaTeX). Upload the whole `paper/` folder to Overleaf and build either.
 From the repo root in the `crusoe` conda env, then `cd paper && latexmk -pdf bridge_tunnel.tex`:
 
 ```bash
-python scripts/make_bridge_tunnel_val_maps.py --orientation natural --n 16
+python scripts/bridge_tunnel/make_bridge_tunnel_val_maps.py --orientation natural --n 16
 cp data/bridge_tunnel/val_maps_preview.png paper/figures/bridge_tunnel/maps.png
-python scripts/bridge_tunnel_traj_grid.py        --checkpoint released_models/bridge_tunnel/natural_centergoal3.pt --out paper/figures/bridge_tunnel/ppo_traj.png
-python scripts/viz_dreamer_bridge_tunnel_traj.py --checkpoint runs/dreamer_natural_v2/checkpoints/step_1000000 --out paper/figures/bridge_tunnel/dreamer_traj.png
-python scripts/bridge_tunnel_strategy_examples.py --checkpoint released_models/bridge_tunnel/natural_centergoal3.pt --out paper/figures/bridge_tunnel/strategy_examples.png
-python scripts/viz_dreamer_bridge_tunnel_imagine.py --checkpoint runs/dreamer_natural_v2/checkpoints/step_1000000 --render sprites
+python scripts/bridge_tunnel/bridge_tunnel_traj_grid.py        --checkpoint released_models/bridge_tunnel/natural_centergoal3.pt --out paper/figures/bridge_tunnel/ppo_traj.png
+python scripts/bridge_tunnel/viz_dreamer_bridge_tunnel_traj.py --checkpoint runs/dreamer_natural_v2/checkpoints/step_1000000 --out paper/figures/bridge_tunnel/dreamer_traj.png
+python scripts/bridge_tunnel/bridge_tunnel_strategy_examples.py --checkpoint released_models/bridge_tunnel/natural_centergoal3.pt --out paper/figures/bridge_tunnel/strategy_examples.png
+python scripts/bridge_tunnel/viz_dreamer_bridge_tunnel_imagine.py --checkpoint runs/dreamer_natural_v2/checkpoints/step_1000000 --render sprites
 cp videos/dreamer_imagine/imagine_strip_seed10001.png paper/figures/bridge_tunnel/dreamer_imagine_strip.png
 ```
 

@@ -1,7 +1,7 @@
 """Inference adapter for PPO-GRU checkpoints.
 
 This module exposes a single class :class:`PPOAgent` that wraps a
-``.pt`` checkpoint produced by ``scripts/train_ppo_gru.py`` and turns it
+``.pt`` checkpoint produced by ``scripts/crafter/train_ppo_gru.py`` and turns it
 into a small, environment-friendly act-step interface:
 
     agent = PPOAgent.load(ckpt_path, device="cuda")  # or "cpu"
@@ -15,7 +15,7 @@ into a small, environment-friendly act-step interface:
 
 The :class:`PPOGRUPolicy` class itself is **not** re-defined here — we
 load it from the training script with ``importlib`` exactly the same way
-``scripts/play_ppo_gru.py`` does, so the two stay perfectly in sync and
+``scripts/crafter/play_ppo_gru.py`` does, so the two stay perfectly in sync and
 any future change to the policy automatically flows through to inference.
 
 Notes / assumptions
@@ -44,11 +44,11 @@ import torch
 # ----------------------------------------------------------- policy import
 
 def _load_ppo_gru_module():
-    """Dynamically import ``scripts/train_ppo_gru.py`` as a module.
+    """Dynamically import ``scripts/crafter/train_ppo_gru.py`` as a module.
 
-    We mirror the importlib trick from ``scripts/play_ppo_gru.py`` so the
+    We mirror the importlib trick from ``scripts/crafter/play_ppo_gru.py`` so the
     canonical :class:`PPOGRUPolicy` definition stays in one place. The
-    trainer file is at ``<repo>/scripts/train_ppo_gru.py``; this file
+    trainer file is at ``<repo>/scripts/crafter/train_ppo_gru.py``; this file
     lives at ``<repo>/src/cogniland/inference.py``.
     """
     repo_root = Path(__file__).resolve().parents[2]
@@ -97,7 +97,7 @@ class PPOAgent:
 
         # We need an obs_space to instantiate the policy. Re-create one
         # using the same env settings the checkpoint was trained with —
-        # this is exactly what scripts/play_ppo_gru.py does.
+        # this is exactly what scripts/crafter/play_ppo_gru.py does.
         from cogniland.nav import CognilandNavEnv  # local — avoid hard dep at import-time
 
         env = CognilandNavEnv(

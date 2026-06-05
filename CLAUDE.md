@@ -44,26 +44,26 @@ conda env create -f environment.yml && conda activate crusoe
 pip install -e .
 
 # Dreamer (25M default — paper Table 3)
-python scripts/dreamerv3_crafter_in_cogniland.py \
+python scripts/crafter/dreamerv3_crafter_in_cogniland.py \
   --size 25M --total-env-steps 1_000_000 --num-envs 32 \
   --train-ratio 64 --wandb-mode online
 
 # Quick smoke (12M, no wandb)
-python scripts/dreamerv3_crafter_in_cogniland.py \
+python scripts/crafter/dreamerv3_crafter_in_cogniland.py \
   --size 12M --total-env-steps 50000 --num-envs 16 \
   --train-ratio 16 --map-size 32 --view-size 11 --wandb-mode disabled
 
 # PPO baseline
-python scripts/train_ppo_gru.py --total-timesteps 5_000_000 \
+python scripts/crafter/train_ppo_gru.py --total-timesteps 5_000_000 \
   --num-envs 32 --num-steps 128 --device cuda
 
 # Inspect a frozen Dreamer checkpoint
-python scripts/viz_dreamer_trajectory.py \
+python scripts/crafter/viz_dreamer_trajectory.py \
   --checkpoint runs/<run_id>/checkpoints/step_1000000 \
   --maps-path data/crafter_in_cogniland/train_256.pkl
 
 # Play
-python scripts/play_cogniland.py
+python scripts/crafter/play_cogniland.py
 ```
 
 ## Environment mechanics

@@ -3,9 +3,9 @@
 A small, fast 2-D POMDP navigation environment with a one-shot
 **build commitment** (raft vs harness), shipped with two solid baselines:
 
-* **DreamerV3 (JAX)** — `scripts/dreamerv3_crafter_in_cogniland.py`,
+* **DreamerV3 (JAX)** — `scripts/crafter/dreamerv3_crafter_in_cogniland.py`,
   built on the in-tree `purejaxwm/` algorithm library.
-* **PPO + GRU (PyTorch)** — `scripts/train_ppo_gru.py`,
+* **PPO + GRU (PyTorch)** — `scripts/crafter/train_ppo_gru.py`,
   uses the gymnasium PyTorch env in `src/cogniland/nav/`.
 
 Both trainers log the *same* metric names (`success/mean`,
@@ -58,12 +58,12 @@ pip install -e .
 
 ```bash
 # Smoke test
-python scripts/dreamerv3_crafter_in_cogniland.py \
+python scripts/crafter/dreamerv3_crafter_in_cogniland.py \
   --size 12M --total-env-steps 50000 --num-envs 16 --train-ratio 16 \
   --map-size 32 --view-size 11 --wandb-mode disabled
 
 # Real run (25M default, ~1M env-steps, ~30 min on RTX 4090)
-python scripts/dreamerv3_crafter_in_cogniland.py \
+python scripts/crafter/dreamerv3_crafter_in_cogniland.py \
   --size 25M --total-env-steps 1_000_000 \
   --num-envs 32 --train-ratio 64 --wandb-mode online
 ```
@@ -75,7 +75,7 @@ as a W&B tag automatically.
 ### PPO + GRU
 
 ```bash
-python scripts/train_ppo_gru.py \
+python scripts/crafter/train_ppo_gru.py \
   --total-timesteps 5_000_000 --num-envs 32 --num-steps 128 \
   --env-size 64 --view-size 21 --tile-px 8 \
   --device cuda --wandb-project crafter_in_cogniland
@@ -86,7 +86,7 @@ PPO logs `size=X.YM` tag automatically based on its actual param count.
 ### Inspect a trained Dreamer
 
 ```bash
-python scripts/viz_dreamer_trajectory.py \
+python scripts/crafter/viz_dreamer_trajectory.py \
   --checkpoint runs/<run_id>/checkpoints/step_1000000 \
   --maps-path data/crafter_in_cogniland/train_64x64_n256.pkl \
   --n-episodes 8
@@ -113,7 +113,7 @@ pip install -e .
 # 2. Put your WANDB_API_KEY in $PROJECT_DIR/.env (one line: WANDB_API_KEY=...)
 
 # 3. Pre-generate map datasets so agents don't race on lazy generation
-python scripts/generate_maps.py --sizes 32 96
+python scripts/crafter/generate_maps.py --sizes 32 96
 
 # 4. EDIT cluster-specific paths in scripts/job_sweep.slurm:
 #    PROJECT_DIR, CONDA_ENV, --mail-user, --exclude

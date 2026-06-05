@@ -37,7 +37,7 @@ step_1000000/`), stored via **git-LFS** (~74 MB). PPO `*.pt` are plain dicts
 
 ```bash
 # defaults: AI plays the released agent on the curated validation maps
-python scripts/play_bridge_tunnel.py
+python scripts/bridge_tunnel/play_bridge_tunnel.py
 ```
 A start **menu** lets you pick Human/AI and the map (a validation map, or Random).
 In-game keys: arrows move, `B` build, `M` mine, `A` toggle AI, `Space` single AI
@@ -47,7 +47,7 @@ from the checkpoint, so no extra flags are needed for AI play.
 ## Reproduce
 
 ```bash
-python scripts/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel/natural_centergoal3.yaml \
+python scripts/bridge_tunnel/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel/natural_centergoal3.yaml \
     --run-name natural_repro --wandb-mode disabled
 ```
 2M-step budget. The diversity comes from the goal/forest geometry + high entropy
@@ -56,16 +56,16 @@ with no annealing.
 ## Evaluate
 
 ```bash
-python scripts/eval_bridge_tunnel_agent.py  --checkpoint released_models/bridge_tunnel/natural_centergoal3.pt --n-maps 8
-python scripts/bridge_tunnel_traj_grid.py   --checkpoint released_models/bridge_tunnel/natural_centergoal3.pt --n-maps 6 --n-traj 200
+python scripts/bridge_tunnel/eval_bridge_tunnel_agent.py  --checkpoint released_models/bridge_tunnel/natural_centergoal3.pt --n-maps 8
+python scripts/bridge_tunnel/bridge_tunnel_traj_grid.py   --checkpoint released_models/bridge_tunnel/natural_centergoal3.pt --n-maps 6 --n-traj 200
 ```
 
 Evaluate / visualise the **DreamerV3 categorical** agent (auto-detects the
 categorical encoder from its `config.json`):
 
 ```bash
-python scripts/viz_dreamer_bridge_tunnel_traj.py    --checkpoint released_models/bridge_tunnel/dreamer_natural_categorical/checkpoints/step_1000000
-python scripts/viz_dreamer_bridge_tunnel_imagine.py --checkpoint released_models/bridge_tunnel/dreamer_natural_categorical/checkpoints/step_1000000
+python scripts/bridge_tunnel/viz_dreamer_bridge_tunnel_traj.py    --checkpoint released_models/bridge_tunnel/dreamer_natural_categorical/checkpoints/step_1000000
+python scripts/bridge_tunnel/viz_dreamer_bridge_tunnel_imagine.py --checkpoint released_models/bridge_tunnel/dreamer_natural_categorical/checkpoints/step_1000000
 ```
 (`git lfs pull` to fetch its weights after cloning.)
 
