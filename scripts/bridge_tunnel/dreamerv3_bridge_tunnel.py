@@ -787,6 +787,8 @@ def main():
     p.add_argument("--run-name", default=None)
     p.add_argument("--run-dir", default="outputs/dreamer_runs")
     p.add_argument("--maps-path", default=None)
+    p.add_argument("--set", nargs="*", default=[], dest="overrides", metavar="KEY=VAL",
+                   help="override any cfg key, e.g. --set entropy_coef=0.01 commit_cost=0.02")
     args = p.parse_args()
 
     cfg = _apply_size(_default_cfg(), args.size)
@@ -801,6 +803,21 @@ def main():
     # persisted so the viz can reconstruct the decoder head + obs layout.
     cfg["num_tiles"] = int(C.NUM_TILES)
     cfg.setdefault("view_size", _default_cfg()["view_size"])
+    # generic cfg overrides (--set key=value), type-matched to the existing default
+    for kv in args.overrides:
+        key, _, val = kv.partition("=")
+        if key in cfg and isinstance(cfg[key], bool):
+            cfg[key] = val.lower() in ("1", "true", "yes")
+        elif key in cfg and isinstance(cfg[key], int):
+            cfg[key] = int(float(val))
+        elif key in cfg and isinstance(cfg[key], float):
+            cfg[key] = float(val)
+        else:
+            try:
+                cfg[key] = json.loads(val)
+            except Exception:
+                cfg[key] = val
+        print(f"[cfg override] {key} = {cfg[key]}", flush=True)
 
     run_id = args.run_name or f"dreamerv3_{cfg['env_id']}_size{args.size}_seed{cfg['seed']}_{int(time.time())}"
     run_dir = Path(args.run_dir) / run_id
