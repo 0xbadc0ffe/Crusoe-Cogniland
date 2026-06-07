@@ -46,7 +46,7 @@ from mechinterp.build_activation_dataset import (  # noqa: E402
     _env_cfg, _map_geometry, _belief_row, _strategy, _build_map_list, _FACE_NAME)
 
 from cogniland.bridge_tunnel.jax import (  # noqa: E402
-    EnvParams, BridgeTunnelCommitJaxEnv, constants as C, records_to_arrays)
+    EnvParams, BridgeTunnelJaxEnv, constants as C, records_to_arrays)
 import purejaxwm.dreamerv3.behavior as ac  # noqa: E402
 from purejaxwm.dreamerv3.world_model import MLPHead, RSSM  # noqa: E402
 from purejaxwm.dreamerv3.distributions import TwoHotDist  # noqa: E402
@@ -171,7 +171,7 @@ _COMMIT = ("none", "build", "mine")
 
 
 def _episode_rows(outs_np, i, geo, cfg, map_id, map_seed, category, traj_id, traj_seed,
-                  min_cross, approach_window, near_radius, T):
+                  min_cross, approach_window, near_radius, T, is_commit, anames):
     reached_now = outs_np["reached_now"][:, i]
     already = outs_np["already_done"][:, i]
     valid = ~already                                   # steps actually taken
@@ -184,34 +184,37 @@ def _episode_rows(outs_np, i, geo, cfg, map_id, map_seed, category, traj_id, tra
     facing = outs_np["facing"][:L, i].astype(int)
     commit_pre = outs_np["commit"][:L, i].astype(int)
     commit_after = outs_np["commit_after"][:L, i].astype(int)
-    anames = ["up", "down", "left", "right", "build", "mine"]
     path = [(int(p[0]), int(p[1])) for p in pos]
     seg, did, decisions = _strategy(path, geo, T, map_id, traj_id, traj_seed,
                                     min_cross, approach_window, near_radius)
 
-    committed = (commit_pre == 0) & (commit_after != 0)
-    commit_step = int(np.argmax(committed)) if committed.any() else -1
-    final_commit = _COMMIT[int(commit_after[end])]
-    dom = {"lakes": "build", "rocky": "mine"}.get(category)
+    if is_commit:
+        committed = (commit_pre == 0) & (commit_after != 0)
+        commit_step = int(np.argmax(committed)) if committed.any() else -1
+        final_commit = _COMMIT[int(commit_after[end])]
+        dom = {"lakes": "build", "rocky": "mine"}.get(category)
 
     rows, acts = [], {"deter": [], "stoch_logits": [], "embed": [], "probs": [],
                       "minimap": [], "scalars": []}
     for k in range(L):
         a = int(outs_np["action"][k, i])
-        cs = _COMMIT[int(commit_pre[k])]
         row = {
             "map_id": map_id, "map_seed": map_seed, "traj_id": traj_id,
             "traj_seed": traj_seed, "t": k, "pos_r": int(pos[k, 0]), "pos_c": int(pos[k, 1]),
             "facing": int(facing[k]), "facing_name": _FACE_NAME[int(facing[k])],
             "action": a, "action_name": anames[a], "value": float(outs_np["value"][k, i]),
-            "category": category, "commit_state": cs,
-            "committed_now": bool(committed[k]),
             "segment": seg[k], "decision_id": did[k],
-            "reached": reached, "ep_len": L, "commit_step": commit_step,
-            "time_since_commit": (k - commit_step) if (commit_step >= 0 and k >= commit_step) else -1,
-            "final_commit": final_commit,
-            "correct_commit": (cs == dom) if (dom is not None and cs != "none") else (cs != "none"),
+            "reached": reached, "ep_len": L,
         }
+        if is_commit:
+            cs = _COMMIT[int(commit_pre[k])]
+            row.update({
+                "category": category, "commit_state": cs,
+                "committed_now": bool(committed[k]), "commit_step": commit_step,
+                "time_since_commit": (k - commit_step) if (commit_step >= 0 and k >= commit_step) else -1,
+                "final_commit": final_commit,
+                "correct_commit": (cs == dom) if (dom is not None and cs != "none") else (cs != "none"),
+            })
         row.update(_belief_row(geo, (int(pos[k, 0]), int(pos[k, 1])), int(facing[k]), T))
         rows.append(row)
         acts["deter"].append(outs_np["deter"][k, i])
@@ -228,7 +231,9 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--checkpoint", type=Path, required=True)
     p.add_argument("--out-dir", type=Path, required=True)
-    p.add_argument("--maps-per-category", type=int, default=30)
+    p.add_argument("--variant", choices=("bt", "btc"), default="btc")
+    p.add_argument("--maps-per-category", type=int, default=30, help="btc only")
+    p.add_argument("--n-maps", type=int, default=90, help="bt only: maps from --seed-start")
     p.add_argument("--categories", default="balanced,lakes,rocky")
     p.add_argument("--seed-start", type=int, default=10_000)
     p.add_argument("--n-traj", type=int, default=20)
@@ -246,19 +251,23 @@ def main():
     wm_params = jax.tree_util.tree_map(jnp.asarray, payload["wm_params"])
     ac_params = jax.tree_util.tree_map(jnp.asarray, payload["ac_params"])
     models = _build_model(cfg)
-    env = BridgeTunnelCommitJaxEnv()
+    env = BridgeTunnelJaxEnv()
     rollout = _make_rollout(models, wm_params, ac_params, env)
 
-    ecfg = _env_cfg("bridge_tunnel_commit")
+    env_name = "bridge_tunnel_commit" if args.variant == "btc" else "bridge_tunnel"
+    ecfg = _env_cfg(env_name)
+    is_commit = ecfg["is_commit"]; anames = ecfg["action_names"]
     T = ecfg["T"]
     natkw = dict(size=cfg["map_size"], width=cfg["map_width"], tree_frac=0.03,
                  goal_half=cfg.get("goal_half", 1))
 
     class _A:  # adapter for the shared map-list builder
-        is_commit = True
-    a2 = _A(); a2.categories = args.categories; a2.maps_per_category = args.maps_per_category
-    a2.seed_start = args.seed_start; a2._natkw = natkw; a2.maps = None
-    maps = _build_map_list({"is_commit": True, "gen": ecfg["gen"]}, a2)
+        pass
+    a2 = _A(); a2.is_commit = is_commit
+    a2.categories = args.categories; a2.maps_per_category = args.maps_per_category
+    a2.seed_start = args.seed_start; a2._natkw = natkw
+    a2.maps = None; a2.n_maps = args.n_maps
+    maps = _build_map_list({"is_commit": is_commit, "gen": ecfg["gen"]}, a2)
     print(f"[setup] {len(maps)} held-out maps · {args.n_traj} rollouts/map · deter={cfg['deter']}", flush=True)
 
     all_rows, all_dec = [], []
@@ -275,7 +284,8 @@ def main():
             traj_seed = m["map_seed"] * 100000 + i
             rows, dec, acts = _episode_rows(
                 outs_np, i, geo, cfg, m["map_id"], m["map_seed"], m["category"], i,
-                traj_seed, args.min_cross, args.approach_window, args.near_radius, T)
+                traj_seed, args.min_cross, args.approach_window, args.near_radius, T,
+                is_commit, anames)
             all_rows.extend(rows); all_dec.extend(dec)
             for kk in chunks:
                 chunks[kk].append(np.asarray(acts[kk]))
@@ -307,26 +317,26 @@ def main():
 
     # ── maps.npz ──
     terr = np.stack([np.asarray(m["rec"].terrain) for m in maps]).astype(np.int8)
+    map_extra = {"category": np.array([m["category"] for m in maps])} if is_commit else {}
     np.savez_compressed(
         out_dir / "maps.npz",
         terrain=terr,
         spawn=np.stack([np.asarray(m["rec"].spawn) for m in maps]).astype(np.int32),
         target=np.stack([np.asarray(m["rec"].target) for m in maps]).astype(np.int32),
         goal_mask=np.stack([(np.asarray(m["rec"].terrain) == T.TARGET) for m in maps]),
-        map_seed=np.array([m["map_seed"] for m in maps], np.int64),
-        category=np.array([m["category"] for m in maps]))
+        map_seed=np.array([m["map_seed"] for m in maps], np.int64), **map_extra)
 
     # ── manifest ──
     sha = hashlib.sha256(ckpt_dir.read_bytes() if ckpt_dir.is_file()
                          else str(sorted(p.name for p in ckpt_dir.iterdir())).encode()).hexdigest()[:10]
     palette = np.asarray(T.TILE_COLORS, dtype=np.uint8).tolist()
     manifest = {
-        "env": "bridge_tunnel_commit", "algo": "dreamerv3",
+        "env": env_name, "algo": "dreamerv3",
         "checkpoint": str(args.checkpoint), "agent_sha": sha,
         "decoder": _DECODER_MODE, "n_tiles": int(C.NUM_TILES),
         "view_size": int(cfg["view_size"]), "max_steps": int(args.max_steps),
         "n_scalars": int(h5["scalars"].shape[1]), "n_actions": int(C.NUM_ACTIONS),
-        "action_names": ["up", "down", "left", "right", "build", "mine"],
+        "action_names": anames,
         "natural_kwargs": natkw, "n_maps": len(maps), "n_traj_per_map": args.n_traj,
         "n_rows": N, "n_decisions": len(all_dec),
         "activation_sites": {"rssm_deter": int(cfg["deter"]),
@@ -336,7 +346,7 @@ def main():
                        "scalars": [int(h5["scalars"].shape[1]), "float16"]},
         "tile_names": {str(i): n for i, n in enumerate(
             ["grass", "water", "rock", "wood", "target", "oob", "tree", "sand", "dirt"])},
-        "tile_colors": palette, "is_commit": True,
+        "tile_colors": palette, "is_commit": is_commit,
         "traj_seed_formula": "map_seed*100000 + traj_id",
         "reproduce": ("jax.random.PRNGKey(0) split per map; DreamerV3 encode→RSSM.observe"
                       "→unimix actor→categorical sample. Needs the repo (JAX/purejaxwm)."),
@@ -355,8 +365,9 @@ def main():
     shutil.copy(_ROOT / "activation_datasets" / "btc_ppo" / "decode_dataset.py",
                 out_dir / "decode_dataset.py")
     (out_dir / "REPRODUCE.md").write_text(
-        "# DreamerV3 bridge_tunnel_commit activation dataset\n\n"
-        "Same layout as `btc_ppo` (same held-out maps + per-step labels) so the\n"
+        f"# DreamerV3 {env_name} activation dataset\n\n"
+        f"Same layout as the {'btc_ppo' if is_commit else 'bt_ppo'} PPO bundle "
+        "(same held-out maps + per-step labels) so the\n"
         "analysis pipeline runs unchanged. Activation sources = the RSSM latent\n"
         "(`rssm_deter`, `rssm_stoch_logits`) + `enc_embed`.\n\n"
         "`python decode_dataset.py --row N` renders a labelled frame (no repo needed).\n"
@@ -366,8 +377,12 @@ def main():
     print(f"\nwrote {out_dir}  rows={N}  maps={len(maps)}  decisions={len(all_dec)}")
     df = pd.DataFrame(all_rows)
     print("on-disk:", f"{(out_dir/'activations.h5').stat().st_size/1e6:.1f} MB")
-    print("final_commit by category:\n",
-          df.groupby(["category"])["final_commit"].value_counts().to_string())
+    if is_commit:
+        print("final_commit by category:\n",
+              df.groupby(["category"])["final_commit"].value_counts().to_string())
+    else:
+        print("decisions by choice:\n" + (pd.DataFrame(all_dec)["choice"].value_counts().to_string()
+                                          if len(all_dec) else "(none)"))
     print(f"success: {df.groupby(['map_id','traj_id'])['reached'].first().mean():.1%}")
 
 
