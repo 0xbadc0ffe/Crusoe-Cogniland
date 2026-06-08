@@ -55,7 +55,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT / "src"))
 sys.path.insert(0, str(_ROOT))   # so `purejaxwm` resolves
 
-from cogniland.bridge_tunnel import generate_bridge_tunnel_map, tiles as T  # noqa: E402
+from cogniland.bridge_tunnel import generate_bridge_tunnel_map, generate_commit_map, tiles as T  # noqa: E402
 from cogniland.bridge_tunnel.jax import (  # noqa: E402
     EnvParams,
     BridgeTunnelJaxEnv,
@@ -251,8 +251,14 @@ def _build_model(cfg: dict):
     return encoder, decoder, rssm, actor_head, reward_head
 
 
-def _single_map_params(seed: int, cfg: dict) -> tuple[EnvParams, object]:
-    rec = generate_bridge_tunnel_map(seed=seed, **NATURAL_KWARGS)
+def _single_map_params(seed: int, cfg: dict, category: str = "balanced") -> tuple[EnvParams, object]:
+    if cfg.get("env_id") == "bridge_tunnel_commit":
+        gh = cfg.get("goal_half", 1)
+        rec = generate_commit_map(size=cfg.get("map_size", 32), width=cfg.get("map_width", 64),
+                                  seed=seed, category=category, tree_frac=0.03,
+                                  goal_half=(gh if (gh is not None and gh >= 0) else None))
+    else:
+        rec = generate_bridge_tunnel_map(seed=seed, **NATURAL_KWARGS)
     arrays = records_to_arrays([rec])
     params = EnvParams.from_map_arrays(
         **arrays,
@@ -448,6 +454,8 @@ def main():
                         "(no phantom obsidian/cue tiles); all = round to any of NUM_TILES")
     p.add_argument("--out-dir", type=Path, default=Path("videos/dreamer_imagine"))
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--category", default="balanced", choices=("balanced", "lakes", "rocky"),
+                   help="btc only: which map category to imagine")
     args = p.parse_args()
 
     sprites = _load_sprite_imgs(args.sprite_px) if args.render == "sprites" else None
@@ -456,9 +464,11 @@ def main():
     ckpt_dir = args.checkpoint.resolve()
     cfg_path = ckpt_dir.parent.parent / "config.json"
     cfg = json.loads(cfg_path.read_text())
-    global _DECODER_MODE
+    global _DECODER_MODE, ACTION_NAMES
     _DECODER_MODE = cfg.get("decoder", "mse")
-    print(f"[load] config     {cfg_path}")
+    if cfg.get("env_id") == "bridge_tunnel_commit":
+        ACTION_NAMES = ["up", "down", "left", "right", "build", "mine"]
+    print(f"[load] config     {cfg_path}  variant={cfg.get('env_id')}")
     print(f"[load] checkpoint {ckpt_dir}  (decoder={_DECODER_MODE})")
 
     payload = ocp.PyTreeCheckpointer().restore(str(ckpt_dir))
@@ -473,7 +483,7 @@ def main():
 
     for j in range(args.n_examples):
         seed = args.eval_seed_start + j
-        params, rec = _single_map_params(seed, cfg)
+        params, rec = _single_map_params(seed, cfg, args.category)
         key, sub = jax.random.split(key)
         print(f"[example {j}] seed {seed}: warmup={args.warmup} "
               f"horizon={args.horizon} ...", flush=True)
