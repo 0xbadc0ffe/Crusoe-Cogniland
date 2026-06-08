@@ -222,10 +222,11 @@ def _build_model(cfg: dict):
     compute_dtype = resolve_dtype(cfg.get("compute_dtype", "float32"))
     param_dtype = jnp.float32
     V = cfg["view_size"]
+    n_scalars = 7 if cfg.get("env_id") == "bridge_tunnel_commit" else SCALAR_DIM
     if cfg.get("decoder", "mse") == "categorical":
-        flat_dim = V * V * C.NUM_TILES + SCALAR_DIM
+        flat_dim = V * V * C.NUM_TILES + n_scalars
     else:
-        flat_dim = V * V + SCALAR_DIM
+        flat_dim = V * V + n_scalars
     encoder = BridgeTunnelEncoder(
         hidden=cfg["enc_hidden"], num_layers=cfg["enc_layers"],
         embed_dim=cfg["wm_hidden"], dtype=compute_dtype, param_dtype=param_dtype,
