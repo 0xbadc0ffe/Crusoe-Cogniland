@@ -120,6 +120,33 @@ def figure(name, source, avg, W, colmap, title):
     return p
 
 
+def plotly3d(avg, W, colmap, title):
+    """Rotatable 3-D plotly of the event-aligned mean paths (PC1×PC2×PC3)."""
+    import plotly.graph_objects as go
+    rel = np.arange(-W, W + 1)
+    fig = go.Figure()
+    for k, (m, s, n) in avg.items():
+        c = colmap[k]
+        fig.add_trace(go.Scatter3d(
+            x=m[:, 0], y=m[:, 1], z=m[:, 2], mode="lines", line=dict(color=c, width=7),
+            name=f"{k} (n={n})", hovertext=[f"{k}  t={r:+d}" for r in rel], hoverinfo="text"))
+        fig.add_trace(go.Scatter3d(x=[m[0, 0]], y=[m[0, 1]], z=[m[0, 2]], mode="markers",
+            marker=dict(color=c, size=4, symbol="circle-open"), showlegend=False,
+            hovertext=[f"{k} start (t=-{W})"], hoverinfo="text"))
+        fig.add_trace(go.Scatter3d(x=[m[W, 0]], y=[m[W, 1]], z=[m[W, 2]], mode="markers",
+            marker=dict(color=c, size=9, symbol="circle", line=dict(color="black", width=1)),
+            showlegend=False, hovertext=[f"{k} EVENT (t=0)"], hoverinfo="text"))
+        fig.add_trace(go.Scatter3d(x=[m[-1, 0]], y=[m[-1, 1]], z=[m[-1, 2]], mode="markers",
+            marker=dict(color=c, size=6, symbol="diamond"), showlegend=False,
+            hovertext=[f"{k} end (t=+{W})"], hoverinfo="text"))
+    pane = dict(backgroundcolor="#eef3f8", gridcolor="white", showbackground=True)
+    fig.update_layout(title=title, width=900, height=640, paper_bgcolor="white",
+                      legend=dict(title="event (●=t0, ○=start, ◆=end)"),
+                      scene=dict(xaxis=dict(title="ΔPC1", **pane), yaxis=dict(title="ΔPC2", **pane),
+                                 zaxis=dict(title="ΔPC3", **pane)))
+    return fig
+
+
 def embed(p, cap):
     b = base64.b64encode(Path(p).read_bytes()).decode()
     parts.append(f"<figure><img src='data:image/png;base64,{b}'><figcaption>{cap}</figcaption></figure>")
@@ -132,6 +159,13 @@ SPECS = [
 
 
 def main():
+    frags3d = ["<!doctype html><meta charset='utf-8'><title>event-aligned latents (3D)</title>",
+               "<style>body{font-family:sans-serif;max-width:980px;margin:0 auto;padding:24px;color:#223}"
+               "h2{color:#1b4f72}p.cap{font-size:13.5px;color:#445;background:#f4f7fa;"
+               "border-left:3px solid #2e86c1;padding:8px 12px}</style>",
+               "<h1>Event-aligned average latent trajectories — rotatable 3-D</h1>",
+               "<p>Mean PCA path (PC1×PC2×PC3) of baseline-subtracted snippets aligned on the event. "
+               "Drag to rotate. ●=event (t=0), ○=window start, ◆=end.</p>"]
     for name, src, variant, W in SPECS:
         b = ActivationBundle(f"activation_datasets/{name}")
         samp = b.labels.sample(min(15000, len(b.labels)), random_state=0)
@@ -154,9 +188,17 @@ def main():
         print(f"{name}: events {ns}")
         parts.append(f"<h2>{name} · {src}</h2>")
         embed(p, cap)
+        # rotatable 3-D plotly (self-contained: inline plotly.js once)
+        fig3d = plotly3d(avg, W, colmap, ttl)
+        inc = (len(frags3d) <= 4)
+        frags3d.append(f"<h2>{name} · {src}</h2><p class='cap'>{cap}</p>")
+        frags3d.append(fig3d.to_html(full_html=False, include_plotlyjs=(True if inc else False)))
     out = Path("outputs/report/event_aligned.html")
     out.write_text("\n".join(parts))
+    out3 = Path("outputs/report/event_aligned_3d.html")
+    out3.write_text("\n".join(frags3d))
     print("wrote", out, f"({out.stat().st_size/1e6:.1f} MB)")
+    print("wrote", out3, f"({out3.stat().st_size/1e6:.1f} MB)")
 
 
 if __name__ == "__main__":
