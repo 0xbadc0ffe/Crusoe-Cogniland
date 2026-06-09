@@ -1,0 +1,271 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,graphicx,booktabs,xcolor,caption}
+\usepackage[hidelinks]{hyperref}
+\usepackage{enumitem}
+\captionsetup{font=small}
+\graphicspath{{../outputs/report/figs/}{../outputs/analysis/}{../outputs/analysis_dreamer/}%
+{../outputs/analysis_exp/}{../outputs/analysis_sep/}{../outputs/analysis_steer/}%
+{../outputs/analysis_belief_steer/}{../outputs/previews/}{../data/bridge_tunnel/}}
+\newcommand{\gruh}{\texttt{gru\_h}}
+\newcommand{\deter}{\texttt{rssm\_deter}}
+\newcommand{\encembed}{\texttt{enc\_embed}}
+\newcommand{\bt}{\textsc{bt}}
+\newcommand{\btc}{\textsc{btc}}
+\newcommand{\Sset}{\mathcal{S}}
+\newcommand{\Aset}{\mathcal{A}}
+\title{\textbf{Belief and skill in a navigation agent:\\
+a mechanistic-interpretability comparison of PPO+GRU and DreamerV3}}
+\author{Crusoe--Cogniland \texttt{bridge\_tunnel} project}
+\date{\today}
+
+\begin{document}
+\maketitle
+\begin{abstract}
+We study, in a partially observable grid-navigation task, how a model-free
+(PPO+GRU) and a model-based (DreamerV3) agent represent two latent factors:
+\emph{belief} (which map type they are on) and \emph{skill} (which obstacle-crossing
+tool they commit to). Using a controlled environment that supplies ground-truth
+belief and skill labels at every timestep, we (i) probe both factors from the
+agents' recurrent states on held-out maps, (ii) test whether they are
+representationally separable, and (iii) intervene causally by steering. We find
+that the DreamerV3 RSSM deterministic state is a markedly cleaner belief carrier
+than the PPO GRU state (linear belief decodability $0.64$ vs $0.38$; ordinal
+Spearman $0.67$ vs $0.07$), while the GRU is the better skill carrier ($0.60$ vs
+$0.49$). The apparent belief--skill entanglement is shown to be a \emph{label
+confound} (it vanishes at fixed belief) and a belief-free skill code provably
+exists. Both factors are causal levers---skill in PPO, belief in Dreamer---but only
+when injected at the \emph{read-out} (actor input), not the recurrent carry. We
+frame all claims against the POMDP sufficiency theorem and an explicit
+ladder of evidence (information $\to$ decodability $\to$ causal use).
+\end{abstract}
+
+\section{Introduction}
+A competent agent in a partially observable environment must, by the
+classical sufficiency theorem (\AA str\"om 1965), maintain a sufficient statistic
+of its history---a \emph{belief}. We ask: for two agent families that solve the
+same task, (a) is belief about a task-relevant latent decodable from the
+recurrent state, (b) is it separable from the agent's committed \emph{skill}, and
+(c) is either factor a causal lever on behaviour? We instrument a navigation task
+that makes belief and skill observable, and compare a model-free PPO+GRU agent to
+a model-based DreamerV3 agent.
+
+\section{Background: the POMDP formalism}
+A POMDP is a tuple $\langle\Sset,\Aset,p,R,\Omega,O,\gamma\rangle$ with hidden state
+$\Sset$, actions $\Aset$, observations $\Omega$, transition $p(s'\mid s,a)$, reward
+$R(s,a)$, observation model $O(o\mid s',a)$, and discount $\gamma$. The agent never
+sees $s_t$; it receives $o_{t+1}\sim O(\cdot\mid s_{t+1},a_t)$ and its only access to
+the world is the history
+\begin{equation}
+\xi_t=(o_1,a_1,o_2,\dots,a_{t-1},o_t)\in\Xi_t,\qquad
+\pi:\Xi_t\to\Delta(\Aset).
+\end{equation}
+
+\paragraph{Belief.} The belief state is the posterior over the hidden state,
+\begin{equation}
+b_t(s)=\Pr(S_t=s\mid\xi_t),\qquad b_t\in\Delta(\Sset)=
+\Big\{b\in\mathbb{R}^{|\Sset|}: b(s)\ge0,\ \textstyle\sum_s b(s)=1\Big\}.
+\end{equation}
+
+\paragraph{Belief update (Bayes filter).} It evolves recursively via predict then
+correct,
+\begin{align}
+\bar b_{t+1}(s') &= \sum_{s} p(s'\mid s,a_t)\,b_t(s), \\
+b_{t+1}(s') &= \frac{O(o_{t+1}\mid s',a_t)\,\bar b_{t+1}(s')}
+{\sum_{x} O(o_{t+1}\mid x,a_t)\,\bar b_{t+1}(x)}
+\;\equiv\; \big[\tau(b_t,a_t,o_{t+1})\big](s').
+\end{align}
+The belief is Markov: $b_{t+1}$ depends on the past only through $b_t$.
+
+\paragraph{Sufficiency (\AA str\"om 1965).} $b_t$ is a sufficient statistic of
+$\xi_t$ for optimal control: there exists $\pi^\star(b_t)$, and the POMDP reduces to
+a belief-MDP over $\Delta(\Sset)$ with
+$\bar R(b,a)=\sum_s b(s)R(s,a)$ and transition induced by $\tau$. Its optimal value
+is piecewise-linear and convex in $b$ (Smallwood \& Sondik 1973).
+
+\paragraph{Why probe the recurrent state.} A recurrent policy has the same
+functional form as the filter, $h_t=f_\theta(h_{t-1},a_{t-1},o_t)\approx
+\tau(b_{t-1},a_{t-1},o_t)$, so $h_t$ \emph{encodes} $\xi_t$ and approximates $b_t$.
+Sufficiency \emph{entails} that control-relevant state factors are recoverable from
+$h_t$ as some function; it does \emph{not} entail they are linearly decodable,
+separable, or causally used. Those are the empirical questions below, and we keep
+an explicit ladder: \textbf{(1) information present} (theorem), \textbf{(2) linearly
+decodable} (probing; correlational, Hewitt \& Liang 2019), \textbf{(3) causally
+used} (steering; the strong claim).
+
+\paragraph{Skill as an option.} A skill is formalised as an option
+$\omega=\langle\mathcal I_\omega,\pi_\omega,\beta_\omega\rangle$ (Sutton, Precup \&
+Singh 1999): initiation set, intra-option policy, termination. In our task the
+skill is a build/mine commitment with a one-shot, irreversible $\beta$.
+
+\section{Setup}
+\textbf{Environment.} A POMDP grid task: the agent sees a $21\times21$ egocentric
+crop and must reach a target. Obstacles can be crossed by converting them
+(\emph{build}: water$\to$wood; \emph{mine}: rock$\to$grass) or avoided. \textbf{Two
+variants:} \bt{} (uncontrolled---tools always available, no labels) and \btc{}
+(controlled---3 labelled map categories \{balanced, lakes, rocky\} $=$ ground-truth
+belief; an irreversible build/mine commitment $=$ ground-truth skill). Crossed with
+two agents (PPO+GRU, DreamerV3) this gives the $2\times2$ design
+(Fig.~\ref{fig:pipeline}).
+
+\begin{figure}[h]\centering
+\includegraphics[width=.95\linewidth]{pipeline.png}
+\caption{The $2\times2$ design and analysis pipeline. Four activation datasets on
+the same held-out maps; each run through DR, map-grouped probes, difference-of-means
+directions, separability tests, and causal steering.}
+\label{fig:pipeline}
+\end{figure}
+
+\section{Architectures}
+\begin{figure}[h]\centering
+\includegraphics[width=.92\linewidth]{arch_ppo.png}\\[4pt]
+\includegraphics[width=.92\linewidth]{arch_dreamer.png}
+\caption{PPO+GRU ($\sim$2.0\,M params): the recurrent \gruh{} is the belief carrier.
+DreamerV3 ($\sim$19.2\,M): the RSSM \deter{} is the belief carrier; the policy is
+trained in imagination via the reward head, not the decoder.}
+\label{fig:arch}
+\end{figure}
+
+\section{Datasets and methods}
+Four self-contained activation datasets (\bt/\btc{}~$\times$~PPO/Dreamer; 0.32--0.67\,M
+timesteps each) store per-step activation sources, the full observation, and
+belief/skill/segment labels computed from map geometry. Probes are evaluated on
+\textbf{held-out maps} (grouped split) so accuracy is the honest generalisable
+decodability. We fit (i) a 3-class logistic probe for belief and skill, (ii) a ridge
+probe on the ordinal water--rock belief axis, (iii) difference-of-means directions
+$d_{\text{belief}}=\mu_{\text{lakes}}-\mu_{\text{rocky}}$,
+$d_{\text{skill}}=\mu_{\text{build}}-\mu_{\text{mine}}$, and measure entanglement by
+cosine, subspace principal angles, and projection fractions.
+
+\section{Results}
+\subsection{Geometry of the representations}
+Table~\ref{tab:geom} reports held-out decodability (chance $0.33$).
+\begin{table}[h]\centering\small
+\begin{tabular}{lccccc}
+\toprule
+source & belief acc & ordinal $R^2$ / $\rho$ & skill acc & $\cos(b,s)$ \\
+\midrule
+PPO \gruh{}             & 0.38 & $-0.33$ / $+0.07$ & \textbf{0.60} & $+0.59$ \\
+PPO \encembed{}         & 0.43 & $+0.10$ / $+0.38$ & 0.53 & $+0.67$ \\
+\textbf{Dreamer \deter{}} & \textbf{0.64} & $\mathbf{+0.38}$ / $\mathbf{+0.67}$ & 0.49 & $+0.53$ \\
+Dreamer \encembed{}     & 0.59 & $+0.47$ / $+0.72$ & 0.51 & $+0.84$ \\
+Dreamer stoch-logits    & 0.51 & $+0.19$ / $+0.48$ & 0.44 & $+0.71$ \\
+\bottomrule
+\end{tabular}
+\caption{The model-based RSSM \deter{} is a far cleaner belief carrier than the
+model-free \gruh{}; the GRU is the better skill carrier.}
+\label{tab:geom}
+\end{table}
+
+\begin{figure}[h]\centering
+\includegraphics[width=.49\linewidth]{gru_h__entanglement_plane.png}
+\includegraphics[width=.49\linewidth]{rssm_deter__entanglement_plane.png}
+\caption{Belief$\times$skill plane (PPO \gruh{} left, Dreamer \deter{} right): the
+same cloud coloured by category and by skill. Both look diagonally entangled
+($\cos\approx0.5$--$0.6$); \S6.2 shows this is a label confound.}
+\label{fig:ent}
+\end{figure}
+
+\begin{figure}[h]\centering
+\includegraphics[width=.49\linewidth]{paired_bt_dreamer.png}
+\includegraphics[width=.49\linewidth]{paired_btc_dreamer.png}
+\caption{Paired map$\leftrightarrow$latent trajectories (Dreamer). Left (\bt{}, seed
+10004): detour/bridge/tunnel coloured by segment. Right (\btc{}, map 0): none/build/mine,
+blue until the commit point then yellow/purple. The route is visible simultaneously on
+the map and as a colour change in the latent path.}
+\label{fig:paired}
+\end{figure}
+
+\subsection{Belief and skill are separable (the entanglement is a confound)}
+\begin{table}[h]\centering\small
+\begin{tabular}{lcccc}
+\toprule
+ & $\cos$ global & within balanced & E2 full off-type & E2 belief-removed off-type \\
+\midrule
+PPO \gruh{}      & $+0.58$ & $+0.00$ & 0.37 & \textbf{0.62} \\
+Dreamer \deter{} & $+0.54$ & $+0.12$ & 0.33 & \textbf{0.83} \\
+\bottomrule
+\end{tabular}
+\caption{The global belief--skill cosine collapses at fixed belief (within-category
+control). A build-vs-mine probe is below chance on against-type commits with full
+features (it is a belief detector) but generalises once belief is projected out
+(E2)---a genuine belief-free skill code.}
+\label{tab:sep}
+\end{table}
+
+\begin{figure}[h]\centering
+\includegraphics[width=.32\linewidth]{rssm_deter__within_category_control.png}
+\includegraphics[width=.32\linewidth]{E1__decodability_after_removal.png}
+\includegraphics[width=.32\linewidth]{E2__offtype_generalisation.png}
+\caption{Separability tests (Dreamer \deter{} / PPO). Within-category control;
+E1 subspace removal (each factor survives removing the other; min angle $\sim$36--39$^\circ$);
+E2 off-type generalisation.}
+\label{fig:sep}
+\end{figure}
+
+\subsection{Causal steering}
+Injecting at the \emph{actor input} (read-only) steers behaviour while preserving
+success; persistent injection into the recurrent carry breaks the agent
+(Fig.~\ref{fig:steer}). For PPO, the skill commitment is controllable on balanced
+maps (P(mine)$=0.70$ at $\alpha=-6$, P(build)$=0.50$ at $\alpha=+6$, reach $0.8$--$1.0$).
+For Dreamer, the belief axis monotonically shifts the commit with reach $0.85$--$0.98$
+(with a sign caveat from the confounded difference-of-means axis).
+
+\begin{figure}[h]\centering
+\includegraphics[width=.49\linewidth]{steering__balanced_commit_control.png}
+\includegraphics[width=.49\linewidth]{belief_steer_feature.png}
+\caption{Left: PPO skill steering (actor-input, decision direction)---monotonic
+commit control with preserved reach. Right: Dreamer belief steering (feature site)
+---belief axis moves the committed skill across categories with success intact.}
+\label{fig:steer}
+\end{figure}
+
+\subsection{Behaviour and imagination}
+The trained Dreamer reproduces the PPO-like map$\to$skill commit matrix only after
+exploration was raised (Fig.~\ref{fig:behav}). Under a fair stochastic eval PPO
+beats Dreamer by 3--6 points with $\sim$10$\times$ fewer parameters; argmax hurts
+\emph{both} (the stochastic policy is the better controller). Finally, the world
+model does \emph{not} faithfully imagine the rare build/mine tile conversions
+(bridge $0/4$, tunnel $1/4$ in a forced counterfactual) and long open-loop dreams
+drift---yet behaviour is correct, because the actor is trained from the reward head
+over latents, not from the decoder.
+
+\begin{figure}[h]\centering
+\includegraphics[width=.34\linewidth]{dreamer_v3_baseline_commit_matrix.png}
+\includegraphics[width=.34\linewidth]{dreamer_btc_ent01_6M_commit_matrix.png}
+\caption{Dreamer \btc{} commit matrix: baseline ($\sim$0.92 \emph{none} everywhere)
+vs after raising exploration (lakes$\to$build 0.44, rocky$\to$mine 0.53).}
+\label{fig:behav}
+\end{figure}
+
+\section{Discussion}
+\AA str\"om sufficiency guarantees the \emph{information} (belief, and the
+commit state, which is itself a state variable) is recoverable from $h_t$, but not
+its representational form. Our probes establish linear decodability and our
+steering establishes causal use; only with the latter do we claim $h_t$
+``encodes/uses'' a factor. Two limitations: (i) we study the task-relevant
+\emph{marginal} of the belief (map type / water fraction), not the full posterior;
+(ii) the parameter gap ($\sim$9.5$\times$) means Dreamer's cleaner belief may
+partly reflect capacity, not only the model-based objective.
+
+\begin{thebibliography}{9}
+\small
+\bibitem{astrom} K.~J. \AA str\"om. Optimal control of Markov processes with
+incomplete state information. \emph{J. Math. Anal. Appl.}, 1965.
+\bibitem{klc} L. Kaelbling, M. Littman, A. Cassandra. Planning and acting in
+partially observable stochastic domains. \emph{Artificial Intelligence}, 1998.
+\bibitem{ss} R. Smallwood, E. Sondik. The optimal control of POMDPs over a finite
+horizon. \emph{Operations Research}, 1973.
+\bibitem{options} R. Sutton, D. Precup, S. Singh. Between MDPs and semi-MDPs: a
+framework for temporal abstraction. \emph{Artificial Intelligence}, 1999.
+\bibitem{ppo} J. Schulman et al. Proximal policy optimization algorithms. 2017.
+\bibitem{dreamer} D. Hafner et al. Mastering diverse domains through world models
+(DreamerV3). 2023.
+\bibitem{hewitt} J. Hewitt, P. Liang. Designing and interpreting probes with control
+tasks. \emph{EMNLP}, 2019.
+\bibitem{belinkov} Y. Belinkov. Probing classifiers: promises, shortcomings, and
+advances. \emph{Computational Linguistics}, 2022.
+\bibitem{shai} A. Shai et al. Transformers represent belief state geometry in their
+residual stream. 2024.
+\end{thebibliography}
+\end{document}

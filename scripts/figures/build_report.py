@@ -30,6 +30,17 @@ def img(path, w=900, cap=""):
     if cap: h(f'<figcaption>{cap}</figcaption>')
     h('</figure>')
 
+def iframe(path, height=620, cap=""):
+    p = Path(path)
+    if not p.exists():
+        h(f'<p class="missing">[missing panel: {html.escape(str(p.name))}]</p>'); return
+    esc = html.escape(p.read_text(), quote=True)
+    h('<figure>')
+    h(f'<iframe srcdoc="{esc}" style="width:100%;height:{height}px;border:1px solid #e1e7ee;'
+      f'border-radius:6px" loading="lazy"></iframe>')
+    if cap: h(f'<figcaption>{cap}</figcaption>')
+    h('</figure>')
+
 def P(s): h(f"<p>{s}</p>")
 def H2(s, _id=""): h(f'<h2 id="{_id}">{s}</h2>')
 def H3(s): h(f"<h3>{s}</h3>")
@@ -199,6 +210,28 @@ P("BT has no belief/skill labels, so only the unsupervised geometry exists — t
   "BT is the honest 'beliefs unlabeled, skills unenforced' baseline.")
 img(ROOT / "outputs/analysis_bt/gru_h__pca_trajectories.png", 600, "bt_ppo · gru_h episode trajectories (coloured by timestep).")
 img(ROOT / "outputs/analysis_bt_dreamer/rssm_deter__pca_trajectories.png", 600, "bt_dreamer · rssm_deter episode trajectories.")
+
+H3("Paired map ↔ latent trajectories")
+P("For 2–3 <b>qualitatively distinct routes on one map</b>, the path on the map (left) beside the same "
+  "episode's latent trajectory in PCA space (right), sharing PC axes per model×dataset, • start ★ end. "
+  "BT is coloured by <b>segment</b> (bridge=yellow, tunnel=purple); BTC by <b>commitment</b> "
+  "(blue=none until the commit point → yellow=build / purple=mine). <i>Read:</i> the crossing/commitment "
+  "event is visible simultaneously on the map and as a colour change in the latent path — the latent "
+  "trajectory bifurcates by route.")
+img(FIG / "paired_bt_dreamer.png", 760, "<b>Dreamer · BT · map seed 10004.</b> Detour (avoid) vs bridge vs tunnel.")
+img(FIG / "paired_btc_dreamer.png", 760, "<b>Dreamer · BTC · map 0 (balanced).</b> none / build / mine — blue until commit, then yellow/purple.")
+img(FIG / "paired_bt_ppo.png", 760, "<b>PPO · BT · map seed 10004.</b>")
+img(FIG / "paired_btc_ppo.png", 760, "<b>PPO · BTC.</b>")
+
+H3("Interactive 3-D manifolds (rotatable — drag to rotate, hover for metadata)")
+P('Live plotly embeds of the belief carriers (PCA-3D). <i>Note: these render when online (plotly is loaded '
+  'from CDN).</i>')
+PLT = ROOT / "outputs/report/plotly"
+iframe(PLT / "btc_ppo__gru_h__category.html", 640, "PPO <code>gru_h</code> — coloured by true map type. Belief barely separates (acc 0.38).")
+iframe(PLT / "btc_ppo__gru_h__final_commit.html", 640, "PPO <code>gru_h</code> — coloured by committed skill. Skill separates better (acc 0.60).")
+iframe(PLT / "btc_dreamer__rssm_deter__category.html", 640, "Dreamer <code>rssm_deter</code> — true map type. Belief is far more structured (acc 0.64).")
+iframe(PLT / "btc_dreamer__rssm_deter__final_commit.html", 640, "Dreamer <code>rssm_deter</code> — committed skill.")
+iframe(PLT / "btc_dreamer__rssm_deter__belief_ordinal_true.html", 640, "Dreamer <code>rssm_deter</code> — graded belief axis (water−rock).")
 
 # ───────────────────────────── 5 separability ─────────────────────────────
 H2("5 · Separability / confound experiments", "sep")
