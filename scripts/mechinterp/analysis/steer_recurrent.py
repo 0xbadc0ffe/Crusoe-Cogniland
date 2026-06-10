@@ -94,6 +94,8 @@ def main():
     ap.add_argument("--per-cat", type=int, default=10)
     ap.add_argument("--alphas", type=float, nargs="*", default=[-8, -4, -2, 2, 4, 8])
     ap.add_argument("--K", type=int, default=8)
+    ap.add_argument("--schedules", nargs="*", default=["actor", "firstK"],
+                    help="which recurrent schedules to run (subset of actor/firstK/persist/clamp)")
     ap.add_argument("--rows", type=int, default=60000)
     ap.add_argument("--out-dir", default="outputs/analysis_steer_rec")
     ap.add_argument("--wandb-project", default="bridge_tunnel_geometry")
@@ -129,7 +131,7 @@ def main():
                      tags=["btc", "ppo", "steering", "recurrent"],
                      config=dict(alphas=a.alphas, K=a.K, per_cat=a.per_cat, n_eps=len(eps)))
 
-    schedules = ["actor", "persist", "firstK", "clamp"]
+    schedules = a.schedules
     rows = []
 
     def cond(schedule, alpha):
