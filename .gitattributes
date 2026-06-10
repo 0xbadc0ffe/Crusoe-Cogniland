@@ -1,1 +1,2 @@
 released_models/bridge_tunnel/dreamer_natural_categorical/checkpoints/** filter=lfs diff=lfs merge=lfs -text
+released_models/bridge_tunnel_commit/dreamer_commit_categorical/checkpoints/** filter=lfs diff=lfs merge=lfs -text
