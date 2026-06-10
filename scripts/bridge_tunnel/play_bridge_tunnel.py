@@ -7,9 +7,10 @@ A small state-machine app (in the style of play_cogniland.py):
                 └─▶ PICK_AGENT ─▶ PICK_MAP ─▶ PLAY   (AI)
 
 * MAIN_MENU  — Play as Human / Play as AI.
-* PICK_AGENT — scrollable list of released_models/bridge_tunnel/*.pt (orientation shown).
-* PICK_MAP   — thumbnail grid of maps for the chosen agent's orientation
-               (the curated validation maps for natural), plus a Random tile.
+* PICK_AGENT — every released agent: PPO (*.pt) and DreamerV3 (run dirs) from
+               released_models/bridge_tunnel{,_commit} — bt AND btc variants.
+* PICK_MAP   — thumbnail grid of curated validation maps for the agent's
+               variant (btc: labelled by category), plus a Random tile.
 * PLAY       — large egocentric Crafter-sprite view + small pixel minimap, with
                mining / bridge-building animations.
 
@@ -50,8 +51,10 @@ from cogniland.bridge_tunnel import generate_bridge_tunnel_map, tiles as T  # no
 
 _REPO = Path(__file__).resolve().parents[2]
 _SPRITE_DIR = _REPO / "src/cogniland/assets/sprites"
-_MODELS_DIR = _REPO / "released_models/bridge_tunnel"
-_VAL_MAPS = _REPO / "data/bridge_tunnel/val_maps.pkl"
+_MODELS_DIRS = {"bt": _REPO / "released_models/bridge_tunnel",
+                "btc": _REPO / "released_models/bridge_tunnel_commit"}
+_VAL_MAPS = {"bt": _REPO / "data/bridge_tunnel/val_maps.pkl",
+             "btc": _REPO / "data/bridge_tunnel/val_maps_btc.pkl"}
 
 _BASE = {T.GRASS: "grass", T.WATER: "water", T.ROCK: "stone", T.WOOD: "path",
          T.TREE: "tree", T.SAND: "sand", T.DIRT: "path", T.TARGET: "grass"}
@@ -154,7 +157,7 @@ def _draw_pick_agent(win, big, font, small, agents, sel, w, h):
     win.blit(big.render("Pick an agent", True, (240, 240, 250)), (40, 24))
     _txt(win, small, ["↑/↓ navigate    Enter select    Esc back"], 40, 24 + big.get_height() + 6, (160, 160, 180))
     if not agents:
-        _txt(win, font, ["No agents in released_models/bridge_tunnel/*.pt"], 40, 120, (240, 120, 120))
+        _txt(win, font, ["No agents in released_models/bridge_tunnel{,_commit}/"], 40, 120, (240, 120, 120))
         return []
     top, row_h = 24 + big.get_height() + 46, 64
     rects = []
@@ -167,7 +170,8 @@ def _draw_pick_agent(win, big, font, small, agents, sel, w, h):
         pygame.draw.rect(win, (90, 110, 150), rect, 1, border_radius=8)
         col = (255, 255, 255) if i == sel else (210, 210, 220)
         win.blit(font.render(a["name"], True, col), (44, y + 4))
-        win.blit(small.render(f"{a['orientation']} · {a['descr']}", True, (170, 175, 190)), (44, y + 4 + font.get_height()))
+        sub = f"{a['variant'].upper()} · {a['algo']} · {a['descr'] or a['orientation']}"
+        win.blit(small.render(sub, True, (170, 175, 190)), (44, y + 4 + font.get_height()))
     return rects
 
 
@@ -320,6 +324,8 @@ def _draw_action_pad(win, x0, Wp, bottom_y, probs, flash, font, small, small_bol
 
 def _ai_action(policy, obs, state, device):
     """Returns (sampled action, action-probability vector over the 6 actions)."""
+    if isinstance(policy, DreamerPolicy):
+        return policy.act(obs)
     import torch
     with torch.no_grad():
         mm = torch.from_numpy(obs["minimap"])[None][None].to(device)
@@ -333,25 +339,95 @@ def _ai_action(policy, obs, state, device):
         return a, probs
 
 
+class DreamerPolicy:
+    """Interactive DreamerV3 actor: encoder → RSSM observe-step → actor, carried
+    across env steps. Steps the *PyTorch* env's obs (bit-identical to the JAX env
+    the agent was trained on — see tests/test_bridge_tunnel*parity.py)."""
+
+    def __init__(self, run_dir):
+        import json
+        import jax
+        import jax.numpy as jnp
+        import orbax.checkpoint as ocp
+        sys.path.insert(0, str(_REPO / "scripts"))
+        from mechinterp.build_dreamer_activation_dataset import _build_model
+        import purejaxwm.dreamerv3.behavior as _ac
+        from cogniland.bridge_tunnel.jax import constants as _C
+
+        self._jax, self._jnp, self._ac, self._C = jax, jnp, _ac, _C
+        run_dir = Path(run_dir).resolve()
+        self.cfg = json.loads((run_dir / "config.json").read_text())
+        ckpt = sorted((run_dir / "checkpoints").iterdir())[-1]
+        payload = ocp.PyTreeCheckpointer().restore(str(ckpt))
+        self.wm_params, self.ac_params = payload["wm_params"], payload["ac_params"]
+        self.encoder, self.rssm, self.actor, _ = _build_model(self.cfg)
+        self.gru_hidden = self.cfg["deter"]          # so play code can introspect
+        self._key = jax.random.PRNGKey(0)
+
+        def _step(wm, acp, rssm_state, last_action, is_first, mm, sc, key):
+            oh = jax.nn.one_hot(mm.astype(jnp.int32), _C.NUM_TILES)
+            flat = jnp.concatenate([oh.reshape(1, -1), sc.reshape(1, -1)], axis=-1)
+            k_st, k_pol = jax.random.split(key)
+            embed = self.encoder.apply(wm["encoder"], flat)
+            am = jnp.where(is_first[..., None], 0.0, last_action)
+            _, post = self.rssm.apply(wm["rssm"], rssm_state, am, embed, is_first,
+                                      rngs={"stoch": k_st})
+            logits = _ac.unimix_logits(self.actor.apply(acp["actor"], post.features()))
+            probs = jax.nn.softmax(logits, axis=-1)
+            a = jax.random.categorical(k_pol, logits)
+            return post, jax.nn.one_hot(a, _C.NUM_ACTIONS), a, probs
+
+        self._jit_step = jax.jit(_step)
+        self.reset()
+
+    def reset(self):
+        self._state = self.rssm.initial_state((1,))
+        self._last_action = self._jnp.zeros((1, self._C.NUM_ACTIONS))
+        self._is_first = self._jnp.ones((1,), dtype=bool)
+
+    def act(self, obs):
+        self._key, k = self._jax.random.split(self._key)
+        mm = self._jnp.asarray(np.asarray(obs["minimap"]))[None]
+        sc = self._jnp.asarray(np.asarray(obs["scalars"], dtype=np.float32))[None]
+        post, la, a, probs = self._jit_step(self.wm_params, self.ac_params, self._state,
+                                            self._last_action, self._is_first, mm, sc, k)
+        self._state, self._last_action = post, la
+        self._is_first = self._jnp.zeros((1,), dtype=bool)
+        return int(a[0]), np.asarray(probs[0])
+
+
 # ───────────────────────────────── main ───────────────────────────────────
 
 def _scan_agents():
+    """All released agents: PPO (*.pt) and DreamerV3 (run dirs with config.json +
+    checkpoints/) from both variant dirs. Each entry carries variant + algo."""
+    import json
     import yaml
     out = []
-    for pt in sorted(_MODELS_DIR.glob("*.pt")):
-        orient, descr = "?", ""
-        y = pt.with_suffix(".yaml")
-        if y.exists():
-            try:
-                cfg = yaml.safe_load(y.read_text())
-                orient = cfg.get("orientation", "?")
-            except Exception:
-                pass
-            for ln in y.read_text().splitlines():
-                if ln.startswith("#") and "—" in ln:
-                    descr = ln.split("—", 1)[1].strip()[:60]
-                    break
-        out.append({"path": pt, "name": pt.stem, "orientation": orient, "descr": descr})
+    for variant, mdir in _MODELS_DIRS.items():
+        for pt in sorted(mdir.glob("*.pt")):
+            orient, descr = "?", ""
+            y = pt.with_suffix(".yaml")
+            if y.exists():
+                try:
+                    cfg = yaml.safe_load(y.read_text())
+                    orient = cfg.get("orientation", "?")
+                except Exception:
+                    pass
+                for ln in y.read_text().splitlines():
+                    if ln.startswith("#") and "—" in ln:
+                        descr = ln.split("—", 1)[1].strip()[:60]
+                        break
+            out.append({"path": pt, "name": pt.stem, "orientation": orient,
+                        "descr": descr, "variant": variant, "algo": "ppo"})
+        for run in sorted(d for d in mdir.iterdir() if d.is_dir()):
+            cj = run / "config.json"
+            if not cj.exists() or not (run / "checkpoints").is_dir():
+                continue
+            cfg = json.loads(cj.read_text())
+            step = sorted((run / "checkpoints").iterdir())[-1].name
+            out.append({"path": run, "name": run.name, "orientation": "natural",
+                        "descr": f"DreamerV3 25M · {step}", "variant": variant, "algo": "dreamer"})
     return out
 
 
@@ -393,34 +469,52 @@ def main():
          "rects": None, "tp": 28, "main_px": 600, "cell": 4, "probs": None, "flash": None}
 
     def cfg_of(i):
-        y = agents[i]["path"].with_suffix(".yaml")
-        return (yaml.safe_load(y.read_text()) if y.exists() else {})
+        a = agents[i]
+        if a["algo"] == "dreamer":             # config.json → play-cfg key names
+            import json
+            c = json.loads((a["path"] / "config.json").read_text())
+            return {"env_size": c.get("map_size", 32), "env_width": c.get("map_width", 64),
+                    "view_size": c.get("view_size", 21), "max_steps": c.get("max_steps", 800),
+                    "orientation": "natural", "variant": a["variant"]}
+        y = a["path"].with_suffix(".yaml")
+        cfg = (yaml.safe_load(y.read_text()) if y.exists() else {})
+        cfg["variant"] = a["variant"]
+        return cfg
 
-    def make_env(cfg, max_steps=1500):
+    def make_env(cfg, max_steps=None):
         m = [("env_size", "size"), ("env_width", "width"), ("view_size", "view_size"),
-             ("orientation", "orientation"),
+             ("orientation", "orientation"), ("variant", "variant"),
              ("water_frac", "water_frac"), ("rock_frac", "rock_frac"),
              ("tree_frac", "tree_frac"), ("goal_half", "goal_half")]
         ekw = {dst: cfg[src] for src, dst in m if cfg.get(src) is not None}
         ekw.setdefault("size", 32)
-        return BridgeTunnelEnv(max_steps=max_steps, **ekw)
+        return BridgeTunnelEnv(max_steps=max_steps or cfg.get("max_steps", 1500), **ekw)
 
     def build_map_grid(cfg):
         # NATURAL maps are generated with opensimplex, which segfaults on some
         # machines (macOS/arm) — so the demo NEVER generates them: it always
         # uses the curated, pre-pickled validation set (== the eval maps).
-        if not _VAL_MAPS.exists():
+        variant = cfg.get("variant", "bt")
+        vp = _VAL_MAPS[variant]
+        if not vp.exists():
             raise SystemExit(
-                "natural demo needs data/bridge_tunnel/val_maps.pkl — "
-                "generate it once on a machine where opensimplex works: "
-                "python scripts/bridge_tunnel/make_bridge_tunnel_val_maps.py")
-        S["val_pool"] = pickle.load(open(_VAL_MAPS, "rb"))["records"]
-        S["recs"] = S["val_pool"][:9]
+                f"demo needs {vp} — generate it once: "
+                f"python scripts/bridge_tunnel/make_bridge_tunnel_val_maps.py --variant {variant}")
+        recs = pickle.load(open(vp, "rb"))["records"]
+        if variant == "btc":                   # 3 per category, interleaved for variety
+            by_cat = {}
+            for r in recs:
+                by_cat.setdefault(r.category, []).append(r)
+            recs = [r for trio in zip(*by_cat.values()) for r in trio]
+        S["val_pool"] = recs
+        S["recs"] = recs[:9]
         S["thumbs"] = [_terrain_surface(r.terrain, 6) for r in S["recs"]] + [None]
-        S["labels"] = [f"map {i}" for i in range(len(S["recs"]))] + ["random"]
+        S["labels"] = [(r.category or f"map {i}") for i, r in enumerate(S["recs"])] + ["random"]
         S["map"] = 0
 
     def load_policy(i):
+        if agents[i]["algo"] == "dreamer":
+            return DreamerPolicy(agents[i]["path"])
         ck = torch.load(agents[i]["path"], map_location="cpu", weights_only=False)
         ca = ck["args"]
         e = make_env(ca, 10)
@@ -444,7 +538,9 @@ def main():
             pool = S.get("val_pool") or S["recs"]
             env._fixed_record = pool[int(S["rng"].integers(len(pool)))]
         S["obs"], _ = env.reset()
-        if S["policy"] is not None:
+        if isinstance(S["policy"], DreamerPolicy):
+            S["policy"].reset()
+        elif S["policy"] is not None:
             S["hidden"] = torch.zeros(1, 1, S["policy"].gru_hidden, device=device)
         S["effects"] = []; S["status"] = "playing"; S["probs"] = None; S["flash"] = None
 
