@@ -21,16 +21,16 @@ where only the algorithm differs (see `paper/bridge_tunnel.tex`).
 |------|-----------|------|------|
 | `natural_centergoal3.pt` | PPO+GRU, tile-embed | 100% | original released agent |
 | `natural_centergoal3_onehot.pt` | PPO+GRU, **one-hot** | 100% | fair-comparison PPO (`obs_encoding: onehot`) |
-| `dreamer_natural_categorical/` | DreamerV3 25M, **categorical** | 85% | fair-comparison Dreamer, 1M steps (orbax, **git-LFS**) |
+| `dreamer_natural_categorical/` | DreamerV3 25M, **categorical** | 85% | fair-comparison Dreamer, 1.5M steps (orbax, **git-LFS**) |
 
 Recipe (all): **3-cell central goal door** + **tree forests biased to the top &
 bottom walls** funnel the agent through the obstacle-filled middle; **no entropy
 annealing** + entropy 0.045 → a mix of avoid / bridge / tunnel. DreamerV3 logs
 ~96% during training but ~85% in clean per-episode eval, and is far less
-sample-efficient than PPO here (PPO ~100% by 0.2M; Dreamer ~96% by 1M).
+sample-efficient than PPO here (PPO ~100% by 0.2M; Dreamer ~96% by 1.5M).
 
 The DreamerV3 checkpoint is an orbax PyTree dir (`config.json` + `checkpoints/
-step_1000000/`), stored via **git-LFS** (~74 MB). PPO `*.pt` are plain dicts
+step_1500000/`), stored via **git-LFS** (~74 MB). PPO `*.pt` are plain dicts
 (`{"policy", "args", ...}`) with a matching reproducible `*.yaml`.
 
 ## See it play (pygame demo)
@@ -64,8 +64,8 @@ Evaluate / visualise the **DreamerV3 categorical** agent (auto-detects the
 categorical encoder from its `config.json`):
 
 ```bash
-python scripts/bridge_tunnel/viz_dreamer_bridge_tunnel_traj.py    --checkpoint released_models/bridge_tunnel/dreamer_natural_categorical/checkpoints/step_1000000
-python scripts/bridge_tunnel/viz_dreamer_bridge_tunnel_imagine.py --checkpoint released_models/bridge_tunnel/dreamer_natural_categorical/checkpoints/step_1000000
+python scripts/bridge_tunnel/viz_dreamer_bridge_tunnel_traj.py    --checkpoint released_models/bridge_tunnel/dreamer_natural_categorical/checkpoints/step_1500000
+python scripts/bridge_tunnel/viz_dreamer_bridge_tunnel_imagine.py --checkpoint released_models/bridge_tunnel/dreamer_natural_categorical/checkpoints/step_1500000
 ```
 (`git lfs pull` to fetch its weights after cloning.)
 
