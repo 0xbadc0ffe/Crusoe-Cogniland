@@ -8,7 +8,7 @@ activation-steering experiments.
 
     # plain replay
     python scripts/mechinterp/replay_trajectory.py --env bridge_tunnel_commit \\
-        --checkpoint released_models/bridge_tunnel_commit/ppo_commit_onehot.pt \\
+        --checkpoint released_models/bridge_tunnel_commit/ppo_gru_commit.pt \\
         --map-seed 10000 --category lakes --traj-seed 1000000000
 
     # steered replay: add alpha*vec to gru_h on steps [a,b)

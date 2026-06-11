@@ -14,7 +14,7 @@ belief/skill/strategy labels as the PPO bundle (category, commit_state,
 final_commit, segment, decisions, …).
 
     python scripts/mechinterp/build_dreamer_activation_dataset.py \
-        --checkpoint released_models/bridge_tunnel_commit/dreamer_commit_categorical/checkpoints/step_6000000 \
+        --checkpoint released_models/bridge_tunnel_commit/dreamerv3_commit/checkpoints/step_6000000 \
         --out-dir activation_datasets/btc_dreamer --n-traj 20
 """
 from __future__ import annotations

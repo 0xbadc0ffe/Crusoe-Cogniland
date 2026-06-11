@@ -19,9 +19,9 @@ where only the algorithm differs (see `paper/bridge_tunnel.tex`).
 
 | agent | algo / obs | success (held-out grid) | notes |
 |------|-----------|------|------|
-| `natural_centergoal3.pt` | PPO+GRU, tile-embed | 100% | original released agent |
-| `natural_centergoal3_onehot.pt` | PPO+GRU, **one-hot** | 100% | fair-comparison PPO (`obs_encoding: onehot`) |
-| `dreamer_natural_categorical/` | DreamerV3 25M, **categorical** | 85% | fair-comparison Dreamer, 1.5M steps (orbax, **git-LFS**) |
+| `ppo_gru_embed.pt` | PPO+GRU, tile-embed | 100% | original released agent |
+| `ppo_gru.pt` | PPO+GRU, **one-hot** | 100% | fair-comparison PPO (`obs_encoding: onehot`) |
+| `dreamerv3/` | DreamerV3 25M, **categorical** | 85% | fair-comparison Dreamer, 1.5M steps (orbax, **git-LFS**) |
 
 Recipe (all): **3-cell central goal door** + **tree forests biased to the top &
 bottom walls** funnel the agent through the obstacle-filled middle; **no entropy
@@ -47,7 +47,7 @@ from the checkpoint, so no extra flags are needed for AI play.
 ## Reproduce
 
 ```bash
-python scripts/bridge_tunnel/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel/natural_centergoal3.yaml \
+python scripts/bridge_tunnel/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel/ppo_gru_embed.yaml \
     --run-name natural_repro --wandb-mode disabled
 ```
 2M-step budget. The diversity comes from the goal/forest geometry + high entropy
@@ -56,16 +56,16 @@ with no annealing.
 ## Evaluate
 
 ```bash
-python scripts/bridge_tunnel/eval_bridge_tunnel_agent.py  --checkpoint released_models/bridge_tunnel/natural_centergoal3.pt --n-maps 8
-python scripts/bridge_tunnel/bridge_tunnel_traj_grid.py   --checkpoint released_models/bridge_tunnel/natural_centergoal3.pt --n-maps 6 --n-traj 200
+python scripts/bridge_tunnel/eval_bridge_tunnel_agent.py  --checkpoint released_models/bridge_tunnel/ppo_gru_embed.pt --n-maps 8
+python scripts/bridge_tunnel/bridge_tunnel_traj_grid.py   --checkpoint released_models/bridge_tunnel/ppo_gru_embed.pt --n-maps 6 --n-traj 200
 ```
 
 Evaluate / visualise the **DreamerV3 categorical** agent (auto-detects the
 categorical encoder from its `config.json`):
 
 ```bash
-python scripts/bridge_tunnel/viz_dreamer_bridge_tunnel_traj.py    --checkpoint released_models/bridge_tunnel/dreamer_natural_categorical/checkpoints/step_1500000
-python scripts/bridge_tunnel/viz_dreamer_bridge_tunnel_imagine.py --checkpoint released_models/bridge_tunnel/dreamer_natural_categorical/checkpoints/step_1500000
+python scripts/bridge_tunnel/viz_dreamer_bridge_tunnel_traj.py    --checkpoint released_models/bridge_tunnel/dreamerv3/checkpoints/step_1500000
+python scripts/bridge_tunnel/viz_dreamer_bridge_tunnel_imagine.py --checkpoint released_models/bridge_tunnel/dreamerv3/checkpoints/step_1500000
 ```
 (`git lfs pull` to fetch its weights after cloning.)
 

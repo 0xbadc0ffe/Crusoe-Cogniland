@@ -5,8 +5,8 @@ variant: bt
 # average -> the agent is pushed through the obstacle-filled middle (avoid /
 # bridge / tunnel). Recipe otherwise unchanged: NO entropy annealing + entropy
 # 0.045, build_cost 0, min-action shaping.
-#   python scripts/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel/natural_centergoal3.yaml \
-#       --run-name natural_centergoal3_ppo --wandb-mode online
+#   python scripts/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel/ppo_gru_embed.yaml \
+#       --run-name ppo_gru_embed_ppo --wandb-mode online
 orientation: natural
 env_size: 32
 env_width: 64

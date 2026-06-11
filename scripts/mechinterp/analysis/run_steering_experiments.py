@@ -17,7 +17,7 @@ run. Usage:
 
     python -m scripts.mechinterp.analysis.run_steering_experiments \
         --dataset activation_datasets/btc_ppo \
-        --checkpoint released_models/bridge_tunnel_commit/ppo_commit_onehot.pt \
+        --checkpoint released_models/bridge_tunnel_commit/ppo_gru_commit.pt \
         --wandb-mode online
 """
 from __future__ import annotations
@@ -327,7 +327,7 @@ def _logfig(run, outdir, key, fig):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default="activation_datasets/btc_ppo")
-    ap.add_argument("--checkpoint", default="released_models/bridge_tunnel_commit/ppo_commit_onehot.pt")
+    ap.add_argument("--checkpoint", default="released_models/bridge_tunnel_commit/ppo_gru_commit.pt")
     ap.add_argument("--source", default="gru_h")
     ap.add_argument("--rows", type=int, default=120000, help="rows for probe/direction fitting")
     ap.add_argument("--n-ep", type=int, default=90, help="held-out steering episodes")

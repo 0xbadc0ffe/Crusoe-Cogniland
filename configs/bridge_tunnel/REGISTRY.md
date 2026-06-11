@@ -5,11 +5,11 @@ The released agents and how to reproduce / evaluate them. One env
 
 | experiment | variant | algo | obs | checkpoint | config / command |
 |---|---|---|---|---|---|
-| bt PPO (embed) | bt | PPO+GRU | tile-embed | `released_models/bridge_tunnel/natural_centergoal3.pt` | `configs/bridge_tunnel/bt_ppo_embed.yaml` |
-| bt PPO (one-hot) | bt | PPO+GRU | one-hot | `released_models/bridge_tunnel/natural_centergoal3_onehot.pt` | `configs/bridge_tunnel/bt_ppo_onehot.yaml` |
-| bt DreamerV3 (categorical) | bt | DreamerV3 25M | one-hot/categorical | `released_models/bridge_tunnel/dreamer_natural_categorical/` (git-LFS) | `dreamerv3_bridge_tunnel.py --variant bt --size 25M --decoder categorical` |
-| btc PPO (one-hot) | btc | PPO+GRU | one-hot | `released_models/bridge_tunnel_commit/ppo_commit_onehot.pt` | `configs/bridge_tunnel/btc_ppo_onehot.yaml` |
-| btc DreamerV3 (categorical) | btc | DreamerV3 25M | categorical | `released_models/bridge_tunnel_commit/dreamer_commit_categorical/` (git-LFS) | `dreamerv3_bridge_tunnel.py --variant btc --size 25M --decoder categorical --total-env-steps 6_000_000 --set entropy_coef=0.01` |
+| bt PPO (embed) | bt | PPO+GRU | tile-embed | `released_models/bridge_tunnel/ppo_gru_embed.pt` | `configs/bridge_tunnel/bt_ppo_embed.yaml` |
+| bt PPO (one-hot) | bt | PPO+GRU | one-hot | `released_models/bridge_tunnel/ppo_gru.pt` | `configs/bridge_tunnel/bt_ppo_onehot.yaml` |
+| bt DreamerV3 (categorical) | bt | DreamerV3 25M | one-hot/categorical | `released_models/bridge_tunnel/dreamerv3/` (git-LFS) | `dreamerv3_bridge_tunnel.py --variant bt --size 25M --decoder categorical` |
+| btc PPO (one-hot) | btc | PPO+GRU | one-hot | `released_models/bridge_tunnel_commit/ppo_gru_commit.pt` | `configs/bridge_tunnel/btc_ppo_onehot.yaml` |
+| btc DreamerV3 (categorical) | btc | DreamerV3 25M | categorical | `released_models/bridge_tunnel_commit/dreamerv3_commit/` (git-LFS) | `dreamerv3_bridge_tunnel.py --variant btc --size 25M --decoder categorical --total-env-steps 6_000_000 --set entropy_coef=0.01` |
 
 The btc DreamerV3 was trained with raised exploration (`entropy_coef=0.01`, vs the
 3e-4 paper default) so it learns the map→skill commitment like PPO. On held-out

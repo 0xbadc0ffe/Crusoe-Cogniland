@@ -18,7 +18,7 @@ The figure highlights the crossed lake/mountain body (translucent) and the in->o
 path segment, so the bridging/mining is unambiguous.
 
     python scripts/bridge_tunnel/bridge_tunnel_strategy_examples.py \\
-        --checkpoint released_models/bridge_tunnel/natural_centergoal3.pt \\
+        --checkpoint released_models/bridge_tunnel/ppo_gru_embed.pt \\
         --out outputs/previews/bridge_tunnel_strategy_examples.png
 """
 from __future__ import annotations
@@ -101,7 +101,7 @@ def crossings(path, terrain, tile, min_cross):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--checkpoint", type=Path, default=Path("released_models/bridge_tunnel/natural_centergoal3.pt"))
+    p.add_argument("--checkpoint", type=Path, default=Path("released_models/bridge_tunnel/ppo_gru_embed.pt"))
     p.add_argument("--n-seeds", type=int, default=12)
     p.add_argument("--n-per-seed", type=int, default=40)
     p.add_argument("--eval-seed-start", type=int, default=10_000)

@@ -1,12 +1,12 @@
 variant: bt
-# Same env as natural_centergoal3 (natural, 3-cell centre door, edge forests,
+# Same env as ppo_gru_embed (natural, 3-cell centre door, edge forests,
 # 9-tile), but the policy consumes a CATEGORICAL one-hot minimap observation
 # (obs_encoding: onehot) instead of a learned tile embedding — matching the
 # DreamerV3 categorical encoder, so the PPO vs DreamerV3 comparison is fair
 # (identical env AND identical observation representation; only the algorithm
 # differs).
-#   python scripts/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel/natural_centergoal3_onehot.yaml \
-#       --run-name natural_centergoal3_onehot_ppo --wandb-mode online
+#   python scripts/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel/ppo_gru.yaml \
+#       --run-name ppo_gru_ppo --wandb-mode online
 orientation: natural
 env_size: 32
 env_width: 64

@@ -14,7 +14,7 @@ Evaluated per map category on held-out maps; the cleanest test is BALANCED maps
 (both obstacles present, so the commit is a free choice). Logs one W&B run.
 
     python -m scripts.mechinterp.analysis.steer_dreamer_belief \
-        --checkpoint released_models/bridge_tunnel_commit/dreamer_commit_categorical/checkpoints/step_6000000 \
+        --checkpoint released_models/bridge_tunnel_commit/dreamerv3_commit/checkpoints/step_6000000 \
         --dataset activation_datasets/btc_dreamer --wandb-mode online
 """
 from __future__ import annotations

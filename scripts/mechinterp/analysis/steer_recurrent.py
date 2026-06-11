@@ -90,7 +90,7 @@ def rollout(pol, MiniEnv, terr, spawn, seed, vec, alpha, schedule, K, view, max_
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default="activation_datasets/btc_ppo")
-    ap.add_argument("--checkpoint", default="released_models/bridge_tunnel_commit/ppo_commit_onehot.pt")
+    ap.add_argument("--checkpoint", default="released_models/bridge_tunnel_commit/ppo_gru_commit.pt")
     ap.add_argument("--per-cat", type=int, default=10)
     ap.add_argument("--alphas", type=float, nargs="*", default=[-8, -4, -2, 2, 4, 8])
     ap.add_argument("--K", type=int, default=8)

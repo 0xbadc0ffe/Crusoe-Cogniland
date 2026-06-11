@@ -15,7 +15,7 @@ cells = red, the commit step = a magenta ★. Titles show success + the map's
 commit split.
 
     python scripts/bridge_tunnel/eval_bridge_tunnel_commit_ppo.py \\
-        --checkpoint checkpoints/ppo_commit_onehot_<ts>/final.pt \\
+        --checkpoint checkpoints/ppo_gru_commit_<ts>/final.pt \\
         --out-prefix paper/figures/bridge_tunnel_commit/ppo
 """
 from __future__ import annotations

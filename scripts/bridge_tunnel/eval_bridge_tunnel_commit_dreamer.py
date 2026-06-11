@@ -10,7 +10,7 @@ observe → unimix actor logits → categorical sample). Held-out maps come from
 ``generate_commit_map(seed=10000+, category=...)`` per category.
 
     python scripts/bridge_tunnel/eval_bridge_tunnel_commit_dreamer.py \\
-        --checkpoint runs/dreamer_commit_categorical_25M_<ts>/checkpoints/step_1500000 \\
+        --checkpoint runs/dreamerv3_commit_25M_<ts>/checkpoints/step_1500000 \\
         --out-prefix paper/figures/bridge_tunnel_commit/dreamer
 """
 from __future__ import annotations

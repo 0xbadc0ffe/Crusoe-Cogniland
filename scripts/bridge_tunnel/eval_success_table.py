@@ -164,10 +164,10 @@ def main():
     args = p.parse_args()
 
     MODELS = [
-        ("bt_ppo", "ppo", "bt", "released_models/bridge_tunnel/natural_centergoal3_onehot.pt"),
-        ("btc_ppo", "ppo", "btc", "released_models/bridge_tunnel_commit/ppo_commit_onehot.pt"),
+        ("bt_ppo", "ppo", "bt", "released_models/bridge_tunnel/ppo_gru.pt"),
+        ("btc_ppo", "ppo", "btc", "released_models/bridge_tunnel_commit/ppo_gru_commit.pt"),
         ("bt_dreamer", "dreamer", "bt", "outputs/dreamer_runs/dreamer_bt_25M_behavior/checkpoints/step_1500000"),
-        ("btc_dreamer", "dreamer", "btc", "released_models/bridge_tunnel_commit/dreamer_commit_categorical/checkpoints/step_6000000"),
+        ("btc_dreamer", "dreamer", "btc", "released_models/bridge_tunnel_commit/dreamerv3_commit/checkpoints/step_6000000"),
     ]
     rows = []
     for name, algo, variant, ckpt in MODELS:
