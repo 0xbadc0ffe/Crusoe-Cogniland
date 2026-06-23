@@ -172,6 +172,7 @@ class Transition(NamedTuple):
     is_last: jnp.ndarray
     is_terminal: jnp.ndarray
     reached: jnp.ndarray   # extra info channel for success-rate logging
+    belief: jnp.ndarray    # () int32 map-category target (btc; zeros for bt)
 
 
 def _resolve_maps_path(cfg) -> Path:
@@ -263,6 +264,13 @@ def make_train(cfg, log_cb=None):
         hidden=cfg["ac_hidden"], num_layers=cfg["ac_layers"], out_dim=cfg["num_reward_bins"],
         outscale=0.0, dtype=compute_dtype, param_dtype=param_dtype,
     )
+    # auxiliary belief head: classifies map category (rocky/balanced/lakes) from the
+    # RSSM model state; CE aux loss (loss_belief) shapes the latent. btc-only.
+    use_belief = cfg.get("variant", "bt") == "btc" and cfg.get("loss_belief", 0.0) > 0
+    belief_head = (MLPHead(
+        hidden=cfg["wm_hidden"], num_layers=1, out_dim=3,
+        outscale=0.0, dtype=compute_dtype, param_dtype=param_dtype,
+    ) if use_belief else None)
 
     dummy_transition = Transition(
         obs=jnp.zeros(obs_shape, dtype=jnp.float32),
@@ -272,6 +280,7 @@ def make_train(cfg, log_cb=None):
         is_last=jnp.zeros((), dtype=bool),
         is_terminal=jnp.zeros((), dtype=bool),
         reached=jnp.zeros((), dtype=bool),
+        belief=jnp.zeros((), dtype=jnp.int32),
     )
     buffer = fbx.make_trajectory_buffer(
         add_batch_size=cfg["num_envs"],
@@ -331,6 +340,9 @@ def make_train(cfg, log_cb=None):
             "encoder": enc_params, "rssm": rssm_params, "decoder": dec_params,
             "reward": rew_params, "cont": cont_params,
         }
+        if use_belief:
+            rng, s_bel = jax.random.split(rng)
+            wm_params["belief"] = belief_head.init(s_bel, dummy_feat)
         ac_params = {"actor": actor_params, "critic": critic_params}
         slow_critic_params = critic_params
 
@@ -349,6 +361,7 @@ def make_train(cfg, log_cb=None):
         last_terminal = jnp.zeros((cfg["num_envs"],), dtype=bool)
         last_is_first = jnp.ones((cfg["num_envs"],), dtype=bool)
         last_reached = jnp.zeros((cfg["num_envs"],), dtype=bool)
+        last_belief = jnp.zeros((cfg["num_envs"],), dtype=jnp.int32)
 
         train_state = DreamerTrainState(
             wm_params=wm_params,
@@ -363,14 +376,14 @@ def make_train(cfg, log_cb=None):
         init_carry = (
             train_state, env_state, buffer_state, obs0,
             last_action, last_reward, last_done, last_terminal, last_is_first,
-            last_reached, rssm_state_act, jnp.float32(0.0), rng,
+            last_reached, last_belief, rssm_state_act, jnp.float32(0.0), rng,
         )
         return init_carry
 
     def _rollout_step(carry, _):
         (train_state, env_state, buffer_state, obs,
          last_action, last_reward, last_done, last_terminal, last_is_first,
-         last_reached, rssm_state_act, rng) = carry
+         last_reached, last_belief, rssm_state_act, rng) = carry
 
         action_masked = jnp.where(
             last_is_first[..., None], jnp.zeros_like(last_action), last_action
@@ -380,7 +393,7 @@ def make_train(cfg, log_cb=None):
         transition = Transition(
             obs=obs, action=action_masked, reward=reward_stored,
             is_first=last_is_first, is_last=last_done,
-            is_terminal=last_terminal, reached=last_reached,
+            is_terminal=last_terminal, reached=last_reached, belief=last_belief,
         )
         buffer_state = buffer.add(
             buffer_state,
@@ -408,11 +421,12 @@ def make_train(cfg, log_cb=None):
         )
         terminal_next = done_next
         reached_next = info["reached_target"]
+        belief_next = info["category"].astype(jnp.int32)   # map category of next_obs
 
         new_carry = (
             train_state, env_state, buffer_state, next_obs,
             action_oh, reward_next, done_next, terminal_next, done_next,
-            reached_next, rssm_state_act, rng,
+            reached_next, belief_next, rssm_state_act, rng,
         )
         completed = info["returned_episode"].astype(jnp.float32)
         n_completed = jnp.maximum(completed.sum(), 1.0)
@@ -445,6 +459,7 @@ def make_train(cfg, log_cb=None):
         reward_b = swap_TB(batch.reward)
         is_first_b = swap_TB(batch.is_first)
         is_terminal_b = swap_TB(batch.is_terminal)
+        belief_b = swap_TB(batch.belief)
 
         def _wm_loss_fn(wm_params, rng):
             init_state = rssm.initial_state((cfg["batch_size"],))
@@ -457,6 +472,13 @@ def make_train(cfg, log_cb=None):
                 "decoder": wm_params["decoder"], "reward": wm_params["reward"],
                 "cont": wm_params["cont"],
             }
+            belief_apply = belief_target = None
+            belief_scale = 0.0
+            if use_belief:
+                wm_dict["belief"] = wm_params["belief"]
+                belief_apply = lambda p, f: belief_head.apply(p, f)
+                belief_target = belief_b
+                belief_scale = cfg["loss_belief"]
             total, aux = wm_losses.wm_loss(
                 wm_dict,
                 encoder_apply=enc_apply, rssm=rssm,
@@ -472,6 +494,8 @@ def make_train(cfg, log_cb=None):
                 },
                 free_nats=cfg["free_nats"],
                 rec_loss_fn=rec_loss_fn,
+                belief_apply=belief_apply, belief_target=belief_target,
+                belief_scale=belief_scale,
             )
             return total, aux
 
@@ -565,6 +589,7 @@ def make_train(cfg, log_cb=None):
             "loss/wm_total": wm_total,
             "loss/rec": wm_aux.rec, "loss/reward": wm_aux.rew,
             "loss/cont": wm_aux.cont, "loss/dyn": wm_aux.dyn, "loss/rep": wm_aux.rep,
+            "loss/belief": wm_aux.belief, "belief/acc": wm_aux.belief_acc,
             "loss/policy": imag_aux.actor_loss, "loss/value": imag_aux.critic_loss,
             "loss/entropy": imag_aux.entropy,
             "loss/repval": repl_aux.repl_loss,
@@ -583,7 +608,8 @@ def make_train(cfg, log_cb=None):
     _zero = {
         k: jnp.float32(0.0) for k in [
             "loss/wm_total", "loss/rec", "loss/reward", "loss/cont", "loss/dyn",
-            "loss/rep", "loss/policy", "loss/value", "loss/entropy",
+            "loss/rep", "loss/belief", "belief/acc",
+            "loss/policy", "loss/value", "loss/entropy",
             "loss/repval", "retnorm/low", "retnorm/high", "imag/ret",
             "imag/val", "imag/rew", "imag/adv_std",
         ]
@@ -592,17 +618,17 @@ def make_train(cfg, log_cb=None):
     def _outer_step(carry, _):
         (train_state, env_state, buffer_state, obs,
          last_action, last_reward, last_done, last_terminal, last_is_first,
-         last_reached, rssm_state_act, train_debt, rng) = carry
+         last_reached, last_belief, rssm_state_act, train_debt, rng) = carry
 
         inner_carry = (
             train_state, env_state, buffer_state, obs,
             last_action, last_reward, last_done, last_terminal, last_is_first,
-            last_reached, rssm_state_act, rng,
+            last_reached, last_belief, rssm_state_act, rng,
         )
         new_inner, rollout_metrics = _rollout_step(inner_carry, None)
         (train_state, env_state, buffer_state, obs,
          last_action, last_reward, last_done, last_terminal, last_is_first,
-         last_reached, rssm_state_act, rng) = new_inner
+         last_reached, last_belief, rssm_state_act, rng) = new_inner
 
         train_state = train_state._replace(step=train_state.step + cfg["num_envs"])
 
@@ -648,7 +674,7 @@ def make_train(cfg, log_cb=None):
         new_carry = (
             train_state, env_state, buffer_state, obs,
             last_action, last_reward, last_done, last_terminal, last_is_first,
-            last_reached, rssm_state_act, train_debt, rng,
+            last_reached, last_belief, rssm_state_act, train_debt, rng,
         )
         return new_carry, all_metrics
 
@@ -745,6 +771,7 @@ def _default_cfg() -> dict:
         # losses
         "loss_rec": 1.0, "loss_rew": 1.0, "loss_con": 1.0,
         "loss_dyn": 1.0, "loss_rep": 0.1,
+        "loss_belief": 0.0,   # btc-only aux map-category CE weight (0=off); enable via --set
         "loss_actor": 1.0, "loss_critic": 1.0, "loss_repval": 0.3,
         # mixed-precision
         "compute_dtype": "bfloat16",
@@ -910,8 +937,11 @@ def main():
         rec = np.asarray(chunk_metrics["loss/rec"])
         nz = rec[rec != 0.0]
         rec_str = (f"  loss/rec {nz[0]:.3f}→{nz[-1]:.3f}" if nz.size else "")
+        bacc = np.asarray(chunk_metrics.get("belief/acc", np.zeros(1)))
+        bnz = bacc[bacc != 0.0]
+        b_str = (f"  belief_acc {bnz[0]:.2f}→{bnz[-1]:.2f}" if bnz.size else "")
         print(f"chunk {chunk_idx + 1}/{num_chunks}: {dt:.1f}s "
-              f"(~{env_steps_done} env steps){rec_str}", flush=True)
+              f"(~{env_steps_done} env steps){rec_str}{b_str}", flush=True)
 
     print(f"train complete in {time.time() - t_total:.1f}s", flush=True)
     _save_final_checkpoint(carry[0], run_dir, cfg["total_env_steps"])

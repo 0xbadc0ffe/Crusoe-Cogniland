@@ -37,6 +37,7 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Categorical
 
@@ -165,6 +166,9 @@ def main():
                         help="linearly anneal ent-coef to ~0 over training — explore "
                              "early, sharpen late so the greedy (argmax) policy is crisp")
     parser.add_argument("--vf-coef", type=float, default=0.5)
+    parser.add_argument("--belief-coef", type=float, default=0.0,
+                        help="btc only: weight of the auxiliary map-category (belief) "
+                             "cross-entropy loss; 0 disables the belief head")
     parser.add_argument("--max-grad-norm", type=float, default=0.5)
     parser.add_argument("--target-kl", type=float, default=None)
     # network
@@ -224,11 +228,15 @@ def main():
     else:
         env_kw.update(water_frac=args.water_frac, rock_frac=args.rock_frac)
     vec = VecBridgeTunnelEnv(args.num_envs, **env_kw)
+    use_belief = args.variant == "btc" and args.belief_coef > 0
     policy = PPOGRUPolicy(
         vec.single_observation_space, num_actions=vec.single_action_space.n,
         gru_hidden=args.gru_hidden, embed_dim=args.embed_dim,
         obs_encoding=args.obs_encoding,
+        belief_classes=(3 if use_belief else 0),
     ).to(device)
+    from cogniland.bridge_tunnel.mapgen import CATEGORIES   # ("balanced","lakes","rocky")
+    BELIEF2I = {c: i for i, c in enumerate(CATEGORIES)}      # match jax env _CAT_TO_INT
     optimizer = optim.Adam(policy.parameters(), lr=args.learning_rate, eps=1e-5)
     n_params = sum(p.numel() for p in policy.parameters())
     print(f"policy params: {n_params:,}")
@@ -250,6 +258,7 @@ def main():
     rewards_buf = torch.zeros((args.num_steps, args.num_envs), dtype=torch.float32, device=device)
     dones_buf = torch.zeros((args.num_steps, args.num_envs), dtype=torch.float32, device=device)
     values_buf = torch.zeros((args.num_steps, args.num_envs), dtype=torch.float32, device=device)
+    belief_buf = torch.zeros((args.num_steps, args.num_envs), dtype=torch.long, device=device)
 
     next_obs_t = _to_device(vec.reset(), device)
     next_done = torch.zeros(args.num_envs, dtype=torch.float32, device=device)
@@ -289,6 +298,9 @@ def main():
             rewards_buf[step] = torch.from_numpy(reward).to(device)
             next_obs_t = _to_device(next_obs, device)
             next_done = torch.from_numpy(done.astype(np.float32)).to(device)
+            if use_belief:    # map category of the env that produced obs_buf[step]
+                for i, info in enumerate(infos):
+                    belief_buf[step, i] = BELIEF2I.get(info.get("category"), 0)
             for info in infos:
                 if "episode" in info:
                     ep = info["episode"]
@@ -316,13 +328,14 @@ def main():
 
         env_idx = np.arange(args.num_envs)
         pg_losses, v_losses, ent_losses, kls, clipfracs = [], [], [], [], []
+        belief_losses, belief_accs = [], []
         early_stop = False
         for epoch in range(args.update_epochs):
             np.random.shuffle(env_idx)
             for start in range(0, args.num_envs, envs_per_minibatch):
                 mb = torch.from_numpy(env_idx[start:start + envs_per_minibatch]).to(device)
                 mb_obs = {k: v[:, mb] for k, v in obs_buf.items()}
-                new_logp, ent, new_value = policy.evaluate(
+                new_logp, ent, new_value, belief_logits = policy.evaluate(
                     mb_obs, dones_buf[:, mb], initial_hidden[:, mb], actions_buf[:, mb])
                 log_ratio = new_logp - logprobs_buf[:, mb]
                 ratio = log_ratio.exp()
@@ -336,6 +349,13 @@ def main():
                 v_loss = 0.5 * (new_value - returns[:, mb]).pow(2).mean()
                 ent_loss = ent.mean()
                 loss = pg_loss + args.vf_coef * v_loss - ent_coef * ent_loss
+                if use_belief:    # aux map-recognition CE; grads shape the GRU
+                    b_target = belief_buf[:, mb].reshape(-1)
+                    b_loss = F.cross_entropy(belief_logits, b_target)
+                    loss = loss + args.belief_coef * b_loss
+                    belief_losses.append(b_loss.item())
+                    belief_accs.append((belief_logits.argmax(-1) == b_target)
+                                       .float().mean().item())
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 nn.utils.clip_grad_norm_(policy.parameters(), args.max_grad_norm)
@@ -358,6 +378,9 @@ def main():
             "perf/fps": sps,
             "train/early_stop": int(early_stop),
         }
+        if belief_losses:
+            log["loss/belief"] = float(np.mean(belief_losses))
+            log["belief/acc"] = float(np.mean(belief_accs))
         if ep_returns:
             min_steps = args.env_size + (args.env_width or args.env_size)
             log.update({
@@ -385,7 +408,8 @@ def main():
                   f"build={log.get('commit/frac_build', float('nan')):.2f} "
                   f"mine={log.get('commit/frac_mine', float('nan')):.2f} "
                   f"len={log.get('rollout/episode_length', float('nan')):.0f} "
-                  f"kl={log['train/approx_kl']:.4f}")
+                  f"kl={log['train/approx_kl']:.4f} "
+                  f"belief_acc={log.get('belief/acc', float('nan')):.2f}")
 
         if iteration % args.save_every_iters == 0:
             ckpt = args.checkpoint_dir / f"iter{iteration}.pt"

@@ -364,6 +364,8 @@ class WMLossAux(NamedTuple):
     rep: jnp.ndarray
     post: State                    # (T, B, ...) posterior states, for downstream AC use
     prior: State
+    belief: jnp.ndarray = jnp.float32(0.0)       # aux map-category CE loss (0 if disabled)
+    belief_acc: jnp.ndarray = jnp.float32(0.0)   # aux map-category accuracy
 
 
 def wm_loss(
@@ -385,6 +387,9 @@ def wm_loss(
     free_nats: float,
     rec_loss_fn=None,              # optional fn(rec_pred, obs_flat) → scalar rec loss;
                                    # None → default 0.5 * sum-of-squares MSE (unchanged)
+    belief_apply=None,             # optional fn(params['belief'], features) → (N, C) logits
+    belief_target=None,            # (T, B) int32 map-category targets
+    belief_scale=0.0,              # weight of the auxiliary belief CE in the total loss
 ):
     """Compute WM loss over a (T, B) batch of trajectory sub-sequences.
 
@@ -435,18 +440,32 @@ def wm_loss(
     rep_loss = jnp.maximum(rep_kl, free_nats).mean()
     dyn_loss = jnp.maximum(dyn_kl, free_nats).mean()
 
+    # auxiliary map-category (belief) cross-entropy on the posterior features;
+    # gradients flow into the RSSM/encoder, shaping the latent to encode map type.
+    if belief_apply is not None:
+        belief_logits = belief_apply(wm_params["belief"], feats_flat)   # (T*B, C)
+        bt = belief_target.reshape(T * B).astype(jnp.int32)
+        blogp = jax.nn.log_softmax(belief_logits, axis=-1)
+        belief_loss = -jnp.take_along_axis(blogp, bt[:, None], axis=-1).squeeze(-1).mean()
+        belief_acc = (belief_logits.argmax(-1) == bt).mean().astype(jnp.float32)
+    else:
+        belief_loss = jnp.float32(0.0)
+        belief_acc = jnp.float32(0.0)
+
     total = (
         loss_scales["rec"] * rec_loss
         + loss_scales["rew"] * rew_loss
         + loss_scales["cont"] * cont_loss
         + loss_scales["dyn"] * dyn_loss
         + loss_scales["rep"] * rep_loss
+        + belief_scale * belief_loss
     )
     aux = WMLossAux(
         total=total,
         rec=rec_loss, rew=rew_loss, cont=cont_loss,
         dyn=dyn_loss, rep=rep_loss,
         post=posteriors, prior=priors,
+        belief=belief_loss, belief_acc=belief_acc,
     )
     return total, aux
 

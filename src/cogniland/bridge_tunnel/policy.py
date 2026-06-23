@@ -29,7 +29,8 @@ class PPOGRUPolicy(nn.Module):
 
     def __init__(self, obs_space, num_actions: int = 6, gru_hidden: int = 128,
                  embed_dim: int = 256, tile_embed_dim: int = 16,
-                 num_tile_classes: int = NUM_TILES, obs_encoding: str = "embed"):
+                 num_tile_classes: int = NUM_TILES, obs_encoding: str = "embed",
+                 belief_classes: int = 0):
         super().__init__()
         V, _ = obs_space["minimap"].shape
         n_scalars = obs_space["scalars"].shape[0]
@@ -62,6 +63,12 @@ class PPOGRUPolicy(nn.Module):
                 nn.init.constant_(p, 0.0)
         self.actor = layer_init(nn.Linear(gru_hidden, num_actions), std=0.01)
         self.critic = layer_init(nn.Linear(gru_hidden, 1), std=1.0)
+        # auxiliary belief head: classifies the map category from the recurrent
+        # state (rocky/balanced/lakes); trained with a CE aux loss that shapes
+        # the GRU representation. belief_scalar = P(lakes) - P(rocky) ∈ [-1,1].
+        self.belief_classes = belief_classes
+        self.belief = (layer_init(nn.Linear(gru_hidden, belief_classes), std=0.01)
+                       if belief_classes else None)
         self.gru_hidden = gru_hidden
 
     def _encode(self, obs):
@@ -113,8 +120,9 @@ class PPOGRUPolicy(nn.Module):
         logits, value = self._heads(x)
         cat = Categorical(logits=logits)
         a = actions.reshape(T * B)
+        belief = self.belief(x) if self.belief is not None else None   # (T*B, C)
         return (cat.log_prob(a).reshape(T, B), cat.entropy().reshape(T, B),
-                value.reshape(T, B))
+                value.reshape(T, B), belief)
 
     # ── checkpoint helper: rebuild from a saved {"policy","args"} dict ──
     @classmethod
@@ -125,8 +133,10 @@ class PPOGRUPolicy(nn.Module):
         else:
             n_tiles = int(sd["cnn.0.weight"].shape[1]) - 2; enc = "onehot"
         n_act = int(sd["actor.weight"].shape[0])
+        bc = int(sd["belief.weight"].shape[0]) if "belief.weight" in sd else 0
         pol = cls(obs_space, num_actions=n_act, gru_hidden=a.get("gru_hidden", 128),
-                  embed_dim=a.get("embed_dim", 256), num_tile_classes=n_tiles, obs_encoding=enc).to(device)
+                  embed_dim=a.get("embed_dim", 256), num_tile_classes=n_tiles,
+                  obs_encoding=enc, belief_classes=bc).to(device)
         pol.load_state_dict(sd); pol.eval()
         return pol
 

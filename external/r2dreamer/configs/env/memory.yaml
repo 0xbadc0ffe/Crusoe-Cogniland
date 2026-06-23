@@ -1,0 +1,18 @@
+task: 'memory_4cue'
+steps: 10e6
+env_num: 16
+eval_episode_num: 10
+action_repeat: 1
+train_ratio: 512
+time_limit: 200
+size: [64, 64]
+
+seed: ${seed}
+device: ${device}
+
+encoder:
+  mlp_keys: '$^'
+  cnn_keys: 'image'
+decoder:
+  mlp_keys: '$^'
+  cnn_keys: 'image'

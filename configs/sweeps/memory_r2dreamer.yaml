@@ -1,0 +1,20 @@
+# Grid sweep over the 3 MemoryEnv cue sets -> launch_sweep.sh auto-detects 3
+# combos and submits a 3-task SLURM array (one r2dreamer training per task).
+#   2cue = green_up/blue_down (entangled)
+#   3cue = + green_down (partial)
+#   4cue = all four (factorized control)
+# Each: size25M, 10M env steps, 16 parallel envs, progress-shaped MemoryEnv.
+program: scripts/memory_env/sweep_train.py
+method: grid
+metric:
+  name: score
+  goal: maximize
+parameters:
+  cue:
+    values: ["2cue", "3cue", "4cue"]
+  model:
+    value: "size25M"
+  steps:
+    value: "10e6"
+  seed:
+    value: 0
