@@ -9,6 +9,7 @@ The released agents and how to reproduce / evaluate them. One env
 | bt PPO (one-hot) | bt | PPO+GRU | one-hot | `released_models/bridge_tunnel/ppo_gru.pt` | `configs/bridge_tunnel/bt_ppo_onehot.yaml` |
 | bt DreamerV3 (categorical) | bt | DreamerV3 25M | one-hot/categorical | `released_models/bridge_tunnel/dreamerv3/` (git-LFS) | `dreamerv3_bridge_tunnel.py --variant bt --size 25M --decoder categorical` |
 | btc PPO (one-hot) | btc | PPO+GRU | one-hot | `released_models/bridge_tunnel_commit/ppo_gru_commit.pt` | `configs/bridge_tunnel/btc_ppo_onehot.yaml` |
+| btc PPO + aux belief | btc | PPO+GRU | one-hot | `released_models/bridge_tunnel_commit/ppo_gru_commit_aux_belief.pt` | `... ppo_gru_commit_aux_belief.yaml --belief-coef 0.3` |
 | btc DreamerV3 (categorical) | btc | DreamerV3 25M | categorical | `released_models/bridge_tunnel_commit/dreamerv3_commit/` (git-LFS) | `dreamerv3_bridge_tunnel.py --variant btc --size 25M --decoder categorical --total-env-steps 6_000_000 --set entropy_coef=0.01` |
 
 The btc DreamerV3 was trained with raised exploration (`entropy_coef=0.01`, vs the
@@ -16,6 +17,12 @@ The btc DreamerV3 was trained with raised exploration (`entropy_coef=0.01`, vs t
 eval maps its 3×3 commit matrix is map-type-biased — none/build/mine ≈
 balanced 0.32/0.33/0.35, lakes 0.39/**0.44**/0.18, rocky 0.35/0.12/**0.53**;
 success 84–96%. The env reward is identical to the btc PPO agent's.
+
+`ppo_gru_commit_aux_belief` is the btc PPO agent with one extra head: a 3-class
+auxiliary classifier of the map category trained on `gru_h` (`belief_coef=0.3`),
+the only config difference from `ppo_gru_commit`. Task performance is unchanged
+(99.1% reach) but map-type belief becomes far more linearly decodable from
+`gru_h` (map-grouped probe 0.40→0.70). Released as a mech-interp substrate.
 
 ## Reproduce
 ```bash

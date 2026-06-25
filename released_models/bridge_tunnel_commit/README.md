@@ -10,3 +10,17 @@ balanced split; 99–100% success (it detours the rest, ~0.6 "none").
 
 Reproduce: `python scripts/bridge_tunnel/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel_commit/ppo_gru_commit.yaml`
 Evaluate:  `python scripts/bridge_tunnel/eval_bridge_tunnel_commit_ppo.py --checkpoint released_models/bridge_tunnel_commit/ppo_gru_commit.pt`
+
+## `ppo_gru_commit_aux_belief.pt` — same agent + auxiliary belief head
+
+Identical training to `ppo_gru_commit` **plus** a 3-class auxiliary head that
+classifies the map category (balanced/lakes/rocky) from the GRU state, with the
+CE gradient shaping the trunk (`belief_coef: 0.3`; the only config difference —
+see `ppo_gru_commit_aux_belief.yaml`). Task performance is unchanged (99.1%
+reach), but the aux loss makes the latent **belief** far more linearly decodable
+from `gru_h` (map-grouped probe balanced accuracy 0.40 → 0.70) and the
+belief-driven crossing skills decodable several steps earlier — without any
+behavioural cost. Built as a mech-interp substrate for belief/skill probing.
+
+Reproduce: `python scripts/bridge_tunnel/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel_commit/ppo_gru_commit_aux_belief.yaml --belief-coef 0.3`
+Evaluate:  `python scripts/bridge_tunnel/eval_bridge_tunnel_commit_ppo.py --checkpoint released_models/bridge_tunnel_commit/ppo_gru_commit_aux_belief.pt`

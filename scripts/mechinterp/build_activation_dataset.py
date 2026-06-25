@@ -352,11 +352,13 @@ def main():
     else:
         n_tiles = int(sd["cnn.0.weight"].shape[1]) - 2; obs_enc = "onehot"
     n_act = int(sd["actor.weight"].shape[0])
+    belief_classes = int(sd["belief.weight"].shape[0]) if "belief.weight" in sd else 0
     dummy = cfg["Env"](size=env_size, width=env_width, view_size=view); dummy.reset()
     policy = cfg["Policy"](dummy.observation_space, num_actions=n_act,
                            gru_hidden=cargs.get("gru_hidden", 128),
                            embed_dim=cargs.get("embed_dim", 256),
-                           num_tile_classes=n_tiles, obs_encoding=obs_enc).to(device)
+                           num_tile_classes=n_tiles, obs_encoding=obs_enc,
+                           belief_classes=belief_classes).to(device)
     policy.load_state_dict(sd); policy.eval()
     n_scalars = int(dummy.observation_space["scalars"].shape[0])
     agent_sha = hashlib.sha1(Path(args.checkpoint).read_bytes()).hexdigest()[:10]

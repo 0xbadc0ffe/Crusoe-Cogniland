@@ -77,10 +77,12 @@ def _load_policy(ckpt_path: Path, device):
         n_tiles = int(sd["cnn.0.weight"].shape[1]) - 2
         obs_enc = "onehot"
     n_act = int(sd["actor.weight"].shape[0])
+    belief_classes = int(sd["belief.weight"].shape[0]) if "belief.weight" in sd else 0
     policy = PPOGRUPolicy(dummy.observation_space, num_actions=n_act,
                           gru_hidden=cargs.get("gru_hidden", 128),
                           embed_dim=cargs.get("embed_dim", 256),
-                          num_tile_classes=n_tiles, obs_encoding=obs_enc).to(device)
+                          num_tile_classes=n_tiles, obs_encoding=obs_enc,
+                          belief_classes=belief_classes).to(device)
     policy.load_state_dict(sd)
     policy.eval()
     return policy, cargs, view_size, env_size, env_width
