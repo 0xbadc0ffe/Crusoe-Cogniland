@@ -166,14 +166,15 @@ class MemoryEnvConfig:
     the task learnable.
     """
 
-    pre_cue_steps: int = 3          # kept for schedule/back-compat (informational)
+    pre_cue_steps: int = 1          # initial blank corridor before the cue (was 3)
     cue_visible_steps: int = 2      # kept for schedule/back-compat (informational)
-    pre_branch_corridor_len: int = 8
+    pre_branch_corridor_len: int = 5   # cue room -> fork hallway (was 8)
     branch_len: int = 4
-    post_branch_corridor_len: int = 8
+    post_branch_corridor_len: int = 5  # fork -> door hallway (was 8; eased)
     door_visible_distance: int = 3
     max_steps: int = 200            # MiniGrid turn/forward needs more steps than 1-D
-    view_size: int = 7             # egocentric crop (cells), odd  (== agent_view_size)
+    view_size: int = 5             # egocentric crop (cells); MUST be odd (==agent_view_size); was 7
+    center_wall_thickness: int = 3  # walled rows between the up/down branches (was 1); must be odd
     cell_px: int = 8               # pixels per cell -> obs is (view*cell, view*cell, 3)
     cue_distribution: str = "factorized"   # "factorized" | "entangled" | "custom"
     custom_cues: Sequence[str] | None = None       # for cue_distribution="custom"
@@ -188,12 +189,25 @@ class MemoryEnvConfig:
     wrong_door_reward: float = 0.0
     step_penalty: float = 0.0
     branch_bonus: float = 0.5      # shape-correct corridor branch
+    # Make the SHAPE→branch decision consequential (else the branches reconnect
+    # to the same doors and the branch is a reward-optional side-bonus the agent
+    # learns to ignore). wrong_branch_penalty is added on entering the wrong
+    # branch; wrong_branch_terminates ends the episode there (classic T-maze:
+    # wrong arm = failure), forcing the agent to use shape memory.
+    wrong_branch_penalty: float = 0.0
+    wrong_branch_terminates: bool = False
+    # Conjunctive reward (no termination): award the colour-door reward ONLY if
+    # the shape-correct branch was also taken. Then the reward-maximising policy
+    # MUST use both shape (branch) and colour (door) — there is no max-reward
+    # policy that uses only one bit. Episodes still run full length.
+    success_requires_branch: bool = False
     # Dense progress shaping: PBRS on a potential = horizontal column reached
     # (capped at the door column). Reward += shaping_coef * (phi_t - phi_{t-1}),
     # which is farming-proof (net-zero for oscillation) and leaks NO task info
     # (it is shape/colour/branch-agnostic — it only rewards getting to the
-    # doors). The 33-cell corridor is otherwise unreachable by exploration.
-    shaping_coef: float = 0.02
+    # doors). At 0.01 over the (now ~23-col) corridor the full-traversal shaping
+    # totals ~0.23 — a guide that stays well under the +1.0 task reward.
+    shaping_coef: float = 0.01
 
     def __post_init__(self) -> None:
         if self.view_size % 2 == 0 or self.view_size < 3:
@@ -204,6 +218,9 @@ class MemoryEnvConfig:
             raise ValueError(f"bad forced_branch={self.forced_branch!r}")
         if self.branch_len < 2:
             raise ValueError("branch_len must be >= 2")
+        if self.center_wall_thickness < 1 or self.center_wall_thickness % 2 == 0:
+            raise ValueError(
+                f"center_wall_thickness={self.center_wall_thickness} must be odd and >= 1")
 
 
 # --------------------------------------------------------------------------- #
@@ -250,16 +267,29 @@ class _MemoryMiniGridEnv(MiniGridEnv):
         # +1 door column, +1 closing wall column, +1 right border wall
         width = self._x_doorcol + 3
 
-        # 7 rows tall: top wall, door_top, upper branch, middle, lower branch,
-        # door_bottom, bottom wall. The doors sit 2 rows off the middle (like
-        # MiniGrid MemoryEnv) so they are occluded until the agent reaches the
-        # final junction.
-        height = 7
-        self._my = height // 2          # middle row (= 3)
-        self._row_up = self._my - 1     # upper branch row (= 2)
-        self._row_lo = self._my + 1     # lower branch row (= 4)
-        self._row_door_top = self._my - 2   # = 1
-        self._row_door_bot = self._my + 2   # = 5
+        # Vertical layout. The branch zone's central wall is
+        # `center_wall_thickness` rows thick, so the up/down BRANCH corridors sit
+        # `bgap = (t+1)//2` rows off the middle row. The start room stays a
+        # compact 3-row box (my∓1). The doors sit just outside the branches but
+        # NEVER farther from the middle than the agent can see — otherwise a
+        # small view could never read the door colours on approach — so the door
+        # offset is capped at the view's vertical half-reach. The cue stays
+        # visible from the middle corridor and the doors stay occluded until the
+        # door column enters the POV, independent of the wall thickness.
+        #   t=1,view=7 -> bgap=1, doors at my∓2, height=7 (original)
+        #   t=3,view=5 -> bgap=2, doors at my∓2, height=7
+        t = self.cfg.center_wall_thickness
+        self._bgap = (t + 1) // 2                        # branch rows = my ∓ bgap
+        door_off = min(self._bgap + 1, (self.cfg.view_size - 1) // 2)
+        outer = max(self._bgap, door_off)               # outermost feature offset
+        self._my = outer + 1                            # middle (through) row
+        self._row_up = self._my - self._bgap            # upper BRANCH row
+        self._row_lo = self._my + self._bgap            # lower BRANCH row
+        self._row_room_up = self._my - 1                # start-room upper row (cue)
+        self._row_room_lo = self._my + 1                # start-room lower row (cue)
+        self._row_door_top = self._my - door_off
+        self._row_door_bot = self._my + door_off
+        height = self._my + outer + 2                   # +bottom border wall
 
         mission_space = MissionSpace(mission_func=lambda: "go to the matching door")
         super().__init__(
@@ -350,25 +380,27 @@ class _MemoryMiniGridEnv(MiniGridEnv):
         def carve(x, y):
             self.grid.set(x, y, None)
 
-        # ---- Start room: a 3-row open box (rows ru..rl) over cols
-        # [x_room_start .. x_room_end]. The cue key sits on the upper room row
-        # so it falls in the agent's forward POV during the cue phase.
+        # ---- Start room: a 3-row open box (rows my∓1) over cols
+        # [x_room_start .. x_room_end]. The cue key sits on a non-middle room row
+        # so it falls in the agent's forward POV during the cue phase. The room
+        # rows are my∓1 regardless of the branch central-wall thickness.
+        rru, rrl = self._row_room_up, self._row_room_lo
         for x in range(self._x_room_start, self._x_room_end + 1):
-            for y in (ru, my, rl):
+            for y in (rru, my, rrl):
                 carve(x, y)
         # Wall the room's right edge except the middle-row doorway, so the cue
         # is occluded once the agent steps into the hallway.
         rx = self._x_room_end
-        self.grid.set(rx, ru, Wall())
-        self.grid.set(rx, rl, Wall())
+        self.grid.set(rx, rru, Wall())
+        self.grid.set(rx, rrl, Wall())
         carve(rx, my)
 
-        # Cue position: random over the 6 non-corridor cells of the 3x3 start
+        # Cue position: random over the non-corridor cells of the 3x3 start
         # room — the 3 open columns [room_start .. room_end-1] (room_end's
         # upper/lower cells are the occluding wall) x the 2 non-middle rows
-        # {ru, rl}. The middle row (my) is the through-corridor and is excluded.
+        # {my-1, my+1}. The middle row (my) is the through-corridor and excluded.
         cue_col = int(self.np_random.integers(self._x_room_start, self._x_room_end))
-        cue_row = ru if self.np_random.integers(0, 2) == 0 else rl
+        cue_row = rru if self.np_random.integers(0, 2) == 0 else rrl
         self._cue_pos = (cue_col, cue_row)
         self.grid.set(
             *self._cue_pos,
@@ -385,25 +417,28 @@ class _MemoryMiniGridEnv(MiniGridEnv):
         for x in range(self._x_pre_start, self._x_pre_end + 1):
             carve(x, my)
 
-        # ---- Branch zone: the middle row is walled, the corridor splits into
-        # an upper (ru) and a lower (rl) path that both run the branch length
-        # and reconnect. The agent must commit to one before the doors show.
+        # ---- Branch zone: the central rows are walled (a `center_wall_thickness`
+        # -thick wall), the corridor splits into an upper (ru) and a lower (rl)
+        # path that both run the branch length and reconnect. The agent must
+        # commit to one before the doors show.
         bs, be = self._x_branch_start, self._x_branch_end
         for x in range(bs, be + 1):
             carve(x, ru)
             carve(x, rl)
-            # middle row stays Wall (already filled)
-        # Junction cells: open up/down at the last pre-branch column so the
-        # agent can turn into either branch from the middle row.
+            # the rows between ru and rl stay Wall -> the thick central wall
+        # Junction: carve a vertical slot at the last pre-branch column so the
+        # agent can turn from the middle corridor up to ru or down to rl. The
+        # slot spans ru..rl, so it works for any central-wall thickness.
         jx = self._x_pre_end
-        carve(jx, ru)
-        carve(jx, rl)
+        for y in range(ru, rl + 1):
+            carve(jx, y)
 
-        # ---- Reconnect + post hallway: open the reconnect junction up/down,
-        # then a middle-row corridor to the door split.
+        # ---- Reconnect + post hallway: carve the reconnect slot (ru..rl) so the
+        # branches funnel back to the middle row, then a middle-row corridor to
+        # the door split.
         rxp = self._x_post_start
-        carve(rxp, ru)
-        carve(rxp, rl)
+        for y in range(ru, rl + 1):
+            carve(rxp, y)
         for x in range(self._x_post_start, self._x_post_end + 1):
             carve(x, my)
 
@@ -504,13 +539,16 @@ class _MemoryMiniGridEnv(MiniGridEnv):
         if self._forced_branch is not None:
             return self._forced_branch
 
-        # What branch is the agent trying to enter this step?
+        # What branch is the agent trying to enter this step? Use the facing
+        # direction (north -> up, south -> down) rather than the next-cell row,
+        # so it is robust to a thick central wall (the branch row may be several
+        # cells from the middle corridor).
         attempt = None
         if action == A_FORWARD:
-            fy = int((self.agent_pos + self.dir_vec)[1])
-            if fy == self._row_up:
+            dy = int(self.dir_vec[1])
+            if dy < 0:
                 attempt = "up"
-            elif fy == self._row_lo:
+            elif dy > 0:
                 attempt = "down"
         # (turn actions alone don't move into a row; nothing to redirect yet)
 
@@ -577,18 +615,26 @@ class _MemoryMiniGridEnv(MiniGridEnv):
                 self.taken_branch = "up"
             elif ay == self._row_lo:
                 self.taken_branch = "down"
-            if self.taken_branch is not None and self.taken_branch == self.correct_branch:
-                reward += c.branch_bonus
+            if self.taken_branch is not None:
+                if self.taken_branch == self.correct_branch:
+                    reward += c.branch_bonus
+                else:
+                    # shape-wrong branch: penalise and (optionally) end the episode
+                    reward += c.wrong_branch_penalty
+                    if c.wrong_branch_terminates:
+                        terminated = True
 
         # --- door termination: stepping onto a coloured door cell ends it.
         cell = (ax, ay)
         if cell in self._door_color_at:
             self.selected_door = self._door_color_at[cell]
             terminated = True
-            if self.selected_door == self.target_door_color:
-                reward += c.success_reward
-            else:
-                reward += c.wrong_door_reward
+            door_ok = self.selected_door == self.target_door_color
+            # conjunctive: the door reward requires the shape-correct branch too,
+            # so maximising reward forces BOTH shape and colour memory.
+            branch_ok = (not c.success_requires_branch) or (
+                self.taken_branch == self.correct_branch)
+            reward += c.success_reward if (door_ok and branch_ok) else c.wrong_door_reward
 
         # dense PBRS progress shaping (farming-proof, task-info-agnostic)
         phi = self._progress_phi()
@@ -846,59 +892,29 @@ def oracle_action(info: dict[str, Any], env: "MemoryEnv | None" = None) -> int:
     dx_doorcol = mg._x_doorcol
     jx = mg._x_pre_end
 
-    # ---- Approaching / inside the branch: get onto branch_row. ---------- #
-    if ax < dx_branch_start:
-        # In room or pre-hallway. If at the junction column and need to change
-        # row, turn toward branch_row first; else go forward (east).
-        if ax == jx and ay == my:
-            # turn toward the branch row, then forward into it.
-            if branch_row == ru:
-                a = face(DIR_NORTH)
-            else:
-                a = face(DIR_SOUTH)
-            if a is not None:
-                return a
-            return A_FORWARD
-        # otherwise move east along the middle row
-        a = face(DIR_EAST)
-        return a if a is not None else A_FORWARD
+    # ---- Unified row-follower: pick the desired row for the current x-region,
+    # move vertically onto it (the junction / reconnect / door columns carve a
+    # full vertical slot), then head east. Robust to any central-wall thickness.
+    if ax < jx:                         # approach: middle corridor
+        desired, allow_east = my, True
+    elif ax == jx:                      # junction: rise/drop to the branch row
+        desired, allow_east = branch_row, True
+    elif ax <= dx_branch_end:           # inside the branch
+        desired, allow_east = branch_row, True
+    elif ax == dx_post_start:           # reconnect: funnel back to the middle
+        desired, allow_east = my, True
+    elif ax < dx_doorcol:               # post hallway: middle corridor
+        desired, allow_east = my, True
+    else:                               # at the door column: go to the door row
+        desired, allow_east = door_row, False
 
-    if dx_branch_start <= ax <= dx_branch_end:
-        # inside the branch: if not yet on branch_row, step onto it; else go east.
-        if ay != branch_row:
-            # we are at junction-entry column on middle? shouldn't happen; route
-            tgt = DIR_NORTH if branch_row == ru else DIR_SOUTH
-            a = face(tgt)
-            return a if a is not None else A_FORWARD
-        a = face(DIR_EAST)
-        if a is not None:
-            return a
-        # if at the last branch cell, we need to funnel back to middle next.
-        return A_FORWARD
-
-    # ---- Reconnect column: return to the middle row. -------------------- #
-    if ax == dx_post_start and ay != my:
-        tgt = DIR_SOUTH if ay == ru else DIR_NORTH
+    if ay != desired:
+        tgt = DIR_NORTH if desired < ay else DIR_SOUTH
         a = face(tgt)
         return a if a is not None else A_FORWARD
-
-    # ---- Post hallway: move east to the door column. -------------------- #
-    if ax < dx_doorcol:
-        if ay != my:
-            tgt = DIR_SOUTH if ay == ru else DIR_NORTH
-            a = face(tgt)
-            return a if a is not None else A_FORWARD
+    if allow_east:
         a = face(DIR_EAST)
         return a if a is not None else A_FORWARD
-
-    # ---- At the door column: go to the colour-correct door row. --------- #
-    if ax == dx_doorcol:
-        if ay == door_row:
-            return A_FORWARD     # already on it (terminal already triggered)
-        tgt = DIR_NORTH if door_row < my else DIR_SOUTH
-        a = face(tgt)
-        return a if a is not None else A_FORWARD
-
     return A_FORWARD
 
 

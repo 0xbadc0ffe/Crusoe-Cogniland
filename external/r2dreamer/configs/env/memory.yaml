@@ -3,7 +3,7 @@ steps: 10e6
 env_num: 16
 eval_episode_num: 10
 action_repeat: 1
-train_ratio: 512
+train_ratio: 64    # default (was 512); ~8x fewer updates/env-step -> ~5-8x higher fps
 time_limit: 200
 size: [64, 64]
 

@@ -1,0 +1,20 @@
+# 5M-step sweep at train_ratio=64 — "continue training to converge". At ~90 fps
+# this is ~15.5h (fits the 24h wall). Fresh run (same seed) trains the same task
+# 2.5x longer than the 2M baseline to test whether the 3cue/4cue branch policy
+# improves with more updates (vs being a structural local optimum).
+program: scripts/memory_env/sweep_train.py
+method: grid
+metric:
+  name: score
+  goal: maximize
+parameters:
+  cue:
+    values: ["2cue", "3cue", "4cue"]
+  model:
+    value: "size25M"
+  steps:
+    value: "5e6"
+  train_ratio:
+    value: 64
+  seed:
+    value: 0

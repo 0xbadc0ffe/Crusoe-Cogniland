@@ -40,7 +40,7 @@ from cogniland.memory_env import MemoryEnvConfig, oracle_action  # noqa: E402
 
 # import path mirrors scripts/memory_env/datasets.py
 sys.path.insert(0, str(_REPO / "scripts" / "memory_env"))
-from datasets import ALL_CUES, eval_per_cue  # noqa: E402
+from datasets import ALL_CUES, eval_per_cue, TRAIN_CUES  # noqa: E402
 
 OUT_PNG = _REPO / "outputs" / "report" / "memoryenv_reward_per_cue.png"
 MODELS = ["2cue", "3cue", "4cue"]
@@ -115,10 +115,13 @@ def build_act_fn(ckpt_path, task, device="cuda:0", model_size="size25M"):
         is_first = info.get("global_step", 0) == 0
         if is_first or holder["state"] is None:
             holder["state"] = agent.get_initial_state(1)
+        # agent.act expects obs as (B, *) with NO time dim: the encoder preserves
+        # leading dims, so a (1,1,H,W,3) image yields embed (1,1,E) which then
+        # mismatches deter (1,D) in rssm.obs_step's cat. Use a single batch dim.
         trans = TensorDict(
             {
-                "image": torch.as_tensor(image, device=dev)[None, None],  # (1,1,H,W,3)
-                "is_first": torch.tensor([[is_first]], device=dev),
+                "image": torch.as_tensor(image, device=dev)[None],  # (1,H,W,3)
+                "is_first": torch.tensor([is_first], device=dev),    # (1,)
             },
             batch_size=(1,),
         )
@@ -133,7 +136,13 @@ def build_act_fn(ckpt_path, task, device="cuda:0", model_size="size25M"):
 #  plotting
 # --------------------------------------------------------------------------- #
 def plot_reward_per_cue(results, out_png=OUT_PNG):
-    """results: {model_name: {cue: avg_reward}} -> grouped bar plot."""
+    """results: {model_name: {cue: avg_reward}} -> grouped bar plot.
+
+    The train/test split is made explicit ON the figure: each model's legend
+    entry lists its TRAINING cue set, and every bar whose cue was in that model's
+    training set is marked with a ★ (in-distribution). Unmarked bars are held-out
+    cues — all models are evaluated on the same held-out 4-cue test set.
+    """
     import matplotlib
 
     matplotlib.use("Agg")
@@ -142,19 +151,33 @@ def plot_reward_per_cue(results, out_png=OUT_PNG):
     cues = list(ALL_CUES)
     x = np.arange(len(cues))
     width = 0.25
-    fig, ax = plt.subplots(figsize=(9, 5))
+    fig, ax = plt.subplots(figsize=(10, 5.5))
     colors = {"2cue": "#d62728", "3cue": "#ff7f0e", "4cue": "#2ca02c"}
+    ymax = 0.0
     for i, model in enumerate(MODELS):
+        train = list(TRAIN_CUES[model])
         vals = [results[model].get(c, np.nan) for c in cues]
-        ax.bar(x + (i - 1) * width, vals, width, label=f"{model} model",
-               color=colors.get(model))
+        ymax = max(ymax, max([v for v in vals if v == v] or [0.0]))
+        xpos = x + (i - 1) * width
+        # in-distribution bars get a solid black edge; held-out bars are plain.
+        ax.bar(xpos, vals, width, color=colors.get(model),
+               edgecolor=["black" if c in train else "none" for c in cues],
+               linewidth=[1.6 if c in train else 0.0 for c in cues],
+               label=f"{model} model  (train: {', '.join(train)})")
+        # ★ above every bar whose cue is in this model's training set.
+        for xi, c, v in zip(xpos, cues, vals):
+            if c in train and v == v:
+                ax.text(xi, v, "★", ha="center", va="bottom", fontsize=9,
+                        color=colors.get(model))
     ax.set_xticks(x)
     ax.set_xticklabels(cues, rotation=15)
     ax.set_ylabel("average reward")
-    ax.set_xlabel("cue type (held-out 4-cue test set)")
+    ax.set_xlabel("cue type (all models evaluated on the same held-out 4-cue test set)")
     ax.set_title("R2-Dreamer MemoryEnv: avg reward per cue type")
     ax.axhline(0.0, color="k", lw=0.6)
-    ax.legend()
+    ax.set_ylim(top=ymax * 1.15 + 0.05)
+    ax.legend(title="★ = cue in that model's training set (in-distribution)",
+              fontsize=9, title_fontsize=8)
     fig.tight_layout()
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, dpi=130)

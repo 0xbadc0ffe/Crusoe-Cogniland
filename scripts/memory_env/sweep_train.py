@@ -26,21 +26,26 @@ def main() -> int:
     model = str(cfg.get("model", "size25M"))
     steps = str(cfg.get("steps", "10e6"))
     seed = int(cfg.get("seed", 0))
+    train_ratio = cfg.get("train_ratio", None)   # optional; defaults to env config (512)
 
     repo = os.environ.get("PROJECT_DIR", os.getcwd())
     env = dict(os.environ)
     env["PYTHONPATH"] = f"{repo}/src" + (
         os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
 
+    tag = os.environ.get("MEMENV_TAG", "")           # experiment-arm logdir suffix
+    logdir = f"external/r2dreamer/runs/memory_{cue}" + (f"_{tag}" if tag else "")
     cmd = [
         sys.executable, "external/r2dreamer/train.py",
         "env=memory", f"env.task=memory_{cue}",
         f"model={model}", f"env.steps={steps}",
         "device=cuda:0", f"seed={seed}",
-        f"logdir=external/r2dreamer/runs/memory_{cue}",
+        f"logdir={logdir}",
     ]
-    print("[sweep_train] cue=%s model=%s steps=%s seed=%d" % (cue, model, steps, seed),
-          flush=True)
+    if train_ratio is not None:
+        cmd.append(f"env.train_ratio={train_ratio}")
+    print("[sweep_train] cue=%s model=%s steps=%s seed=%d train_ratio=%s tag=%s logdir=%s"
+          % (cue, model, steps, seed, train_ratio, tag or "-", logdir), flush=True)
     print("[sweep_train] cmd:", " ".join(cmd), flush=True)
     rc = subprocess.run(cmd, cwd=repo, env=env).returncode
     wandb.finish(exit_code=rc)

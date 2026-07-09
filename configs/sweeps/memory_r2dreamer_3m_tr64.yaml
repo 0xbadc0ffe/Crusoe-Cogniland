@@ -1,0 +1,19 @@
+# 3M-step sweep at train_ratio=64 (~9h, overnight). Reward/gating differences
+# between experiment arms are supplied via MEMENV_* env vars + MEMENV_TAG (which
+# tags the run dir), NOT this file, so both arms share this config.
+program: scripts/memory_env/sweep_train.py
+method: grid
+metric:
+  name: score
+  goal: maximize
+parameters:
+  cue:
+    values: ["2cue", "3cue", "4cue"]
+  model:
+    value: "size25M"
+  steps:
+    value: "3e6"
+  train_ratio:
+    value: 64
+  seed:
+    value: 0

@@ -6,6 +6,12 @@
 #SBATCH --time=02:00:00
 #SBATCH --output=scripts/memory_env/slurm/logs/%x_%j.out
 #SBATCH --error=scripts/memory_env/slurm/logs/%x_%j.out
+# The cluster TaskProlog (/etc/slurm/sync/prolog_sync.sh) runs `set -u` and
+# dereferences $SRC_DIR before its own empty-guard, so an unset SRC_DIR makes
+# the prolog fail with "TaskProlog failed status=1" (it never reaches this
+# script). job_memory.slurm exports it; the eval must too. Without this the
+# job dies in <1s on ANY node regardless of --exclude.
+#SBATCH --export=ALL,SRC_DIR=/cluster/raid/home/fwang
 # -----------------------------------------------------------------------------
 # Evaluate the 3 trained models on the SAME held-out 4-cue test set and render
 # the average-reward-per-cue plot. Run AFTER train_memory.sbatch finishes — the

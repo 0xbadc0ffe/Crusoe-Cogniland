@@ -250,3 +250,6 @@ paper/*.fls
 paper/*.fdb_latexmk
 paper/*.log
 paper/*.out
+# Released MemoryEnv PPO checkpoints — keep despite the generic ignore (git-LFS)
+!released_models/memory_env/*/checkpoints/
+!released_models/memory_env/*/checkpoints/**

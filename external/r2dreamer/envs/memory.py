@@ -16,10 +16,33 @@ The training cue subset is selected from the r2dreamer task name:
 module can be imported in the lightweight r2dreamer env without pulling in the
 rest of cogniland's heavy dependencies (set PYTHONPATH to the repo's ``src``).
 """
+import os
+
 import gymnasium as gym
 import numpy as np
 
 from cogniland.memory_env import make_memory_env, MemoryEnvConfig
+
+
+def _env_overrides() -> dict:
+    """Per-run MemoryEnvConfig overrides from MEMENV_* env vars (for experiment
+    arms — reward shaping / branch gating — without changing code defaults)."""
+    ov = {}
+    g = os.environ.get
+    for var, field, cast in (
+        ("MEMENV_BRANCH_BONUS", "branch_bonus", float),
+        ("MEMENV_SUCCESS_REWARD", "success_reward", float),
+        ("MEMENV_WRONG_BRANCH_PENALTY", "wrong_branch_penalty", float),
+        ("MEMENV_WRONG_DOOR_REWARD", "wrong_door_reward", float),
+    ):
+        if g(var) is not None:
+            ov[field] = cast(g(var))
+    for var, field in (("MEMENV_WRONG_BRANCH_TERMINATES", "wrong_branch_terminates"),
+                       ("MEMENV_SUCCESS_REQUIRES_BRANCH", "success_requires_branch")):
+        v = g(var)
+        if v is not None:
+            ov[field] = v.lower() in ("1", "true", "yes")
+    return ov
 
 
 # task-name -> MemoryEnvConfig cue settings (mirrors scripts/memory_env/datasets.py)
@@ -48,7 +71,7 @@ class Memory(gym.Env):
             raise ValueError(
                 f"unknown memory task {task!r}; expected one of {sorted(_CUE_SUBSETS)}"
             )
-        cfg = MemoryEnvConfig(**_CUE_SUBSETS[task])
+        cfg = MemoryEnvConfig(**_CUE_SUBSETS[task], **_env_overrides())
         self._env = make_memory_env(cfg)
         self._size = tuple(size)
         self._seed = int(seed)

@@ -1,0 +1,21 @@
+# 1M-step sweep at train_ratio=64 (vs the default 512). 8x fewer gradient
+# updates per env step -> ~5-8x higher fps (~2-4h instead of ~18h).
+# NOTE: at the SAME 1M env steps this does ~8x fewer TOTAL updates than the
+# tr512 run, so the model may under-train; bump `steps` (e.g. 4e6-8e6) if the
+# success rate is weak.
+program: scripts/memory_env/sweep_train.py
+method: grid
+metric:
+  name: score
+  goal: maximize
+parameters:
+  cue:
+    values: ["2cue", "3cue", "4cue"]
+  model:
+    value: "size25M"
+  steps:
+    value: "1e6"
+  train_ratio:
+    value: 64
+  seed:
+    value: 0

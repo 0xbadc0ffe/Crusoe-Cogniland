@@ -1,0 +1,20 @@
+# 2M-step sweep at train_ratio=64 (env default). PyTorch r2dreamer baseline on
+# the modified MemoryEnv. ~60 fps -> ~9.3h for 2e6 steps. Kept as the active
+# training / fallback while the pure-JAX MemoryEnv port is built and benchmarked;
+# training switches to JAX only if its speedup is substantial.
+program: scripts/memory_env/sweep_train.py
+method: grid
+metric:
+  name: score
+  goal: maximize
+parameters:
+  cue:
+    values: ["2cue", "3cue", "4cue"]
+  model:
+    value: "size25M"
+  steps:
+    value: "2e6"
+  train_ratio:
+    value: 64
+  seed:
+    value: 0

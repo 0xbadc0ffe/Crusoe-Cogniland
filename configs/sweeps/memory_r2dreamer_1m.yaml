@@ -1,0 +1,21 @@
+# Short-budget variant of memory_r2dreamer.yaml: 1M env steps instead of 10M.
+# Rationale: at the measured ~15 fps (train_ratio=512, size25M), 10M steps would
+# need ~180h — far past the 24h SLURM wall, and r2dreamer only writes latest.pt
+# AFTER the full loop returns (train.py:58), so a timed-out job leaves NO
+# checkpoint to evaluate. 1M steps finishes in ~18-20h (fits the wall with
+# margin) and writes latest.pt, which eval_memory.sbatch needs.
+#   bash scripts/memory_env/slurm/launch_sweep.sh configs/sweeps/memory_r2dreamer_1m.yaml
+program: scripts/memory_env/sweep_train.py
+method: grid
+metric:
+  name: score
+  goal: maximize
+parameters:
+  cue:
+    values: ["2cue", "3cue", "4cue"]
+  model:
+    value: "size25M"
+  steps:
+    value: "1e6"
+  seed:
+    value: 0
