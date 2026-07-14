@@ -940,8 +940,17 @@ def main():
         bacc = np.asarray(chunk_metrics.get("belief/acc", np.zeros(1)))
         bnz = bacc[bacc != 0.0]
         b_str = (f"  belief_acc {bnz[0]:.2f}→{bnz[-1]:.2f}" if bnz.size else "")
+        suc = np.asarray(chunk_metrics.get("success/mean", np.zeros(1)))
+        snz = suc[np.isfinite(suc) & (suc != 0.0)]
+        s_str = (f"  succ {snz[-1]:.2f}" if snz.size else "")
         print(f"chunk {chunk_idx + 1}/{num_chunks}: {dt:.1f}s "
-              f"(~{env_steps_done} env steps){rec_str}{b_str}", flush=True)
+              f"(~{env_steps_done} env steps){rec_str}{b_str}{s_str}", flush=True)
+        # intermediate checkpoint at every chunk boundary (params-only orbax),
+        # so held-out/greedy eval can validate progress without waiting for the
+        # final step. Skip the last chunk (the final save below covers it).
+        if chunk_idx < num_chunks - 1:
+            _save_final_checkpoint(carry[0], run_dir, env_steps_done)
+            print(f"  saved checkpoint → step_{env_steps_done}", flush=True)
 
     print(f"train complete in {time.time() - t_total:.1f}s", flush=True)
     _save_final_checkpoint(carry[0], run_dir, cfg["total_env_steps"])

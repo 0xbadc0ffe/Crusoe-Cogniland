@@ -120,7 +120,7 @@ def _build_model(cfg):
 
 
 def batched_rollout(encoder, rssm, actor_head, wm_params, ac_params, env, params,
-                    n_traj, max_steps, key):
+                    n_traj, max_steps, key, greedy: bool = False):
     """``n_traj`` stochastic rollouts on one fixed map. Returns
     (positions[T+1,n,2], reached[n], placed[T,n], mined[T,n], face[T,n], commit[T,n])."""
     action_dim = C.NUM_ACTIONS
@@ -142,7 +142,8 @@ def batched_rollout(encoder, rssm, actor_head, wm_params, ac_params, env, params
                                   last_is_first, rngs={"stoch": s_stoch})
         feat = posterior.features()
         logits = ac.unimix_logits(actor_head.apply(ac_params["actor"], feat))
-        action_idx = jax.random.categorical(s_pol, logits)
+        action_idx = jnp.where(greedy, jnp.argmax(logits, axis=-1),
+                               jax.random.categorical(s_pol, logits))
         action_oh = jax.nn.one_hot(action_idx, action_dim)
         step_keys = jax.random.split(s_step, n_traj)
         next_obs, next_state, reward, done_next, info = jax.vmap(
