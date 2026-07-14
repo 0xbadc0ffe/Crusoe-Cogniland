@@ -62,6 +62,13 @@ _FACE_NAME = {0: "up", 1: "down", 2: "left", 3: "right"}
 _CATS = ("balanced", "lakes", "rocky")
 
 
+def _cells_to_mask(cells, H, W):
+    m = np.zeros((H, W), dtype=bool)
+    for (r, c) in (cells or []):
+        m[r, c] = True
+    return m
+
+
 # ─────────────────────── env-specific wiring ──────────────────────────
 
 def _env_cfg(env_name: str):
@@ -224,13 +231,21 @@ def _rollout(policy, env_make, geo, cfg, map_id, map_seed, category, traj_id, tr
     hk = policy.embed.register_forward_hook(lambda m, i, o: cap.__setitem__("embed", o.detach()))
     rows, path = [], []
     reached = False
+    final_pos = None
     try:
         for t in range(max_steps):
             mm = torch.from_numpy(obs["minimap"])[None, None].to(device)
             sc = torch.from_numpy(obs["scalars"])[None, None].to(device)
             gru_out, h = policy._gru_forward({"minimap": mm, "scalars": sc}, done[None], h)
-            logits, value = policy._heads(gru_out.squeeze(0))
+            feat = gru_out.squeeze(0)
+            logits, value = policy._heads(feat)
             probs = torch.softmax(logits, dim=-1)[0]
+            # belief-head output (the passive map-category probe) — logits + probs
+            if policy.belief is not None:
+                belief_logits = policy.belief(feat)[0]
+                belief_probs = torch.softmax(belief_logits, dim=-1)
+            else:
+                belief_logits = belief_probs = None
             a = int(torch.distributions.Categorical(logits=logits).sample()[0])
             pos = (int(env._pos[0]), int(env._pos[1])); facing = int(env._facing)
             commit_pre = int(getattr(env, "_commit", 0))
@@ -245,8 +260,18 @@ def _rollout(policy, env_make, geo, cfg, map_id, map_seed, category, traj_id, tr
                 "_minimap": obs["minimap"].astype(np.int8),
                 "_scalars": obs["scalars"].astype(np.float16),
                 "_probs": probs.cpu().numpy().astype(np.float16),
+                "_logits": logits.squeeze(0).cpu().numpy().astype(np.float16),
             }
+            if belief_logits is not None:
+                row["_belief_logits"] = belief_logits.cpu().numpy().astype(np.float16)
+                row["_belief_probs"] = belief_probs.cpu().numpy().astype(np.float16)
+                bp = belief_probs.cpu().numpy()
+                row["belief_argmax"] = _CATS[int(bp.argmax())]
+                for ci, cn in enumerate(_CATS):
+                    row[f"belief_p_{cn}"] = float(bp[ci])
             row.update(_belief_row(geo, pos, facing, T))
+            if geo.get("fork_wall"):
+                row["correct_target"] = geo["correct_target"]
             if is_commit:
                 row["category"] = category
                 row["commit_state"] = ("none", "build", "mine")[commit_pre]
@@ -258,12 +283,20 @@ def _rollout(policy, env_make, geo, cfg, map_id, map_seed, category, traj_id, tr
                 reached = True; break
             if trunc:
                 break
+        final_pos = (int(env._pos[0]), int(env._pos[1]))   # after the terminal step
     finally:
         hk.remove()
 
     seg, did, decisions = _strategy(path, geo, T, map_id, traj_id, traj_seed,
                                     min_cross, approach_window, near_radius)
     ep_len = len(rows)
+    # fork_wall post-processing: which door the episode ended at (top/bottom/none)
+    door_chosen = "none"
+    if geo.get("fork_wall"):
+        if final_pos in set(geo["top_cells"]):
+            door_chosen = "top"
+        elif final_pos in set(geo["bottom_cells"]):
+            door_chosen = "bottom"
     # commit post-processing (commit env)
     commit_step = -1
     if cfg["is_commit"]:
@@ -275,6 +308,9 @@ def _rollout(policy, env_make, geo, cfg, map_id, map_seed, category, traj_id, tr
     for k, row in enumerate(rows):
         row["segment"] = seg[k]; row["decision_id"] = did[k]
         row["reached"] = reached; row["ep_len"] = ep_len
+        if geo.get("fork_wall"):
+            row["door_chosen"] = door_chosen
+            row["reached_correct"] = reached          # env reach flag == correct-door success
         if cfg["is_commit"]:
             row["commit_step"] = commit_step
             row["time_since_commit"] = (k - commit_step) if commit_step >= 0 and k >= commit_step else -1
@@ -320,6 +356,12 @@ def main():
     p.add_argument("--n-maps", type=int, default=90, help="bridge_tunnel: number of maps from --seed-start")
     p.add_argument("--maps-per-category", type=int, default=30, help="commit env: maps per category")
     p.add_argument("--categories", default="balanced,lakes,rocky", help="commit env categories")
+    p.add_argument("--fork-wall", action="store_true",
+                   help="commit env: fork_wall split-decision maps (top/bottom door by category)")
+    p.add_argument("--passage-half", type=int, default=1, help="fork_wall passage half-width")
+    p.add_argument("--wall-margin", type=int, default=1, help="fork_wall wall distance from right edge")
+    p.add_argument("--no-commit", action="store_true",
+                   help="disable the commitment mechanic (bt rules; 5-scalar obs) on the category maps")
     p.add_argument("--seed-start", type=int, default=10_000, help="held-out map seeds")
     p.add_argument("--n-traj", type=int, default=60, help="stochastic rollouts per map")
     p.add_argument("--max-steps", type=int, default=800)
@@ -338,6 +380,8 @@ def main():
     view = cargs.get("view_size", 21); device = torch.device(args.device)
     gh = cargs.get("goal_half", 1)
     goal_half = gh if (gh is not None and gh >= 0) else None
+    args._fork_wall = False
+    args._commit_override = None
     if args.env == "bridge_tunnel":
         args._natkw = dict(size=env_size, width=env_width, orientation=cargs.get("orientation", "natural"),
                            water_frac=cargs.get("water_frac", 0.14), rock_frac=cargs.get("rock_frac", 0.14),
@@ -345,6 +389,15 @@ def main():
     else:
         args._natkw = dict(size=env_size, width=env_width, tree_frac=cargs.get("tree_frac", 0.03),
                            goal_half=goal_half)
+        # fork_wall / no-commit come from the checkpoint unless overridden on the CLI
+        fork_wall = bool(args.fork_wall or cargs.get("fork_wall", False))
+        no_commit = bool(args.no_commit or cargs.get("no_commit", False))
+        if fork_wall:
+            args._natkw.update(fork_wall=True,
+                               passage_half=cargs.get("passage_half", args.passage_half),
+                               wall_margin=cargs.get("wall_margin", args.wall_margin))
+        args._fork_wall = fork_wall
+        args._commit_override = (False if no_commit else None)
 
     sd = ckpt["policy"]; obs_enc = cargs.get("obs_encoding", "embed")
     if "tile_embed.weight" in sd:
@@ -353,7 +406,10 @@ def main():
         n_tiles = int(sd["cnn.0.weight"].shape[1]) - 2; obs_enc = "onehot"
     n_act = int(sd["actor.weight"].shape[0])
     belief_classes = int(sd["belief.weight"].shape[0]) if "belief.weight" in sd else 0
-    dummy = cfg["Env"](size=env_size, width=env_width, view_size=view); dummy.reset()
+    _envkw = {}
+    if args.env == "bridge_tunnel_commit" and args._commit_override is not None:
+        _envkw["commit"] = args._commit_override      # bt rules on category maps
+    dummy = cfg["Env"](size=env_size, width=env_width, view_size=view, **_envkw); dummy.reset()
     policy = cfg["Policy"](dummy.observation_space, num_actions=n_act,
                            gru_hidden=cargs.get("gru_hidden", 128),
                            embed_dim=cargs.get("embed_dim", 256),
@@ -370,8 +426,13 @@ def main():
     for m in maps:
         rec = m["rec"]
         geo = _map_geometry(rec, T, cfg["ctg_fn"])
+        # fork_wall labels: which door the category rewards, and the door cells
+        geo["fork_wall"] = args._fork_wall
+        geo["correct_target"] = getattr(rec, "correct_target", None)
+        geo["top_cells"] = list(getattr(rec, "top_goal_cells", []) or [])
+        geo["bottom_cells"] = list(getattr(rec, "bottom_goal_cells", []) or [])
         env_make = (lambda rec=rec: cfg["Env"](map_record=rec, size=rec.terrain.shape[0],
-                    width=rec.terrain.shape[1], view_size=view, max_steps=args.max_steps))
+                    width=rec.terrain.shape[1], view_size=view, max_steps=args.max_steps, **_envkw))
         tag = m["category"] or f"seed{m['map_seed']}"
         print(f"[map {m['map_id']}] {tag} seed {m['map_seed']}: "
               f"water={len(geo['bodies']['water'])} rock={len(geo['bodies']['rock'])} bodies — "
@@ -395,7 +456,11 @@ def main():
         "minimap": np.stack([r.pop("_minimap") for r in all_rows]),
         "scalars": np.stack([r.pop("_scalars") for r in all_rows]),
         "action_probs": np.stack([r.pop("_probs") for r in all_rows]),
+        "action_logits": np.stack([r.pop("_logits") for r in all_rows]),
     }
+    if "_belief_logits" in all_rows[0]:
+        arrays["belief_logits"] = np.stack([r.pop("_belief_logits") for r in all_rows])
+        arrays["belief_probs"] = np.stack([r.pop("_belief_probs") for r in all_rows])
     try:
         import h5py
         with h5py.File(out_dir / "activations.h5", "w") as f:
@@ -416,6 +481,14 @@ def main():
     map_extra = {}
     if cfg["is_commit"]:
         map_extra["category"] = np.array([m["category"] for m in maps])
+    if args._fork_wall:
+        map_extra["correct_target"] = np.array([getattr(m["rec"], "correct_target", "") for m in maps])
+        # per-map top/bottom door masks (single-cell doors, but stored as masks for generality)
+        map_extra["top_door_mask"] = np.stack([
+            _cells_to_mask(getattr(m["rec"], "top_goal_cells", []), Hm, Wm) for m in maps])
+        map_extra["bottom_door_mask"] = np.stack([
+            _cells_to_mask(getattr(m["rec"], "bottom_goal_cells", []), Hm, Wm) for m in maps])
+        map_extra["wall_col"] = np.array([getattr(m["rec"], "wall_col", -1) or -1 for m in maps], np.int32)
     np.savez_compressed(out_dir / "maps.npz", terrain=terr, spawn=spawn, target=target,
                         goal_mask=goal_mask, map_seed=map_seed_arr, **map_extra)
 
@@ -440,10 +513,17 @@ def main():
         "natural_kwargs": args._natkw, "n_maps": len(maps), "n_traj_per_map": args.n_traj,
         "n_rows": N, "n_decisions": len(all_dec),
         "activation_sites": {"gru_h": int(policy.gru_hidden), "enc_embed": int(cargs.get("embed_dim", 256))},
+        "model_outputs": {
+            "action_logits": [n_act, "float16"], "action_probs": [n_act, "float16"],
+            **({"belief_logits": [belief_classes, "float16"], "belief_probs": [belief_classes, "float16"],
+                "belief_classes": list(_CATS)} if belief_classes else {}),
+        },
         "obs_stored": {"minimap": [view, view, "int8"], "scalars": [n_scalars, "float16"]},
         "tile_names": {int(k): v for k, v in T.TILE_NAMES.items()},
         "tile_colors": np.asarray(T.TILE_COLORS).tolist(),
         "is_commit": cfg["is_commit"],
+        "fork_wall": args._fork_wall,
+        "commit_enabled": (args._commit_override is not False),
         "traj_seed_formula": "map_seed*100000 + traj_id",
         "reproduce": (f"torch.manual_seed(traj_seed); env=<{args.env} Env>(map_record="
                       f"gen(map_seed[, category]), view_size={view}, max_steps={args.max_steps}); "
@@ -463,6 +543,11 @@ def main():
             "category": "(commit) map category = belief label",
             "commit_state": "(commit) none/build/mine at time t", "committed_now": "(commit) committed this step",
             "commit_step/time_since_commit/final_commit/correct_commit": "(commit) commitment dynamics",
+            "belief_argmax": "(belief head) argmax category of belief_probs at time t",
+            "belief_p_balanced/lakes/rocky": "(belief head) per-class probability at time t",
+            "correct_target": "(fork_wall) door the category rewards: top/bottom/either",
+            "door_chosen": "(fork_wall) door the episode ended at: top/bottom/none",
+            "reached_correct": "(fork_wall) reached the correct (category-matching) door",
         },
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
