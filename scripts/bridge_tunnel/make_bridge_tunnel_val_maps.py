@@ -43,17 +43,24 @@ def main():
     p.add_argument("--rock-frac", type=float, default=0.14)
     p.add_argument("--tree-frac", type=float, default=0.03)
     p.add_argument("--goal-half", type=int, default=1, help="natural: central goal door half-height (default 1 = 3-cell door; <0 = whole right wall)")
+    p.add_argument("--fork-wall", action="store_true",
+                   help="split-decision variant: wall+passage near the right edge, then top/bottom doors")
+    p.add_argument("--passage-half", type=int, default=1, help="fork-wall: passage is 2*passage-half+1 cells")
+    p.add_argument("--wall-margin", type=int, default=1, help="fork-wall: wall is this many cells from the right edge")
     p.add_argument("--out", type=Path, default=None,
                    help="default: data/bridge_tunnel/val_maps.pkl (bt) | val_maps_btc.pkl (btc)")
     args = p.parse_args()
     if args.out is None:
+        suffix = "_forkwall" if args.fork_wall else ""
         args.out = Path("data/bridge_tunnel/val_maps.pkl" if args.variant == "bt"
-                        else "data/bridge_tunnel/val_maps_btc.pkl")
+                        else f"data/bridge_tunnel/val_maps_btc{suffix}.pkl")
 
     if args.variant == "btc":
         # --n maps per category, seeds held out from training (>= seed_start)
         kw = dict(size=args.env_size, width=args.env_width, tree_frac=args.tree_frac,
-                  goal_half=(args.goal_half if args.goal_half >= 0 else None))
+                  goal_half=(args.goal_half if args.goal_half >= 0 else None),
+                  fork_wall=args.fork_wall, passage_half=args.passage_half,
+                  wall_margin=args.wall_margin)
         recs, seeds = [], []
         for c in CATEGORIES:
             for j in range(args.n):
@@ -87,6 +94,13 @@ def main():
         ax = axes[j]
         ax.imshow(T.TILE_COLORS[rec.terrain], interpolation="nearest")
         ax.scatter([rec.spawn[1]], [rec.spawn[0]], c="white", s=24, marker="o", edgecolors="k")
+        if rec.correct_target is not None:
+            top_ok = rec.correct_target in ("top", "either")
+            bot_ok = rec.correct_target in ("bottom", "either")
+            for cells, ok in ((rec.top_goal_cells, top_ok), (rec.bottom_goal_cells, bot_ok)):
+                if cells:
+                    ys = [r for r, c in cells]; xs = [c for r, c in cells]
+                    ax.scatter(xs, ys, c=("lime" if ok else "red"), s=18, marker="s", edgecolors="k", linewidths=0.5)
         cat = f" {rec.category}" if rec.category else ""
         ax.set_xticks([]); ax.set_yticks([]); ax.set_title(f"val map {j}{cat} (seed {rec.seed})", fontsize=8)
     for j in range(len(recs), len(axes)):

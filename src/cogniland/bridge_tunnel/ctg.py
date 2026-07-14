@@ -19,15 +19,19 @@ from .tiles import ROCK, TARGET, TREE, WATER
 
 def compute_ctg(terrain: np.ndarray, target: tuple[int, int], *,
                 water_cross: bool = True, rock_cross: bool = True,
-                cap: int | None = None) -> np.ndarray:
+                cap: int | None = None, seeds=None) -> np.ndarray:
     """Entering walkable land costs 1; entering a *crossable* obstacle costs 2
     (build/mine + the move); TREE and any non-crossable obstacle are walls.
-    Seeded from every TARGET cell. Unreachable → ``INF = H·W·4`` (then clamped to
+    Seeded from every TARGET cell by default; pass ``seeds`` (an iterable of
+    ``(r, c)``) to seed from a specific subset instead — e.g. the fork_wall
+    task's *correct* door only, so the PBRS potential doesn't pull the agent
+    toward the decoy door. Unreachable → ``INF = H·W·4`` (then clamped to
     ``cap`` if given)."""
     H, W = terrain.shape
     INF = H * W * 4
     dist = np.full((H, W), INF, dtype=np.int32)
-    seeds = list(map(tuple, np.argwhere(terrain == TARGET)))
+    seeds = list(map(tuple, seeds)) if seeds is not None \
+        else list(map(tuple, np.argwhere(terrain == TARGET)))
     if not seeds:
         seeds = [tuple(target)]
     pq = []
@@ -65,14 +69,14 @@ def compute_ctg(terrain: np.ndarray, target: tuple[int, int], *,
 
 
 def commit_ctg_stack(terrain: np.ndarray, target: tuple[int, int],
-                     cap: int | None = None) -> np.ndarray:
+                     cap: int | None = None, seeds=None) -> np.ndarray:
     """(3, H, W) float32 commitment-indexed fields: [none, build, mine]."""
     H, W = terrain.shape
     if cap is None:
         cap = 2 * (H + W)
-    none = compute_ctg(terrain, target, water_cross=True, rock_cross=True, cap=cap)
-    build = compute_ctg(terrain, target, water_cross=True, rock_cross=False, cap=cap)
-    mine = compute_ctg(terrain, target, water_cross=False, rock_cross=True, cap=cap)
+    none = compute_ctg(terrain, target, water_cross=True, rock_cross=True, cap=cap, seeds=seeds)
+    build = compute_ctg(terrain, target, water_cross=True, rock_cross=False, cap=cap, seeds=seeds)
+    mine = compute_ctg(terrain, target, water_cross=False, rock_cross=True, cap=cap, seeds=seeds)
     return np.stack([none, build, mine], axis=0).astype(np.float32)
 
 

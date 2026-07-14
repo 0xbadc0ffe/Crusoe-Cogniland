@@ -131,7 +131,16 @@ def main():
     parser.add_argument("--tree-frac", type=float, default=0.03,
                         help="natural: impassable tree coverage")
     parser.add_argument("--goal-half", type=int, default=1,
-                        help="natural goal: <0 ⇒ whole right wall; N ⇒ central door of half-height N")
+                        help="natural goal: <0 ⇒ whole right wall; N ⇒ central door of half-height N "
+                             "(fork-wall: door half-height, 0 ⇒ 1-cell door)")
+    parser.add_argument("--fork-wall", action="store_true",
+                        help="split-decision variant: a wall+passage near the right edge, then "
+                             "top/bottom doors; only the door matching the map category (lakes→bottom, "
+                             "rocky→top, balanced→either) pays the reach bonus / counts as success")
+    parser.add_argument("--passage-half", type=int, default=1,
+                        help="fork-wall: passage is 2*passage-half+1 cells")
+    parser.add_argument("--wall-margin", type=int, default=1,
+                        help="fork-wall: wall is this many cells from the right edge")
     parser.add_argument("--categories", nargs="+", default=["balanced", "lakes", "rocky"],
                         choices=("balanced", "lakes", "rocky"),
                         help="btc: map categories drawn uniformly each reset")
@@ -221,6 +230,7 @@ def main():
         build_cost=args.build_cost, gamma=args.gamma, seed=args.seed,
         tree_frac=args.tree_frac,
         goal_half=(args.goal_half if args.goal_half >= 0 else None),
+        fork_wall=args.fork_wall, passage_half=args.passage_half, wall_margin=args.wall_margin,
     )
     if args.variant == "btc":
         env_kw.update(categories=tuple(args.categories),

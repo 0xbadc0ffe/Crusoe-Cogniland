@@ -34,6 +34,11 @@ class MapRecord:
     goal_cells: list[tuple[int, int]] = field(default_factory=list)
     # btc variant only: map category label (balanced/lakes/rocky); None for bt.
     category: str | None = None
+    # fork_wall maps only: the two-door split of goal_cells (empty otherwise).
+    # correct_target names which one the category rewards ("top"/"bottom"/"either").
+    top_goal_cells: list[tuple[int, int]] = field(default_factory=list)
+    bottom_goal_cells: list[tuple[int, int]] = field(default_factory=list)
+    correct_target: str | None = None
 
 
 ORIENTATIONS = ("natural",)
@@ -53,6 +58,9 @@ def generate_bridge_tunnel_map(
     rock_frac: float = 0.14,      # fraction of map that is rock (mountains)
     tree_frac: float = 0.03,      # fraction of grass turned to impassable tree patches
     goal_half: int | None = None, # None ⇒ whole right wall is goal; N ⇒ central door
+    fork_wall: bool = False,      # split-decision variant, see _build_natural
+    passage_half: int = 1,        # fork_wall only: passage is 2*passage_half+1 cells
+    wall_margin: int = 1,         # fork_wall only: wall is this many cells from the right edge
 ) -> MapRecord:
     """Build one natural map.
 
@@ -71,7 +79,8 @@ def generate_bridge_tunnel_map(
         raise ValueError(
             f"orientation must be 'natural' (stripe orientations retired), got {orientation!r}")
     H, W = int(size), int(width) if width is not None else int(size)
-    return _build_natural(H, W, seed, water_frac, rock_frac, tree_frac, goal_half=goal_half)
+    return _build_natural(H, W, seed, water_frac, rock_frac, tree_frac, goal_half=goal_half,
+                          fork_wall=fork_wall, passage_half=passage_half, wall_margin=wall_margin)
 
 
 # ───────────────────────── natural (open) terrain ─────────────────────────
@@ -125,7 +134,7 @@ def _massif_field(rr, cc, cr, cc0, sigma, n_lobes, rng):
 
 
 def _build_natural(H, W, seed, water_frac, rock_frac, tree_frac=0.06, edge_band=10,
-                   goal_half=None):
+                   goal_half=None, fork_wall=False, passage_half=1, wall_margin=1):
     """Open procedural terrain. Domain-warped fractal heightmap + overlaid lakes
     (round), mountains, and ridges; thresholded so ~``water_frac`` of cells are
     WATER (low), ~``rock_frac`` are ROCK (high), the rest GRASS. A few small
@@ -217,22 +226,64 @@ def _build_natural(H, W, seed, water_frac, rock_frac, tree_frac=0.06, edge_band=
     rmid = H // 2
     spawn = (rmid, 0)
 
-    # goal on the right wall. ``goal_half=None`` (default) ⇒ the WHOLE wall is a
-    # goal (touch it anywhere to win) — this gives diverse endpoints / multiple
-    # paths. A positive ``goal_half`` instead makes only a central door of that
-    # half-height the goal (funnels the agent to the centre).
-    if goal_half is None or (2 * int(goal_half) + 1) >= H:
-        goal_rows = range(H)
+    top_goal_cells: list[tuple[int, int]] = []
+    bottom_goal_cells: list[tuple[int, int]] = []
+    correct_target: str | None = None
+
+    if fork_wall:
+        # split-decision variant: a TREE wall ``wall_margin`` cells from the
+        # right edge with a ``2*passage_half+1``-cell centre passage, then TWO
+        # single-cell doors on the far right wall (top / bottom). The wall
+        # sits inside the obstacle-free right edge band, so it never eats into
+        # the lake/rock terrain that carries the category signal — the agent
+        # must read the category *before* the gate, then commit to a side
+        # after it. ``goal_half`` sizes each door (default 0 ⇒ 1 cell).
+        wall_col = W - 1 - int(wall_margin)
+        ph = int(passage_half)
+        passage_rows = set(range(max(0, rmid - ph), min(H, rmid + ph + 1)))
+        for r in range(H):
+            if r not in passage_rows:
+                terrain[r, wall_col] = TREE
+        gh = int(goal_half) if goal_half is not None else 0
+        top_c, bot_c = H // 4, H - 1 - H // 4
+        top_rows = range(max(0, top_c - gh), min(H, top_c + gh + 1))
+        bot_rows = range(max(0, bot_c - gh), min(H, bot_c + gh + 1))
+        for r in top_rows:
+            terrain[r, W - 1] = TARGET
+        for r in bot_rows:
+            terrain[r, W - 1] = TARGET
+        top_goal_cells = [(r, W - 1) for r in top_rows]
+        bottom_goal_cells = [(r, W - 1) for r in bot_rows]
+        goal_cells = top_goal_cells + bottom_goal_cells
+        target = top_goal_cells[len(top_goal_cells) // 2]
+        # category signal is read off the terrain fractions that generated
+        # this map: lakes-dominant ⇒ bottom, rocky-dominant ⇒ top, roughly
+        # even ⇒ either door is fine.
+        if water_frac > rock_frac * 1.5:
+            correct_target = "bottom"
+        elif rock_frac > water_frac * 1.5:
+            correct_target = "top"
+        else:
+            correct_target = "either"
     else:
-        gh = int(goal_half)
-        goal_rows = range(max(0, rmid - gh), min(H, rmid + gh + 1))
-    for r in goal_rows:
-        terrain[r, W - 1] = TARGET
-    goal_cells = [(r, W - 1) for r in goal_rows]
-    target = (rmid, W - 1)
+        # goal on the right wall. ``goal_half=None`` (default) ⇒ the WHOLE wall
+        # is a goal (touch it anywhere to win) — this gives diverse endpoints /
+        # multiple paths. A positive ``goal_half`` instead makes only a central
+        # door of that half-height the goal (funnels the agent to the centre).
+        if goal_half is None or (2 * int(goal_half) + 1) >= H:
+            goal_rows = range(H)
+        else:
+            gh = int(goal_half)
+            goal_rows = range(max(0, rmid - gh), min(H, rmid + gh + 1))
+        for r in goal_rows:
+            terrain[r, W - 1] = TARGET
+        goal_cells = [(r, W - 1) for r in goal_rows]
+        target = (rmid, W - 1)
 
     # sprinkle small IMPASSABLE tree patches on grass in the obstacle band only.
     from collections import deque
+
+    goal_cell_set = set(goal_cells)
 
     def _reachable(terr) -> bool:
         seen = np.zeros((H, W), dtype=bool)
@@ -240,7 +291,7 @@ def _build_natural(H, W, seed, water_frac, rock_frac, tree_frac=0.06, edge_band=
         q = deque([spawn])
         while q:
             r, c = q.popleft()
-            if (r, c) == target:
+            if (r, c) in goal_cell_set:
                 return True
             for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 nr, nc = r + dr, c + dc
@@ -282,7 +333,9 @@ def _build_natural(H, W, seed, water_frac, rock_frac, tree_frac=0.06, edge_band=
     while patches and not _reachable(terrain):
         terrain[patches.pop()] = GRASS
 
-    return MapRecord(terrain, spawn, target, int(seed), "natural", goal_cells)
+    return MapRecord(terrain, spawn, target, int(seed), "natural", goal_cells,
+                     top_goal_cells=top_goal_cells, bottom_goal_cells=bottom_goal_cells,
+                     correct_target=correct_target)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -333,9 +386,10 @@ def category_fracs(category: str) -> tuple[float, float]:
 
 
 def _can_reach_goal(terrain: np.ndarray, spawn: tuple[int, int],
-                    crossable: frozenset) -> bool:
-    """BFS spawn → any TARGET treating walkable + ``crossable`` tiles as passable
-    (TREE + the non-crossable obstacle are walls). ``crossable=∅`` ⇒ walkable-only."""
+                    crossable: frozenset, cells: frozenset | None = None) -> bool:
+    """BFS spawn → any of ``cells`` (default: any TARGET tile) treating walkable +
+    ``crossable`` tiles as passable (TREE + the non-crossable obstacle are walls).
+    ``crossable=∅`` ⇒ walkable-only."""
     from collections import deque
     H, W = terrain.shape
     sr, sc = spawn
@@ -343,7 +397,7 @@ def _can_reach_goal(terrain: np.ndarray, spawn: tuple[int, int],
     q = deque([(sr, sc)])
     while q:
         r, c = q.popleft()
-        if terrain[r, c] == TARGET:
+        if (terrain[r, c] == TARGET) if cells is None else ((r, c) in cells):
             return True
         for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
             nr, nc = r + dr, c + dc
@@ -357,25 +411,44 @@ def _can_reach_goal(terrain: np.ndarray, spawn: tuple[int, int],
 def generate_commit_map(size: int = 32, width: int | None = 64, seed: int = 0,
                         category: str = "balanced", tree_frac: float = 0.03,
                         goal_half: int | None = 1, require_cross: bool = False,
-                        max_resample: int = 400) -> MapRecord:
+                        max_resample: int = 400, fork_wall: bool = False,
+                        passage_half: int = 1, wall_margin: int = 1) -> MapRecord:
     """One ``category`` map (btc variant), winnable under its intended commitment
     (lakes→build, rocky→mine, balanced→either). Deterministic; resamples with a
-    prime seed offset if a guard fails. ``record.seed`` keeps the requested seed."""
+    prime seed offset if a guard fails. ``record.seed`` keeps the requested seed.
+
+    ``fork_wall=True`` grafts the split-decision gate onto the end of the corridor
+    (see ``_build_natural``): a 3-cell passage through a wall, then a top/bottom
+    door pair, where the door matching ``category`` (lakes→bottom, rocky→top,
+    balanced→either) must be reachable via the intended commitment."""
     wf, rf = category_fracs(category)
     W = int(width) if width is not None else int(size)
     s = int(seed)
     for _ in range(max_resample):
-        base = _build_natural(int(size), W, s, wf, rf, tree_frac, goal_half=goal_half)
+        base = _build_natural(int(size), W, s, wf, rf, tree_frac, goal_half=goal_half,
+                              fork_wall=fork_wall, passage_half=passage_half,
+                              wall_margin=wall_margin)
         terr, spawn = base.terrain, base.spawn
-        build_ok = _can_reach_goal(terr, spawn, frozenset({WATER}))
-        mine_ok = _can_reach_goal(terr, spawn, frozenset({ROCK}))
+        if fork_wall:
+            target_cells = frozenset(
+                base.top_goal_cells + base.bottom_goal_cells if base.correct_target == "either"
+                else base.top_goal_cells if base.correct_target == "top"
+                else base.bottom_goal_cells)
+            build_ok = _can_reach_goal(terr, spawn, frozenset({WATER}), target_cells)
+            mine_ok = _can_reach_goal(terr, spawn, frozenset({ROCK}), target_cells)
+        else:
+            build_ok = _can_reach_goal(terr, spawn, frozenset({WATER}))
+            mine_ok = _can_reach_goal(terr, spawn, frozenset({ROCK}))
         intended = {"balanced": build_ok and mine_ok, "lakes": build_ok,
                     "rocky": mine_ok}[category]
         cross_needed = (not _can_reach_goal(terr, spawn, frozenset())) if require_cross else True
         if intended and cross_needed:
             return MapRecord(terrain=terr, spawn=spawn, target=base.target,
                              seed=int(seed), orientation="natural",
-                             goal_cells=base.goal_cells, category=category)
+                             goal_cells=base.goal_cells, category=category,
+                             top_goal_cells=base.top_goal_cells,
+                             bottom_goal_cells=base.bottom_goal_cells,
+                             correct_target=base.correct_target)
         s += 100003
     raise RuntimeError(f"could not generate a winnable {category!r} map from seed {seed}")
 
@@ -390,7 +463,7 @@ def generate_map(variant: str = "bt", seed: int = 0, size: int = 32,
     if variant == "bt":
         return generate_bridge_tunnel_map(
             seed=seed, size=size, width=width, water_frac=water_frac,
-            rock_frac=rock_frac, tree_frac=tree_frac, goal_half=goal_half)
+            rock_frac=rock_frac, tree_frac=tree_frac, goal_half=goal_half, **kw)
     if variant == "btc":
         return generate_commit_map(
             size=size, width=width, seed=seed, category=category or "balanced",

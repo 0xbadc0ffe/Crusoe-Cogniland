@@ -10,6 +10,7 @@ The released agents and how to reproduce / evaluate them. One env
 | bt DreamerV3 (categorical) | bt | DreamerV3 25M | one-hot/categorical | `released_models/bridge_tunnel/dreamerv3/` (git-LFS) | `dreamerv3_bridge_tunnel.py --variant bt --size 25M --decoder categorical` |
 | btc PPO (one-hot) | btc | PPO+GRU | one-hot | `released_models/bridge_tunnel_commit/ppo_gru_commit.pt` | `configs/bridge_tunnel/btc_ppo_onehot.yaml` |
 | btc PPO + aux belief | btc | PPO+GRU | one-hot | `released_models/bridge_tunnel_commit/ppo_gru_commit_aux_belief.pt` | `... ppo_gru_commit_aux_belief.yaml --belief-coef 0.3` |
+| btc PPO fork_wall + belief | btc | PPO+GRU | one-hot | `released_models/bridge_tunnel_commit/ppo_gru_forkwall_belief.pt` | `configs/bridge_tunnel/btc_ppo_forkwall.yaml` |
 | btc DreamerV3 (categorical) | btc | DreamerV3 25M | categorical | `released_models/bridge_tunnel_commit/dreamerv3_commit/` (git-LFS) | `dreamerv3_bridge_tunnel.py --variant btc --size 25M --decoder categorical --total-env-steps 6_000_000 --set entropy_coef=0.01` |
 
 The btc DreamerV3 was trained with raised exploration (`entropy_coef=0.01`, vs the
@@ -23,6 +24,17 @@ auxiliary classifier of the map category trained on `gru_h` (`belief_coef=0.3`),
 the only config difference from `ppo_gru_commit`. Task performance is unchanged
 (99.1% reach) but map-type belief becomes far more linearly decodable from
 `gru_h` (map-grouped probe 0.40→0.70). Released as a mech-interp substrate.
+
+`ppo_gru_forkwall_belief` is the same PPO+GRU+belief agent trained on the
+**fork_wall** task (`btc_ppo_forkwall.yaml`, `fork_wall: true`): the corridor
+ends in a 3-cell passage through a wall, then a top/bottom door pair where only
+the door matching the map category (rocky→top, lakes→bottom, balanced→either)
+counts as success. This makes the category belief behaviourally load-bearing —
+it must survive the passage and select the final door — as a belief-steering
+substrate. Held-out: 96.8% correct-door / 0.5% wrong-door / 2.7% timeout; door
+matrix rocky→top 0.99, lakes→bottom 0.99, balanced ≈0.48/0.45. Eval with
+`scripts/bridge_tunnel/eval_bridge_tunnel_forkwall.py`; held-out maps in
+`data/bridge_tunnel/val_maps_btc_forkwall.pkl`.
 
 ## Reproduce
 ```bash

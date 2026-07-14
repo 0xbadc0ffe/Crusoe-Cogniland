@@ -1,0 +1,44 @@
+{
+  "per_category": {
+    "balanced": {
+      "success": 0.9296875,
+      "wrong_door": 0.0,
+      "timeout": 0.0703125,
+      "commit_build": 0.130859375,
+      "commit_mine": 0.248046875,
+      "commit_none": 0.62109375,
+      "mean_len": 158.041015625,
+      "n": 512
+    },
+    "lakes": {
+      "success": 0.98828125,
+      "wrong_door": 0.00390625,
+      "timeout": 0.0078125,
+      "commit_build": 0.373046875,
+      "commit_mine": 0.03125,
+      "commit_none": 0.595703125,
+      "mean_len": 112.025390625,
+      "n": 512
+    },
+    "rocky": {
+      "success": 0.986328125,
+      "wrong_door": 0.009765625,
+      "timeout": 0.00390625,
+      "commit_build": 0.01953125,
+      "commit_mine": 0.5390625,
+      "commit_none": 0.44140625,
+      "mean_len": 114.650390625,
+      "n": 512
+    }
+  },
+  "overall": {
+    "success": 0.9680989583333334,
+    "wrong_door": 0.004557291666666667,
+    "timeout": 0.02734375,
+    "commit_build": 0.17447916666666666,
+    "commit_mine": 0.2727864583333333,
+    "commit_none": 0.552734375,
+    "mean_len": 128.23893229166666
+  },
+  "checkpoint": "outputs/ppo_checkpoints/ppo_gru_commit_forkwall_belief/final.pt"
+}

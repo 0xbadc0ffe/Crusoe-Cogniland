@@ -60,6 +60,9 @@ class BridgeTunnelEnv(gym.Env):
         categories: tuple[str, ...] = ("balanced", "lakes", "rocky"),  # btc
         tree_frac: float = 0.03,
         goal_half: int | None = 1,
+        fork_wall: bool = False,           # split-decision gate: wall+passage, then top/bottom doors
+        passage_half: int = 1,             # fork_wall: passage is 2*passage_half+1 cells
+        wall_margin: int = 1,              # fork_wall: wall is this many cells from the right edge
         seed: int = 0,
         map_record: MapRecord | None = None,
         slack_penalty: float = -0.01,
@@ -89,6 +92,9 @@ class BridgeTunnelEnv(gym.Env):
         self.categories = tuple(categories)
         self.tree_frac = float(tree_frac)
         self.goal_half = goal_half
+        self.fork_wall = bool(fork_wall)
+        self.passage_half = int(passage_half)
+        self.wall_margin = int(wall_margin)
         self.slack_penalty = float(slack_penalty)
         self.reach_bonus = float(reach_bonus)
         self.shaping_coef = float(shaping_coef)
@@ -111,6 +117,7 @@ class BridgeTunnelEnv(gym.Env):
         self._record: MapRecord | None = None
         self._terrain: np.ndarray | None = None
         self._ctg: np.ndarray | None = None      # bt: (H,W); btc: (3,H,W)
+        self._correct_cells: set[tuple[int, int]] | None = None  # fork_wall: the rewarded door(s)
         self._pos: tuple[int, int] = (0, 0)
         self._facing: int = F_RIGHT
         self._commit: int = COMMIT_NONE
@@ -120,14 +127,14 @@ class BridgeTunnelEnv(gym.Env):
 
     # ── cost-to-go (classmethods kept for the JAX map oracle + parity) ────
     @classmethod
-    def _compute_ctg(cls, terrain, target):
+    def _compute_ctg(cls, terrain, target, seeds=None):
         """bt potential: both obstacles crossable, uncapped (matches the JAX oracle)."""
-        return compute_ctg(terrain, target, water_cross=True, rock_cross=True, cap=None)
+        return compute_ctg(terrain, target, water_cross=True, rock_cross=True, cap=None, seeds=seeds)
 
     @classmethod
-    def _compute_all_ctg(cls, terrain, target):
+    def _compute_all_ctg(cls, terrain, target, seeds=None):
         """btc potential: (3,H,W) commit-indexed [none,build,mine], capped at 2(H+W)."""
-        return commit_ctg_stack(terrain, target)
+        return commit_ctg_stack(terrain, target, seeds=seeds)
 
     # ── lifecycle ────────────────────────────────────────────────────────
     def reset(self, *, seed: int | None = None, options: dict | None = None):
@@ -144,11 +151,23 @@ class BridgeTunnelEnv(gym.Env):
             self._record = generate_map(
                 variant=self.variant, seed=sub, size=self.height, width=self.width,
                 category=cat, water_frac=self.water_frac, rock_frac=self.rock_frac,
-                tree_frac=self.tree_frac, goal_half=self.goal_half)
+                tree_frac=self.tree_frac, goal_half=self.goal_half,
+                fork_wall=self.fork_wall, passage_half=self.passage_half,
+                wall_margin=self.wall_margin)
         self._terrain = self._record.terrain.copy()
         tgt = self._record.target
-        self._ctg = self._compute_all_ctg(self._terrain, tgt) if self.commit_enabled \
-            else self._compute_ctg(self._terrain, tgt)
+        rec = self._record
+        if rec.correct_target == "top":
+            self._correct_cells = set(rec.top_goal_cells)
+        elif rec.correct_target == "bottom":
+            self._correct_cells = set(rec.bottom_goal_cells)
+        elif rec.correct_target == "either":
+            self._correct_cells = set(rec.top_goal_cells) | set(rec.bottom_goal_cells)
+        else:
+            self._correct_cells = None
+        seeds = list(self._correct_cells) if self._correct_cells is not None else None
+        self._ctg = self._compute_all_ctg(self._terrain, tgt, seeds=seeds) if self.commit_enabled \
+            else self._compute_ctg(self._terrain, tgt, seeds=seeds)
         self._pos = tuple(self._record.spawn)
         self._facing = F_RIGHT
         self._commit = COMMIT_NONE
@@ -165,7 +184,7 @@ class BridgeTunnelEnv(gym.Env):
             raise ValueError(f"action {action} out of range [0,{NUM_ACTIONS})")
 
         reward = self.slack_penalty
-        mined = placed = blocked = reached = committed_now = False
+        mined = placed = blocked = reached_any = success = committed_now = False
         commit_prev = self._commit
         ctg_prev = self._ctg_at(commit_prev, self._pos)
 
@@ -177,8 +196,14 @@ class BridgeTunnelEnv(gym.Env):
                     and is_walkable(int(self._terrain[nr, nc])):
                 self._pos = (nr, nc)
                 if self._terrain[nr, nc] == TARGET:
-                    reward += self.reach_bonus
-                    reached = True
+                    reached_any = True
+                    # fork_wall maps: only the door matching the map's belief
+                    # (category) pays the reach bonus / counts as success; the
+                    # decoy door still ends the episode, just with no bonus.
+                    success = (self._correct_cells is None
+                              or (nr, nc) in self._correct_cells)
+                    if success:
+                        reward += self.reach_bonus
             else:
                 blocked = True
         elif action == A_BUILD:
@@ -195,9 +220,10 @@ class BridgeTunnelEnv(gym.Env):
         self._step_count += 1
         self._episode_return += reward
         self._traj.append(self._pos)
-        terminated = reached
+        terminated = reached_any
         truncated = (not terminated) and (self._step_count >= self.max_steps)
-        info = self._make_info(reward, mined, placed, blocked, reached, committed_now)
+        info = self._make_info(reward, mined, placed, blocked, success, committed_now)
+        info["reached_any_target"] = reached_any
         if terminated or truncated:
             info["thin_correct"], info["thin_total"] = 0, 0   # retired metric (bt compat)
         return self._make_obs(), float(reward), terminated, truncated, info
@@ -254,7 +280,7 @@ class BridgeTunnelEnv(gym.Env):
             out[rs:re, cs:ce] = self._terrain[r0 + rs:r0 + re, c0 + cs:c0 + ce]
         return out
 
-    def _make_info(self, reward, mined, placed, blocked, reached, committed_now):
+    def _make_info(self, reward, mined, placed, blocked, success, committed_now):
         cur = int(self._terrain[self._pos[0], self._pos[1]])
         return {
             "position": self._pos,
@@ -268,7 +294,9 @@ class BridgeTunnelEnv(gym.Env):
             "current_tile": cur,
             "reward": float(reward),
             "mined": mined, "placed": placed, "blocked": blocked,
-            "reached_target": reached,
+            # fork_wall: True only if the door reached matches the map's belief
+            # (category); non-fork maps: True whenever any target is touched.
+            "reached_target": success,
         }
 
     def render(self):

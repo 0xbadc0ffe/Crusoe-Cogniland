@@ -24,3 +24,25 @@ behavioural cost. Built as a mech-interp substrate for belief/skill probing.
 
 Reproduce: `python scripts/bridge_tunnel/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel_commit/ppo_gru_commit_aux_belief.yaml --belief-coef 0.3`
 Evaluate:  `python scripts/bridge_tunnel/eval_bridge_tunnel_commit_ppo.py --checkpoint released_models/bridge_tunnel_commit/ppo_gru_commit_aux_belief.pt`
+
+## `ppo_gru_forkwall_belief.pt` — fork_wall split-decision task + aux belief head
+
+Same PPO+GRU + aux belief head (`belief_coef: 0.3`), trained on the **fork_wall**
+variant of `btc`: after the open category-revealing corridor the agent passes
+through a 3-cell gap in a wall (1 cell from the right edge), then must pick one
+of two single-cell doors — **top if the map is rocky, bottom if lakes, either if
+balanced**. Only the door matching the map category pays the reach bonus / counts
+as success; the decoy door still ends the episode with no reward. This makes the
+map-category belief a *behaviourally load-bearing* variable that must be carried
+through the passage to the final action — the intended substrate for belief
+steering (does patching the belief flip the door choice?).
+
+Held-out eval (16 maps/category × 32 stochastic rollouts, seeds ≥10000):
+**96.8% correct-door success, 0.5% wrong-door, 2.7% timeout**; aux belief
+accuracy ≈0.87. Door-choice matrix (rows=category, cols=top/neither/bottom):
+rocky→top 0.99, lakes→bottom 0.99, balanced ≈0.48/0.45 split. See
+`forkwall_figures/` for the door-choice matrix, training curves, and trajectory
+grid.
+
+Reproduce: `python scripts/bridge_tunnel/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel_commit/ppo_gru_forkwall_belief.yaml`
+Evaluate:  `python scripts/bridge_tunnel/eval_bridge_tunnel_forkwall.py --checkpoint released_models/bridge_tunnel_commit/ppo_gru_forkwall_belief.pt`
