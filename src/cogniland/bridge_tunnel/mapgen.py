@@ -39,6 +39,10 @@ class MapRecord:
     top_goal_cells: list[tuple[int, int]] = field(default_factory=list)
     bottom_goal_cells: list[tuple[int, int]] = field(default_factory=list)
     correct_target: str | None = None
+    # fork_wall maps only: the passage cells in the wall + the wall column, so
+    # shaping can be seeded from the opening instead of a door.
+    passage_cells: list[tuple[int, int]] = field(default_factory=list)
+    wall_col: int | None = None
 
 
 ORIENTATIONS = ("natural",)
@@ -229,6 +233,8 @@ def _build_natural(H, W, seed, water_frac, rock_frac, tree_frac=0.06, edge_band=
     top_goal_cells: list[tuple[int, int]] = []
     bottom_goal_cells: list[tuple[int, int]] = []
     correct_target: str | None = None
+    passage_cells: list[tuple[int, int]] = []
+    fork_wall_col: int | None = None
 
     if fork_wall:
         # split-decision variant: a TREE wall ``wall_margin`` cells from the
@@ -244,6 +250,8 @@ def _build_natural(H, W, seed, water_frac, rock_frac, tree_frac=0.06, edge_band=
         for r in range(H):
             if r not in passage_rows:
                 terrain[r, wall_col] = TREE
+        passage_cells = [(r, wall_col) for r in sorted(passage_rows)]
+        fork_wall_col = wall_col
         gh = int(goal_half) if goal_half is not None else 0
         top_c, bot_c = H // 4, H - 1 - H // 4
         top_rows = range(max(0, top_c - gh), min(H, top_c + gh + 1))
@@ -335,7 +343,8 @@ def _build_natural(H, W, seed, water_frac, rock_frac, tree_frac=0.06, edge_band=
 
     return MapRecord(terrain, spawn, target, int(seed), "natural", goal_cells,
                      top_goal_cells=top_goal_cells, bottom_goal_cells=bottom_goal_cells,
-                     correct_target=correct_target)
+                     correct_target=correct_target, passage_cells=passage_cells,
+                     wall_col=fork_wall_col)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -448,7 +457,9 @@ def generate_commit_map(size: int = 32, width: int | None = 64, seed: int = 0,
                              goal_cells=base.goal_cells, category=category,
                              top_goal_cells=base.top_goal_cells,
                              bottom_goal_cells=base.bottom_goal_cells,
-                             correct_target=base.correct_target)
+                             correct_target=base.correct_target,
+                             passage_cells=base.passage_cells,
+                             wall_col=base.wall_col)
         s += 100003
     raise RuntimeError(f"could not generate a winnable {category!r} map from seed {seed}")
 

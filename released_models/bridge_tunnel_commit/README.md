@@ -46,3 +46,27 @@ grid.
 
 Reproduce: `python scripts/bridge_tunnel/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel_commit/ppo_gru_forkwall_belief.yaml`
 Evaluate:  `python scripts/bridge_tunnel/eval_bridge_tunnel_forkwall.py --checkpoint released_models/bridge_tunnel_commit/ppo_gru_forkwall_belief.pt`
+
+## `ppo_gru_forkwall_nocommit.pt` — fork_wall under BT rules (no commitment)
+
+Same fork_wall task and aux belief head, but the **commitment mechanic is
+disabled** (`no_commit: true`): build and mine are always available, no
+lock / commit-cost, and the obs drops the two commit flags (5 scalars, bt-style).
+The maps are still the labelled category maps (needed to define the correct
+door); only the mechanics are bt. This is the BT-rules counterpart to
+`ppo_gru_forkwall_belief`, used to show the belief→door binding does **not**
+depend on commitment.
+
+Held-out eval (16 maps/category × 24 stochastic rollouts, seeds ≥10000):
+**100% success**, clean conditioning — map→door rocky→top 1.00, lakes→bottom
+1.00, balanced→bottom 0.79 (either valid); map→belief diagonal 0.98/0.95/0.93.
+See `forkwall_figures/nocommit_*`.
+
+Note on training variance: the fixed-door basin is escapable but not on every
+seed — **2 of 3 reseeds condition** (the third collapses to always-top), see
+`forkwall_figures/nocommit_reseed_door_matrices.png`. This released checkpoint is
+the seed=2 run (perfect conditioning). Correct-door PBRS shaping is identical to
+the committed variant; commitment is not required, just a favourable basin.
+
+Reproduce: `python scripts/bridge_tunnel/train_ppo_bridge_tunnel.py --config released_models/bridge_tunnel_commit/ppo_gru_forkwall_nocommit.yaml`
+Evaluate:  `python scripts/bridge_tunnel/eval_bridge_tunnel_forkwall.py --checkpoint released_models/bridge_tunnel_commit/ppo_gru_forkwall_nocommit.pt`

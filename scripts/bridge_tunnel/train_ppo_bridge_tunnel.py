@@ -141,6 +141,13 @@ def main():
                         help="fork-wall: passage is 2*passage-half+1 cells")
     parser.add_argument("--wall-margin", type=int, default=1,
                         help="fork-wall: wall is this many cells from the right edge")
+    parser.add_argument("--shaping-target", choices=("correct_door", "opening"), default="correct_door",
+                        help="fork-wall PBRS seed: 'correct_door' pulls toward the rewarded door; "
+                             "'opening' pulls toward the wall passage then goes flat (door choice "
+                             "left to reach bonus + belief)")
+    parser.add_argument("--no-commit", action="store_true",
+                        help="btc only: keep the labelled category maps but disable the commitment "
+                             "mechanic (bt rules — build/mine always available, no lock/commit cost)")
     parser.add_argument("--categories", nargs="+", default=["balanced", "lakes", "rocky"],
                         choices=("balanced", "lakes", "rocky"),
                         help="btc: map categories drawn uniformly each reset")
@@ -231,10 +238,13 @@ def main():
         tree_frac=args.tree_frac,
         goal_half=(args.goal_half if args.goal_half >= 0 else None),
         fork_wall=args.fork_wall, passage_half=args.passage_half, wall_margin=args.wall_margin,
+        shaping_target=args.shaping_target,
     )
     if args.variant == "btc":
         env_kw.update(categories=tuple(args.categories),
                       commit_cost=args.commit_cost, illegal_penalty=args.illegal_penalty)
+        if args.no_commit:      # btc category maps under bt rules (no commitment)
+            env_kw.update(commit=False)
     else:
         env_kw.update(water_frac=args.water_frac, rock_frac=args.rock_frac)
     vec = VecBridgeTunnelEnv(args.num_envs, **env_kw)

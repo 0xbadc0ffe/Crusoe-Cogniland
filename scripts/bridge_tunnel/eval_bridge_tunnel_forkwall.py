@@ -41,8 +41,9 @@ def _load_policy(ckpt_path: Path, device):
     env_size = cargs.get("env_size", 32)
     env_width = cargs.get("env_width") or 64
     view_size = cargs.get("view_size", 21)
+    commit = False if cargs.get("no_commit", False) else None
     dummy = BridgeTunnelCommitEnv(size=env_size, width=env_width, view_size=view_size,
-                                  fork_wall=cargs.get("fork_wall", True),
+                                  fork_wall=cargs.get("fork_wall", True), commit=commit,
                                   goal_half=(cargs.get("goal_half", 0) if cargs.get("goal_half", 0) >= 0 else None))
     dummy.reset()
     sd = ckpt["policy"]
@@ -65,11 +66,11 @@ def _load_policy(ckpt_path: Path, device):
 
 
 @torch.no_grad()
-def batched_rollout(policy, rec, n_traj, view_size, max_steps, device):
+def batched_rollout(policy, rec, n_traj, view_size, max_steps, device, commit=None):
     """``n_traj`` stochastic rollouts on one fixed fork_wall map, in lockstep."""
     H, W = rec.terrain.shape
     envs = [BridgeTunnelCommitEnv(map_record=rec, size=H, width=W, view_size=view_size,
-                                  max_steps=max_steps) for _ in range(n_traj)]
+                                  max_steps=max_steps, commit=commit) for _ in range(n_traj)]
     obs = [e.reset()[0] for e in envs]
     h = torch.zeros(1, n_traj, policy.gru_hidden, device=device)
     done = torch.zeros(n_traj, device=device)
@@ -131,6 +132,7 @@ def evaluate(policy, view_size, env_size, env_width, cargs, device,
             n_maps, n_traj, seed_start, max_steps, passage_half, wall_margin):
     gh = cargs.get("goal_half", 0)
     gh = gh if (gh is not None and gh >= 0) else None
+    commit = False if cargs.get("no_commit", False) else None
     rows = {}
     per_cat_rollouts = {}
     for cat in CATEGORIES:
@@ -141,7 +143,7 @@ def evaluate(policy, view_size, env_size, env_width, cargs, device,
                                       category=cat, tree_frac=cargs.get("tree_frac", 0.03),
                                       goal_half=gh, fork_wall=True,
                                       passage_half=passage_half, wall_margin=wall_margin)
-            out = batched_rollout(policy, rec, n_traj, view_size, max_steps, device)
+            out = batched_rollout(policy, rec, n_traj, view_size, max_steps, device, commit=commit)
             succ.extend(out["success"].tolist())
             reached_any = out["reached_any"]
             wrong.extend((reached_any & ~out["success"]).tolist())

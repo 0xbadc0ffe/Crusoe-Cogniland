@@ -63,6 +63,8 @@ class BridgeTunnelEnv(gym.Env):
         fork_wall: bool = False,           # split-decision gate: wall+passage, then top/bottom doors
         passage_half: int = 1,             # fork_wall: passage is 2*passage_half+1 cells
         wall_margin: int = 1,              # fork_wall: wall is this many cells from the right edge
+        shaping_target: str = "correct_door",  # fork_wall PBRS seed: "correct_door" | "opening"
+        commit: bool | None = None,        # override commitment mechanics (None ⇒ variant=="btc")
         seed: int = 0,
         map_record: MapRecord | None = None,
         slack_penalty: float = -0.01,
@@ -81,7 +83,11 @@ class BridgeTunnelEnv(gym.Env):
         if orientation != "natural":
             raise ValueError(f"orientation must be 'natural', got {orientation!r}")
         self.variant = variant
-        self.commit_enabled = (variant == "btc")
+        # ``variant`` selects the MAP-GENERATION family (bt: single natural map;
+        # btc: labelled category maps). ``commit`` selects the MECHANICS
+        # (implicit build/mine commitment) independently — so you can run btc
+        # category maps under bt rules (no commitment) by passing commit=False.
+        self.commit_enabled = (variant == "btc") if commit is None else bool(commit)
         self.size = self.height = int(size)
         self.width = int(width) if width is not None else int(size)
         self.view_size = int(view_size)
@@ -95,6 +101,9 @@ class BridgeTunnelEnv(gym.Env):
         self.fork_wall = bool(fork_wall)
         self.passage_half = int(passage_half)
         self.wall_margin = int(wall_margin)
+        if shaping_target not in ("correct_door", "opening"):
+            raise ValueError(f"shaping_target must be 'correct_door' or 'opening', got {shaping_target!r}")
+        self.shaping_target = shaping_target
         self.slack_penalty = float(slack_penalty)
         self.reach_bonus = float(reach_bonus)
         self.shaping_coef = float(shaping_coef)
@@ -147,7 +156,7 @@ class BridgeTunnelEnv(gym.Env):
         else:
             sub = int(self._rng.integers(0, 2 ** 31))
             cat = (self.categories[int(self._rng.integers(0, len(self.categories)))]
-                   if self.commit_enabled else None)
+                   if self.variant == "btc" else None)
             self._record = generate_map(
                 variant=self.variant, seed=sub, size=self.height, width=self.width,
                 category=cat, water_frac=self.water_frac, rock_frac=self.rock_frac,
@@ -165,9 +174,18 @@ class BridgeTunnelEnv(gym.Env):
             self._correct_cells = set(rec.top_goal_cells) | set(rec.bottom_goal_cells)
         else:
             self._correct_cells = None
-        seeds = list(self._correct_cells) if self._correct_cells is not None else None
+        if self.fork_wall and self.shaping_target == "opening" and rec.passage_cells:
+            # shaping pulls toward the WALL OPENING, not a door: seed the PBRS
+            # potential from the passage cells, then flatten it past the wall so
+            # there's no gradient toward either door. Door choice is then driven
+            # only by the reach bonus (correct door) + the belief, not shaping.
+            seeds = list(rec.passage_cells)
+        else:
+            seeds = list(self._correct_cells) if self._correct_cells is not None else None
         self._ctg = self._compute_all_ctg(self._terrain, tgt, seeds=seeds) if self.commit_enabled \
             else self._compute_ctg(self._terrain, tgt, seeds=seeds)
+        if self.fork_wall and self.shaping_target == "opening" and rec.wall_col is not None:
+            self._ctg[..., rec.wall_col:] = 0.0    # flat potential at/after the gate
         self._pos = tuple(self._record.spawn)
         self._facing = F_RIGHT
         self._commit = COMMIT_NONE

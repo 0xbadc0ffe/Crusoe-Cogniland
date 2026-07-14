@@ -11,6 +11,7 @@ The released agents and how to reproduce / evaluate them. One env
 | btc PPO (one-hot) | btc | PPO+GRU | one-hot | `released_models/bridge_tunnel_commit/ppo_gru_commit.pt` | `configs/bridge_tunnel/btc_ppo_onehot.yaml` |
 | btc PPO + aux belief | btc | PPO+GRU | one-hot | `released_models/bridge_tunnel_commit/ppo_gru_commit_aux_belief.pt` | `... ppo_gru_commit_aux_belief.yaml --belief-coef 0.3` |
 | btc PPO fork_wall + belief | btc | PPO+GRU | one-hot | `released_models/bridge_tunnel_commit/ppo_gru_forkwall_belief.pt` | `configs/bridge_tunnel/btc_ppo_forkwall.yaml` |
+| btc PPO fork_wall (no-commit) | btc/bt-rules | PPO+GRU | one-hot | `released_models/bridge_tunnel_commit/ppo_gru_forkwall_nocommit.pt` | `configs/bridge_tunnel/btc_ppo_forkwall_nocommit.yaml` (seed 2) |
 | btc DreamerV3 (categorical) | btc | DreamerV3 25M | categorical | `released_models/bridge_tunnel_commit/dreamerv3_commit/` (git-LFS) | `dreamerv3_bridge_tunnel.py --variant btc --size 25M --decoder categorical --total-env-steps 6_000_000 --set entropy_coef=0.01` |
 
 The btc DreamerV3 was trained with raised exploration (`entropy_coef=0.01`, vs the
@@ -35,6 +36,14 @@ substrate. Held-out: 96.8% correct-door / 0.5% wrong-door / 2.7% timeout; door
 matrix rocky→top 0.99, lakes→bottom 0.99, balanced ≈0.48/0.45. Eval with
 `scripts/bridge_tunnel/eval_bridge_tunnel_forkwall.py`; held-out maps in
 `data/bridge_tunnel/val_maps_btc_forkwall.pkl`.
+
+`ppo_gru_forkwall_nocommit` is the BT-rules counterpart: same fork_wall task and
+belief head but commitment disabled (`no_commit: true` → bt mechanics, 5-scalar
+obs). It shows the belief→door binding does not require commitment — held-out
+100% success, map→door rocky→top 1.00 / lakes→bottom 1.00 / balanced→bottom 0.79,
+map→belief diagonal 0.98/0.95/0.93. Training has a fixed-door basin: 2/3 reseeds
+condition, the released one is seed=2. Correct-door PBRS shaping is byte-identical
+to the committed variant.
 
 ## Reproduce
 ```bash
