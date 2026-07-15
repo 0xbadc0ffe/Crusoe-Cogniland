@@ -58,6 +58,7 @@ The PyTorch and JAX envs are proven **bit-for-bit equivalent** for both variants
 | see an agent play | `scripts/bridge_tunnel/play_bridge_tunnel.py` |
 | commit matrix + grids | `scripts/bridge_tunnel/eval_bridge_tunnel_commit_ppo.py --checkpoint …` |
 | steer PPO hidden state (belief vs behavior) | `scripts/bridge_tunnel/eval_bridge_tunnel_commit_ppo_steered.py --checkpoint …` (needs the aux-belief agent) |
+| steer the fork_wall agent (belief → door choice) | `scripts/bridge_tunnel/eval_bridge_tunnel_forkwall_steered.py --checkpoint …` (no-commit fork_wall agent) |
 | build an activation dataset | `scripts/mechinterp/build_activation_dataset.py --env bridge_tunnel_commit --checkpoint …` |
 | decode a dataset frame/traj | `python activation_datasets/<name>/decode_dataset.py --row N` (no repo needed) |
 | change env rules | `src/cogniland/bridge_tunnel/env.py` (+ keep `jax/` in parity — run the parity tests) |
