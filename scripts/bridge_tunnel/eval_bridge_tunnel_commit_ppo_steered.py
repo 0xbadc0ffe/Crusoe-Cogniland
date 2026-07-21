@@ -9,10 +9,11 @@ flip the committed skill is to move the belief itself — the steered agent
 "hallucinates" the other map archetype rather than keeping an intact belief
 and merely switching strategy (which is what a human would do).
 
-The intervention lives in ONE place — :func:`steer_hidden` — so alternative
-steering strategies (different directions, schedules, projections, clamping…)
-can be iterated on without touching the rollout/eval machinery. Directions are
-computed by the pluggable ``DIRECTION_STRATEGIES``:
+All steering logic lives in ``cogniland.bridge_tunnel.steering`` (LinearSteer,
+GradientClamp, intervention logics, corrections); this script only assembles
+strategies via ``make_bt_steerer`` and runs the commit-env eval/plots — new
+strategies/corrections plug in there without touching the rollout machinery.
+Directions are computed by the pluggable ``DIRECTION_STRATEGIES``:
 
 * ``class-mean``   (default) unit-norm difference of mean GRU hidden states
                    collected from unsteered rollouts on rocky vs lakes maps.
@@ -33,13 +34,20 @@ constrained (the human mode), or does the behavioral clamp drag it along?
   log π(prohibited action) until that probability drops below
   ``--clamp-target`` (build is prohibited on lakes maps, mine on rocky maps;
   ``--push-beta`` > 0 additionally pushes UP the sub-optimal skill's log-prob).
-* ``substitute-skill``  suppression as above PLUS a floor on the sub-optimal
-  skill: once an agent has covered ``--sub-from-progress`` (default half) of
-  its spawn→target distance, π(sub-optimal action) is pushed up whenever it
-  falls below ``--sub-floor`` (default 0.05). Both constraints are solved
-  jointly per sample per step (minimal edit: samples satisfying both are
-  untouched) — the "substitution" scenario: the optimal tool is forbidden and
-  the alternative is kept persistently available.
+* ``substitute-skill``  suppression as above PLUS a floor: once an agent has
+  covered ``--sub-from-progress`` (default half) of its spawn→target
+  distance, a second probability is pushed up whenever it falls below
+  ``--sub-floor`` (default 0.05). ``--sub-target skill`` (default) floors the
+  sub-optimal skill — the "substitution" scenario: the optimal tool is
+  forbidden and the alternative is kept persistently available.
+  ``--sub-target movement`` instead floors the SUMMED π(up)+π(down)+
+  π(left)+π(right) (a ClampTerm GROUP constraint), so a suppressed agent is
+  pushed to keep moving rather than getting stuck retrying the blocked
+  action — useful when pure suppression mostly produces timeouts (see
+  the retry-probability note on :class:`~cogniland.bridge_tunnel.steering.
+  GradientClamp`) instead of a clean strategy switch. Both constraints are
+  solved jointly per sample per step (minimal edit: samples satisfying both
+  are untouched).
 
 Finally, ``belief-clamp`` is the gradient-based version of DIRECT belief
 steering — the belief-side mirror of the action clamps. The belief head is
@@ -94,205 +102,17 @@ from cogniland.bridge_tunnel.env import BridgeTunnelCommitEnv  # noqa: E402
 from cogniland.bridge_tunnel.mapgen import CATEGORIES  # noqa: E402
 from eval_bridge_tunnel_commit_ppo import (  # noqa: E402
     _FACE_DELTA, COMMIT_NAMES, _draw_commit_path, _load_policy)
-
-# belief head class order matches CATEGORIES: balanced=0, lakes=1, rocky=2
-BELIEF2I = {c: i for i, c in enumerate(CATEGORIES)}
-# The steering direction is the unit lakes→rocky axis, so sign +1 pushes the
-# hidden state toward "rocky" (⇒ mine) and −1 toward "lakes" (⇒ build). We
-# steer each category toward its SUB-optimal skill; balanced = no-steer control.
-STEER_SIGN = {"balanced": 0.0, "lakes": +1.0, "rocky": -1.0}
-SUBOPT_COMMIT = {"lakes": 2, "rocky": 1}          # mine on lakes, build on rocky
-# env action ids (Discrete(6)): 4 = build (water→wood, commits BUILD),
-# 5 = mine (rock→grass, commits MINE)
-A_BUILD, A_MINE = 4, 5
-ACTION_NAMES = ["up", "down", "left", "right", "build", "mine"]
-PROHIBIT_ACTION = {"lakes": A_BUILD, "rocky": A_MINE}   # the optimal skill, forbidden
-PUSH_ACTION = {"lakes": A_MINE, "rocky": A_BUILD}       # the sub-optimal skill
-# belief-clamp: the WRONG archetype each category's belief is clamped toward
-BELIEF_TARGET = {"lakes": BELIEF2I["rocky"], "rocky": BELIEF2I["lakes"]}
-
-
-# ── per-category steering strengths ──
-# An alpha setting is a (α_lakes, α_rocky) pair; balanced is never steered.
-
-def parse_alpha_token(tok: str) -> tuple[float, float]:
-    """'0.25' → (0.25, 0.25); '0.25:1.0' → α_lakes=0.25, α_rocky=1.0."""
-    parts = tok.split(":")
-    if len(parts) == 1:
-        v = float(parts[0])
-        return (v, v)
-    if len(parts) == 2:
-        return (float(parts[0]), float(parts[1]))
-    raise ValueError(f"bad alpha token {tok!r}: expected 'a' or 'a_lakes:a_rocky'")
-
-
-def alpha_label(pair: tuple[float, float]) -> str:
-    if pair[0] == pair[1]:
-        return f"{pair[0]:g}"
-    return f"{pair[0]:g}(lakes):{pair[1]:g}(rocky)"
-
-
-def cat_alpha(pair: tuple[float, float], category: str) -> float:
-    return {"lakes": pair[0], "rocky": pair[1]}.get(category, 0.0)
-
-
-# ───────────────────────────── steering ─────────────────────────────
-
-def steer_hidden(h: torch.Tensor, t: int, direction: torch.Tensor,
-                 alpha: float, sign: float, steer_from: int, steer_to: int) -> torch.Tensor:
-    """THE steering intervention — the single place to iterate on strategies.
-
-    Called once per env step with the post-GRU hidden ``h`` of shape (1, B, H).
-    Whatever is returned is used BOTH for the actor/critic/belief heads at this
-    step AND carried into the next GRU step, so the edit is persistent through
-    the recurrence. The default strategy is a constant additive push along a
-    unit-norm ``direction`` while ``steer_from <= t < steer_to``.
-
-    Ideas to iterate on: decaying alpha, projecting out the direction instead
-    of adding, clamping the belief-logit gap, steering only until commit, …
-    """
-    if sign == 0.0 or alpha == 0.0 or not (steer_from <= t < steer_to):
-        return h
-    return h + (alpha * sign) * direction.view(1, 1, -1)
-
-
-def steer_suppress_action(h: torch.Tensor, t: int, policy, prohibit: int,
-                          alpha: float, max_iters: int, target_prob: float,
-                          steer_from: int, steer_to: int,
-                          push: int | None = None, push_beta: float = 0.0) -> torch.Tensor:
-    """Behavior-clamp steering: minimize π(prohibited action) in hidden space.
-
-    The actor head is linear, so ∇_h log π(k) = W[k] − Σ_j π_j W[j] in closed
-    form (no autograd). Each iteration takes one unit-norm step of size
-    ``alpha`` against that gradient, per sample, stopping early once
-    π(prohibit) < ``target_prob`` (so the edit is minimal: samples already
-    below target are untouched). With ``push_beta`` > 0 the sub-optimal
-    skill's log-prob is simultaneously pushed up. The belief head is never
-    referenced — any belief movement is a side effect to be measured.
-    """
-    if alpha == 0.0 or not (steer_from <= t < steer_to):
-        return h
-    W = policy.actor.weight.detach()                       # (A, H)
-    x = h.squeeze(0)                                       # (B, H)
-    for _ in range(max_iters):
-        p = torch.softmax(policy.actor(x), dim=-1)         # (B, A)
-        need = p[:, prohibit] > target_prob
-        if not need.any():
-            break
-        g = W[prohibit] - p @ W                            # ∇_x log π(prohibit)
-        if push is not None and push_beta > 0.0:
-            g = g - push_beta * (W[push] - p @ W)
-        g = g / g.norm(dim=-1, keepdim=True).clamp(min=1e-8)
-        x = torch.where(need[:, None], x - alpha * g, x)
-    return x.unsqueeze(0)
-
-
-def steer_substitute(h: torch.Tensor, t: int, policy, prohibit: int, push: int,
-                     alpha: float, max_iters: int, target_prob: float,
-                     floor_prob: float, sub_from_progress: float,
-                     progress: np.ndarray, steer_from: int, steer_to: int) -> torch.Tensor:
-    """Substitution clamp: forbid the optimal skill AND keep the sub-optimal
-    one available.
-
-    Per sample and per iteration, two conditions are checked: (a) π(prohibit)
-    > ``target_prob`` (always enforced, as in :func:`steer_suppress_action`)
-    and (b) π(push) < ``floor_prob`` for samples that have covered at least
-    ``sub_from_progress`` of their spawn→target distance. The combined
-    unit-norm direction (descend the prohibited log-prob, ascend the pushed
-    one — each term only where its condition is violated) is applied with step
-    size ``alpha`` until both constraints hold or ``max_iters`` is hit.
-    Samples satisfying both are untouched. The belief is never referenced.
-    """
-    if alpha == 0.0 or not (steer_from <= t < steer_to):
-        return h
-    W = policy.actor.weight.detach()                       # (A, H)
-    x = h.squeeze(0)                                       # (B, H)
-    in_zone = torch.from_numpy(np.asarray(progress) >= sub_from_progress).to(x.device)
-    for _ in range(max_iters):
-        p = torch.softmax(policy.actor(x), dim=-1)         # (B, A)
-        need_sup = p[:, prohibit] > target_prob
-        need_boost = in_zone & (p[:, push] < floor_prob)
-        need = need_sup | need_boost
-        if not need.any():
-            break
-        d = (-(W[prohibit] - p @ W)) * need_sup[:, None].float() \
-            + (W[push] - p @ W) * need_boost[:, None].float()
-        d = d / d.norm(dim=-1, keepdim=True).clamp(min=1e-8)
-        x = torch.where(need[:, None], x + alpha * d, x)
-    return x.unsqueeze(0)
-
-
-def steer_belief_clamp(h: torch.Tensor, t: int, policy, target_cls: int,
-                       alpha: float, max_iters: int, floor_prob: float,
-                       steer_from: int, steer_to: int) -> torch.Tensor:
-    """Gradient-based DIRECT belief steering — the belief-side mirror of
-    :func:`steer_suppress_action`.
-
-    The belief head is linear, so ∇_h log P(cls) = W_b[cls] − Σ_j P_j W_b[j]
-    in closed form (no autograd). Each iteration takes one unit-norm step of
-    size ``alpha`` ASCENDING that gradient for the target (wrong) archetype,
-    per sample, stopping once P(target) ≥ ``floor_prob`` — so the edit is
-    minimal and state-dependent, unlike the constant class-mean/belief-head
-    axis push. The actor head is never referenced: any behavior movement is
-    the side effect to be measured.
-    """
-    if alpha == 0.0 or not (steer_from <= t < steer_to):
-        return h
-    W = policy.belief.weight.detach()                      # (3, H)
-    x = h.squeeze(0)                                       # (B, H)
-    for _ in range(max_iters):
-        p = torch.softmax(policy.belief(x), dim=-1)        # (B, 3)
-        need = p[:, target_cls] < floor_prob
-        if not need.any():
-            break
-        g = W[target_cls] - p @ W                          # ∇_x log P(target)
-        g = g / g.norm(dim=-1, keepdim=True).clamp(min=1e-8)
-        x = torch.where(need[:, None], x + alpha * g, x)
-    return x.unsqueeze(0)
-
-
-def make_steer_fn(strategy: str, category: str, policy,
-                  direction: torch.Tensor | None, alpha: float,
-                  steer_from: int, steer_to: int, clamp_iters: int = 10,
-                  clamp_target: float = 0.01, push_beta: float = 0.0,
-                  sub_floor: float = 0.05, sub_from_progress: float = 0.5,
-                  belief_floor: float = 0.75):
-    """Bind the strategy's steering for one map category (None ⇒ unsteered).
-    Balanced maps are always the no-steer control row. The bound function is
-    called as ``steer_fn(h, t, ctx)`` with ``ctx["progress"]`` = per-env
-    fraction of the spawn→target distance covered."""
-    if alpha == 0.0:
-        return None
-    if strategy == "belief-clamp":
-        target_cls = BELIEF_TARGET.get(category)
-        if target_cls is None:
-            return None
-        return lambda h, t, ctx: steer_belief_clamp(
-            h, t, policy, target_cls, alpha, clamp_iters, belief_floor,
-            steer_from, steer_to)
-    if strategy in ("suppress-skill", "substitute-skill"):
-        prohibit = PROHIBIT_ACTION.get(category)
-        if prohibit is None:
-            return None
-        push = PUSH_ACTION[category]
-        if strategy == "substitute-skill":
-            return lambda h, t, ctx: steer_substitute(
-                h, t, policy, prohibit, push, alpha, clamp_iters, clamp_target,
-                sub_floor, sub_from_progress, ctx["progress"], steer_from, steer_to)
-        return lambda h, t, ctx: steer_suppress_action(
-            h, t, policy, prohibit, alpha, clamp_iters, clamp_target,
-            steer_from, steer_to, push=push, push_beta=push_beta)
-    sign = STEER_SIGN[category]
-    if direction is None or sign == 0.0:
-        return None
-    return lambda h, t, ctx: steer_hidden(h, t, direction, alpha, sign, steer_from, steer_to)
+# all steering logic lives in the shared library — this script only assembles
+# strategies (make_bt_steerer) and runs the task-specific eval/plots
+from cogniland.bridge_tunnel.steering import (  # noqa: E402
+    A_BUILD, A_MINE, ACTION_NAMES, BELIEF2I, BELIEF_TARGET, PROHIBIT_ACTION,
+    PUSH_ACTION, STEER_SIGN, SUBOPT_COMMIT, alpha_label, cat_alpha,
+    class_mean_direction, head_direction, make_bt_steerer, parse_alpha_token)
 
 
 def direction_belief_head(policy, **_):
     """Unit lakes→rocky axis straight from the belief head weight rows."""
-    W = policy.belief.weight.detach()                     # (3, H)
-    d = W[BELIEF2I["rocky"]] - W[BELIEF2I["lakes"]]
-    return d / d.norm(), float(d.norm())
+    return head_direction(policy.belief, BELIEF2I["rocky"], BELIEF2I["lakes"])
 
 
 def direction_class_mean(policy, *, view_size, env_size, env_width, cargs, device,
@@ -307,10 +127,7 @@ def direction_class_mean(policy, *, view_size, env_size, env_width, cargs, devic
                                           max_steps, device, collect_hidden=True)
             chunks.append(out["hiddens"])
         means[cat] = np.concatenate(chunks).mean(axis=0)
-    diff = means["rocky"] - means["lakes"]
-    raw_norm = float(np.linalg.norm(diff))
-    d = torch.from_numpy(diff.astype(np.float32)).to(device)
-    return d / d.norm(), raw_norm
+    return class_mean_direction(means["rocky"], means["lakes"], device=device)
 
 
 DIRECTION_STRATEGIES = {
@@ -607,7 +424,7 @@ def plot_grid_steered(policy, view_size, env_size, env_width, cargs, device, *,
                       steer_for_category,
                       n_seeds, n_traj, seed_start, max_steps, title, out_path):
     fig, axes = plt.subplots(len(CATEGORIES), n_seeds,
-                             figsize=(n_seeds * 3.0, len(CATEGORIES) * 2.0))
+                             figsize=(max(n_seeds * 3.0, 4.5), len(CATEGORIES) * 2.0))
     axes = np.asarray(axes).reshape(len(CATEGORIES), n_seeds)
     for ci, cat in enumerate(CATEGORIES):
         steer_fn = steer_for_category(cat)
@@ -629,10 +446,10 @@ def plot_grid_steered(policy, view_size, env_size, env_width, cargs, device, *,
             ax.set_xticks([]); ax.set_yticks([])
             ax.set_title(f"{cat} s{seed_start+sj}  succ {reached.mean():.0%}\n"
                          f"build {fb:.0%}/mine {fm:.0%}/none {fn:.0%}", fontsize=7)
-    fig.suptitle(title, fontsize=12)
+    fig.suptitle(title, fontsize=12, wrap=True)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=120)
+    fig.savefig(out_path, dpi=120, bbox_inches="tight")
     print(f"saved {out_path}")
 
 
@@ -676,6 +493,31 @@ def main():
     p.add_argument("--sub-from-progress", type=float, default=0.5,
                    help="substitute-skill: the floor kicks in once this "
                         "fraction of the spawn→target distance is covered")
+    p.add_argument("--sub-target", choices=["skill", "movement", "movement-entropy"],
+                   default="skill",
+                   help="substitute-skill: what the floor is applied to — "
+                        "'skill' (default) floors π(sub-optimal skill); "
+                        "'movement' floors the SUMMED π(up)+π(down)+π(left)+"
+                        "π(right) (usually redundant with clamp_target — "
+                        "suppressing the optimal skill already frees this "
+                        "mass by conservation); 'movement-entropy' instead "
+                        "floors the NORMALIZED ENTROPY (0-1) of the movement "
+                        "sub-distribution, actively resisting collapse onto "
+                        "one direction rather than just adding more mass — "
+                        "the actual lever for 'stop the agent oscillating/"
+                        "getting stuck at the blocked obstacle'")
+    p.add_argument("--sub-stuck-gate", action="store_true",
+                   help="substitute-skill: additionally gate the floor term "
+                        "on StuckDetector (no ctx['progress'] improvement over "
+                        "the last --sub-stuck-window steps) so it only fires "
+                        "once a trajectory is actually deadlocked, instead of "
+                        "on every step past --sub-from-progress — avoids "
+                        "disrupting trajectories that are already succeeding")
+    p.add_argument("--sub-stuck-window", type=int, default=20,
+                   help="sub-stuck-gate: steps of no progress before 'stuck'")
+    p.add_argument("--sub-stuck-eps", type=float, default=1e-3,
+                   help="sub-stuck-gate: progress improvement below this "
+                        "over the window still counts as 'stuck'")
     p.add_argument("--belief-floor", type=float, default=0.75,
                    help="belief-clamp: stop steering a sample once P(target "
                         "wrong archetype) is at least this")
@@ -733,24 +575,41 @@ def main():
               f"(≤{args.clamp_iters} × α unit steps per env step, "
               f"push-beta={args.push_beta:g})")
         if args.strategy == "substitute-skill":
-            print(f"    + substitution floor: π(sub-optimal skill) kept above "
+            floor_desc = {
+                "skill": "π(sub-optimal skill)",
+                "movement": "π(movement) [up+down+left+right]",
+                "movement-entropy": "H(movement)/log(4) [normalized entropy]",
+            }[args.sub_target]
+            print(f"    + substitution floor: {floor_desc} kept above "
                   f"{args.sub_floor:g} once {args.sub_from_progress:.0%} of the "
                   f"spawn→target distance is covered")
-            desc = {"balanced": "control, unsteered",
-                    "lakes": "build→mine substitution",
-                    "rocky": "mine→build substitution"}
+            desc = {
+                "skill": {"balanced": "control, unsteered",
+                         "lakes": "build→mine substitution",
+                         "rocky": "mine→build substitution"},
+                "movement": {"balanced": "control, unsteered",
+                            "lakes": "build suppressed + movement floor",
+                            "rocky": "mine suppressed + movement floor"},
+                "movement-entropy": {"balanced": "control, unsteered",
+                                    "lakes": "build suppressed + movement entropy floor",
+                                    "rocky": "mine suppressed + movement entropy floor"},
+            }[args.sub_target]
         else:
             desc = {"balanced": "control, unsteered",
                     "lakes": "π(build) suppressed", "rocky": "π(mine) suppressed"}
 
     def steer_factory(alpha_pair):
         def for_category(cat):
-            return make_steer_fn(args.strategy, cat, policy, direction,
-                                 cat_alpha(alpha_pair, cat),
-                                 args.steer_from, args.steer_to,
-                                 args.clamp_iters, args.clamp_target, args.push_beta,
-                                 args.sub_floor, args.sub_from_progress,
-                                 args.belief_floor)
+            return make_bt_steerer(
+                args.strategy, cat, policy, direction, cat_alpha(alpha_pair, cat),
+                steer_from=args.steer_from, steer_to=args.steer_to,
+                clamp_iters=args.clamp_iters, clamp_target=args.clamp_target,
+                push_beta=args.push_beta, sub_floor=args.sub_floor,
+                sub_from_progress=args.sub_from_progress,
+                sub_target=args.sub_target, sub_stuck_gate=args.sub_stuck_gate,
+                sub_stuck_window=args.sub_stuck_window,
+                sub_stuck_eps=args.sub_stuck_eps,
+                belief_floor=args.belief_floor)
         return for_category
 
     # baseline (α=0) + each requested alpha setting (α_lakes, α_rocky)
@@ -832,7 +691,9 @@ def main():
         "steer_to": args.steer_to, "clamp_iters": args.clamp_iters,
         "clamp_target": args.clamp_target, "push_beta": args.push_beta,
         "sub_floor": args.sub_floor, "sub_from_progress": args.sub_from_progress,
-        "belief_floor": args.belief_floor,
+        "sub_target": args.sub_target, "sub_stuck_gate": args.sub_stuck_gate,
+        "sub_stuck_window": args.sub_stuck_window,
+        "sub_stuck_eps": args.sub_stuck_eps, "belief_floor": args.belief_floor,
         "runs": {alpha_label(a): summaries[a] for a in all_alphas},
     }
     res_path = Path(str(args.out_prefix) + "_results.json")
