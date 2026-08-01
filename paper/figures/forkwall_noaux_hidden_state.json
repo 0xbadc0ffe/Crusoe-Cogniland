@@ -1,0 +1,27 @@
+{
+  "checkpoint": "/home/filippo/GitHub/Crusoe-Cogniland/outputs/ppo_checkpoints/ppo_gru_forkwall_noaux_seed1/final.pt",
+  "n_steps": 38392,
+  "probe_balanced_accuracy_belief_head": 0.7658704191772058,
+  "probes": {
+    "map category (3)": {
+      "acc": 0.6968409659684731,
+      "majority": 0.5168206379640927
+    },
+    "next action (6)": {
+      "acc": 0.5273151401203551,
+      "majority": 0.5876764859682762
+    },
+    "terrain ahead (4)": {
+      "acc": 0.6539845273117159,
+      "majority": 0.7928359769914589
+    },
+    "final door (2)": {
+      "acc": 0.8671405050703087,
+      "majority": 0.7724420428795538
+    },
+    "x-position (8)": {
+      "acc": 0.7713637371572638,
+      "majority": 0.15469757713090465
+    }
+  }
+}

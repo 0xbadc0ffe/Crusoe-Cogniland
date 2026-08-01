@@ -152,10 +152,13 @@ def batched_rollout_steered(policy, rec, n_traj, view_size, max_steps, device,
         ).astype(np.float32)
         progress_tr[active, t] = progress[active]
         _, h = policy._gru_forward({"minimap": mm, "scalars": sc}, done[None], h)
-        if steer_fn is not None:
+        is_logit_mask = steer_fn is not None and getattr(steer_fn, "kind", "hidden") == "logits"
+        if steer_fn is not None and not is_logit_mask:
             h = steer_fn(h, t, {"progress": progress})
         x = h.squeeze(0)                       # (B, H): steered state feeds ALL heads
         logits, _ = policy._heads(x)
+        if is_logit_mask:                      # action-mask: post-head, never touches x/belief
+            logits = steer_fn(logits, t, {"progress": progress})
         action_probs[active, t] = torch.softmax(logits, dim=-1).cpu().numpy()[active]
         if policy.belief is not None:
             bp = torch.softmax(policy.belief(x), dim=-1).cpu().numpy()
@@ -483,7 +486,7 @@ def main():
                    default=Path("outputs/bridge_tunnel_forkwall/ppo_steered"))
     p.add_argument("--strategy",
                    choices=["belief-head", "class-mean", "skill-mean",
-                            "suppress-skill", "substitute-skill", "belief-clamp"],
+                            "suppress-skill", "substitute-skill", "belief-clamp", "action-mask"],
                    default="suppress-skill")
     p.add_argument("--skill-cats", default="balanced",
                    help="skill-mean: comma list of categories whose skill events "
@@ -527,6 +530,12 @@ def main():
                    help="sub-stuck-gate: progress improvement below this "
                         "over the window still counts as 'stuck'")
     p.add_argument("--belief-floor", type=float, default=0.75)
+    p.add_argument("--steer-balanced", choices=["rocky", "lakes"], default=None,
+                   help="also steer balanced maps (default: unsteered control row), "
+                        "TOWARD the named archetype: 'rocky' suppresses build / pushes "
+                        "mine / clamps belief->rocky, 'lakes' does the mirror. Uses the "
+                        "lakes alpha from --alphas. Run both and compare — steering "
+                        "balanced only one way bakes in an arbitrary asymmetry")
     p.add_argument("--matrix-maps", type=int, default=20, help="held-out maps/category")
     p.add_argument("--matrix-traj", type=int, default=16, help="stochastic rollouts/map")
     p.add_argument("--grid-seeds", type=int, default=4)
@@ -614,6 +623,13 @@ def main():
         desc = {"balanced": "control, unsteered",
                 "lakes": "belief clamped to rocky",
                 "rocky": "belief clamped to lakes"}
+    elif args.strategy == "action-mask":
+        direction, raw_norm = None, None
+        print(f"[action-mask] hard-masks both build and mine logits to -inf "
+              f"(renormalizing over the 4 movement actions) — no magnitude, "
+              f"never touches h, so belief cannot move as a side effect")
+        desc = {"balanced": "control, unsteered",
+                "lakes": "build+mine masked", "rocky": "build+mine masked"}
     else:
         direction, raw_norm = None, None
         print(f"[{args.strategy}] state-dependent behavior clamp: suppress "
@@ -644,6 +660,11 @@ def main():
             desc = {"balanced": "control, unsteered",
                     "lakes": "π(build) suppressed", "rocky": "π(mine) suppressed"}
 
+    if args.steer_balanced:
+        # balanced now uses the SAME (lakes) convention/alpha — see cat_alpha
+        # and make_bt_steerer's steer_balanced docstring
+        desc["balanced"] = f"steered toward {args.steer_balanced} (balanced terrain)"
+
     def steer_factory(alpha_pair):
         def for_category(cat):
             return make_bt_steerer(
@@ -655,7 +676,8 @@ def main():
                 sub_target=args.sub_target, sub_stuck_gate=args.sub_stuck_gate,
                 sub_stuck_window=args.sub_stuck_window,
                 sub_stuck_eps=args.sub_stuck_eps,
-                belief_floor=args.belief_floor)
+                belief_floor=args.belief_floor,
+                steer_balanced=(args.steer_balanced or False))
         return for_category
 
     all_alphas = [(0.0, 0.0)] + alphas

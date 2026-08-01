@@ -1,0 +1,432 @@
+% !TEX root =
+% ============================================================================
+%  Background chapter for the MSc thesis.
+%  Self-contained: requires amsmath, amssymb, and a natbib-style \citep/\citet.
+%  Drop into the thesis with \input{thesis_background}.
+% ============================================================================
+
+\chapter{Background}
+\label{ch:background}
+
+This chapter develops the theory required to follow the rest of the thesis. We
+proceed from the general framework of sequential decision making under
+uncertainty (\S\ref{sec:bg-rl}--\S\ref{sec:bg-pomdp}), through the specific
+learning algorithms used to train our agents (\S\ref{sec:bg-ppo}) and the reward
+machinery that shapes them (\S\ref{sec:bg-shaping}), to the model-based world
+models that motivate the belief-centric view (\S\ref{sec:bg-worldmodel}).
+We then introduce the interpretability tools that this work rests on: the
+representational hypotheses that make internal states legible
+(\S\ref{sec:bg-representations}), the family of activation-steering interventions
+we study (\S\ref{sec:bg-steering}), and finally the belief/behaviour distinction
+that frames our central question (\S\ref{sec:bg-belief}).
+
+% ---------------------------------------------------------------------------
+\section{Reinforcement Learning and Markov Decision Processes}
+\label{sec:bg-rl}
+
+Reinforcement learning (RL) formalises an agent that learns to act by trial and
+error so as to maximise a scalar reward \citep{sutton2018reinforcement}. The
+standard model is the \emph{Markov Decision Process} (MDP), a tuple
+$\mathcal{M} = (\mathcal{S}, \mathcal{A}, P, R, \gamma)$ with state space
+$\mathcal{S}$, action space $\mathcal{A}$, transition kernel
+$P(s' \mid s, a)$, reward function $R(s,a)$, and discount factor
+$\gamma \in [0,1)$. At each step $t$ the agent observes state $s_t$, samples an
+action $a_t \sim \pi(\cdot \mid s_t)$ from its \emph{policy} $\pi$, receives
+reward $r_t = R(s_t, a_t)$, and transitions to $s_{t+1} \sim P(\cdot \mid s_t,
+a_t)$. The objective is to maximise the expected discounted return
+
+\begin{equation}
+    G_t \;=\; \sum_{k=0}^{\infty} \gamma^{k}\, r_{t+k},
+    \qquad
+    J(\pi) \;=\; \mathbb{E}_{\pi}\!\left[G_0\right].
+    \label{eq:return}
+\end{equation}
+
+The discount $\gamma$ trades off immediate against future reward and keeps the
+sum finite. Two value functions summarise long-run desirability: the
+\emph{state value} $V^{\pi}(s) = \mathbb{E}_{\pi}[G_t \mid s_t = s]$ and the
+\emph{action value} $Q^{\pi}(s,a) = \mathbb{E}_{\pi}[G_t \mid s_t = s, a_t = a]$.
+They satisfy the Bellman consistency equations, e.g.
+
+\begin{equation}
+    V^{\pi}(s) \;=\; \mathbb{E}_{a\sim\pi,\, s'\sim P}
+        \big[\, R(s,a) + \gamma\, V^{\pi}(s') \,\big].
+    \label{eq:bellman}
+\end{equation}
+
+The \emph{advantage} $A^{\pi}(s,a) = Q^{\pi}(s,a) - V^{\pi}(s)$ measures how much
+better action $a$ is than the policy's average behaviour in $s$. For a
+parametric policy $\pi_\theta$, the policy-gradient theorem gives an unbiased
+ascent direction on $J$:
+
+\begin{equation}
+    \nabla_\theta J(\pi_\theta) \;=\;
+        \mathbb{E}_{\pi_\theta}\!\left[
+            \nabla_\theta \log \pi_\theta(a_t \mid s_t)\; A^{\pi_\theta}(s_t, a_t)
+        \right].
+    \label{eq:pg}
+\end{equation}
+
+Equation~\eqref{eq:pg} is the basis of the actor--critic methods used in this
+thesis: a \emph{critic} estimates the advantage and an \emph{actor}
+$\pi_\theta$ is nudged to increase the log-probability of advantageous actions.
+
+% ---------------------------------------------------------------------------
+\section{Partial Observability and Belief States}
+\label{sec:bg-pomdp}
+
+In most realistic environments the agent does not see the full state. This is
+captured by the \emph{Partially Observable MDP} (POMDP)
+$(\mathcal{S}, \mathcal{A}, P, R, \Omega, O, \gamma)$, which augments the MDP
+with an observation space $\Omega$ and an observation model $O(o \mid s)$
+\citep{kaelbling1998planning}. The agent receives only $o_t \sim O(\cdot \mid
+s_t)$, which need not identify $s_t$. A policy that conditions on the current
+observation alone is therefore insufficient; optimal behaviour requires
+integrating the \emph{history} $\tau_t = (o_1, a_1, \dots, a_{t-1}, o_t)$.
+
+The central object is the \emph{belief state}, the posterior over hidden states
+given the history,
+
+\begin{equation}
+    b_t(s) \;=\; \Pr\!\left(s_t = s \,\middle|\, \tau_t\right),
+    \label{eq:belief}
+\end{equation}
+
+updated recursively by Bayesian filtering,
+
+\begin{equation}
+    b_{t}(s') \;\propto\;
+        O(o_{t} \mid s')
+        \sum_{s \in \mathcal{S}} P(s' \mid s, a_{t-1})\, b_{t-1}(s).
+    \label{eq:belief-update}
+\end{equation}
+
+The belief $b_t$ is a \emph{sufficient statistic} of the history for predicting
+the future: it is the minimal quantity from which the reward-relevant
+distribution over states can be recovered \citep{astrom1965optimal}. Crucially,
+a POMDP over $\mathcal{S}$ is equivalent to a fully observable
+\emph{belief MDP} over the continuous belief simplex $\Delta(\mathcal{S})$, so an
+optimal Markov policy $\pi^{\star}(a \mid b)$ exists as a function of the belief
+alone. This equivalence is the conceptual backbone of the thesis: \emph{the
+belief is the internal variable that must be inferred, maintained, and acted
+upon}, and everything we later probe or steer is an approximation to it.
+
+Exact belief tracking is intractable for large $\mathcal{S}$. In deep RL the
+belief is approximated by a learned recurrent summary of the history. A
+recurrent network with hidden state $h_t \in \mathbb{R}^{d}$ implements
+
+\begin{equation}
+    h_t \;=\; f_\theta\!\left(h_{t-1},\, o_t,\, a_{t-1}\right),
+    \qquad
+    \pi_\theta(a_t \mid \tau_t) \;=\; \pi_\theta(a_t \mid h_t),
+    \label{eq:recurrent}
+\end{equation}
+
+with $h_t$ trained end-to-end to carry exactly the history information the policy
+and value heads need. We use the Gated Recurrent Unit (GRU) for $f_\theta$
+\citep{cho2014learning}, whose gating stabilises credit assignment over long
+horizons. Under this view $h_t$ is a \emph{learned, distributed belief}: it is
+not guaranteed to equal the Bayesian posterior~\eqref{eq:belief}, but a
+well-trained agent must encode within $h_t$ whatever latent structure its optimal
+policy depends on. Recovering that structure from $h_t$ is the subject of
+\S\ref{sec:bg-representations}.
+
+% ---------------------------------------------------------------------------
+\section{Proximal Policy Optimization}
+\label{sec:bg-ppo}
+
+We train recurrent policies with Proximal Policy Optimization (PPO)
+\citep{schulman2017proximal}, a first-order policy-gradient method that is stable
+and sample-efficient enough for POMDP navigation. PPO improves on the raw
+gradient~\eqref{eq:pg} in two ways.
+
+First, advantages are estimated by \emph{Generalized Advantage Estimation}
+(GAE), an exponentially-weighted average of $n$-step temporal-difference errors
+that trades bias for variance via $\lambda \in [0,1]$
+\citep{schulman2016high}:
+
+\begin{equation}
+    \hat{A}_t \;=\; \sum_{l=0}^{\infty} (\gamma\lambda)^{l}\, \delta_{t+l},
+    \qquad
+    \delta_t \;=\; r_t + \gamma\, V_\phi(s_{t+1}) - V_\phi(s_t),
+    \label{eq:gae}
+\end{equation}
+
+where $V_\phi$ is the learned critic. Second, PPO constrains each update so the
+new policy stays close to the data-collecting policy $\pi_{\theta_{\text{old}}}$,
+which prevents destructively large steps. Writing the importance ratio
+$\rho_t(\theta) = \pi_\theta(a_t \mid s_t) / \pi_{\theta_{\text{old}}}(a_t \mid
+s_t)$, PPO maximises the clipped surrogate
+
+\begin{equation}
+    L^{\text{CLIP}}(\theta) \;=\;
+        \mathbb{E}_t\!\left[
+            \min\!\Big(
+                \rho_t(\theta)\, \hat{A}_t,\;
+                \operatorname{clip}\!\big(\rho_t(\theta),\, 1-\epsilon,\, 1+\epsilon\big)\, \hat{A}_t
+            \Big)
+        \right].
+    \label{eq:ppo-clip}
+\end{equation}
+
+The clip range $\epsilon$ caps the incentive to move $\rho_t$ far from $1$. The
+full objective adds a value-regression term and an entropy bonus,
+
+\begin{equation}
+    L(\theta,\phi) \;=\;
+        L^{\text{CLIP}}(\theta)
+        \;-\; c_v\, \mathbb{E}_t\!\big[(V_\phi(s_t) - \hat{G}_t)^2\big]
+        \;+\; c_e\, \mathbb{E}_t\!\big[\mathcal{H}[\pi_\theta(\cdot \mid s_t)]\big],
+    \label{eq:ppo-full}
+\end{equation}
+
+where $\hat{G}_t = \hat{A}_t + V_\phi(s_t)$ is the value target and
+$\mathcal{H}$ denotes entropy. The entropy coefficient $c_e$ controls
+exploration; as we show in the experiments, it is decisive when the task admits
+a lazy, belief-free local optimum, because escaping that optimum requires
+sustained exploration of belief-conditional behaviour. For recurrent policies,
+equations~\eqref{eq:gae}--\eqref{eq:ppo-full} are optimised over sequences: the
+hidden state~\eqref{eq:recurrent} is carried through each rollout and reset at
+episode boundaries, so gradients flow through time via backpropagation through
+the unrolled GRU.
+
+% ---------------------------------------------------------------------------
+\section{Reward Shaping and Potential-Based Invariance}
+\label{sec:bg-shaping}
+
+Sparse rewards make credit assignment hard: if reward arrives only at a distant
+goal, the gradient~\eqref{eq:pg} is uninformative for most of an episode.
+\emph{Reward shaping} adds an auxiliary signal $F(s,a,s')$ to densify learning.
+The danger is that a poorly chosen $F$ changes what is optimal, so the agent
+learns to exploit the shaping instead of solving the task. \citet{ng1999policy}
+show that this is avoided \emph{if and only if} the shaping is
+\emph{potential-based}: for some potential function $\Phi : \mathcal{S} \to
+\mathbb{R}$,
+
+\begin{equation}
+    F(s,a,s') \;=\; \gamma\, \Phi(s') - \Phi(s).
+    \label{eq:pbrs}
+\end{equation}
+
+Under \eqref{eq:pbrs} the set of optimal policies is provably unchanged, because
+the added term telescopes: over any trajectory the shaping contributes only
+$\gamma^{T}\Phi(s_T) - \Phi(s_0)$, a quantity that depends on the endpoints, not
+on the path taken. Potential-based reward shaping (PBRS) therefore accelerates
+learning without biasing the solution.
+
+In this thesis the potential is derived from a \emph{cost-to-go} oracle. Let
+$\mathrm{ctg}(s)$ be the minimum number of primitive actions needed to reach the
+goal from $s$, computed by a shortest-path search on the (known) map; we set
+
+\begin{equation}
+    \Phi(s) \;=\; -\,\mathrm{ctg}(s).
+    \label{eq:phi-ctg}
+\end{equation}
+
+Moving closer to the goal ($\mathrm{ctg}$ decreasing) yields positive shaping,
+providing a dense navigational gradient. Two properties of PBRS matter for our
+analysis. First, because the shaping is invariant, it \emph{cannot} manufacture
+a preference the terminal reward does not already encode; it can only make an
+existing preference easier to discover. Second, its contribution to the
+\emph{return difference} between two candidate endpoints is bounded by
+$\lvert \Phi(s_A) - \Phi(s_B)\rvert$, which for a small
+$\mathrm{ctg}$ gap can be negligible relative to a large terminal bonus. We
+return to both points when explaining why shaping toward a target does not, on
+its own, force a partially observable agent to condition its behaviour on the
+correct latent belief.
+
+% ---------------------------------------------------------------------------
+\section{World Models and the Recurrent State-Space Model}
+\label{sec:bg-worldmodel}
+
+An alternative to learning $h_t$ purely from the RL loss is to learn an explicit
+generative \emph{world model} that predicts observations and rewards, and to
+train the policy inside the model's imagined rollouts. DreamerV3
+\citep{hafner2023mastering,hafner2020dream} is the state-of-the-art instance and
+underlies the model-based agents in this work. Its core is the \emph{Recurrent
+State-Space Model} (RSSM), which factorises the latent state into a
+deterministic recurrent path $h_t$ and a stochastic latent $z_t$:
+
+\begin{align}
+    h_t         &= f_\theta(h_{t-1}, z_{t-1}, a_{t-1}) && \text{(recurrent model)} \label{eq:rssm-h}\\
+    \hat{z}_t   &\sim p_\theta(\hat{z}_t \mid h_t)     && \text{(prior / transition)} \label{eq:rssm-prior}\\
+    z_t         &\sim q_\theta(z_t \mid h_t, x_t)      && \text{(posterior / filter)} \label{eq:rssm-post}
+\end{align}
+
+where $x_t$ is the encoded observation. The \emph{prior}
+$p_\theta$~\eqref{eq:rssm-prior} predicts the next latent from dynamics alone
+(enabling imagination), while the \emph{posterior}
+$q_\theta$~\eqref{eq:rssm-post} corrects it using the actual observation --- an
+amortised, learned version of the Bayesian filter~\eqref{eq:belief-update}. The
+joint latent $s_t = (h_t, z_t)$ is the model's belief state. Decoder heads
+reconstruct the observation $\hat{x}_t$ and predict reward from $s_t$, and the
+whole model is trained by maximising an evidence lower bound of the form
+
+\begin{equation}
+    \mathcal{L}(\theta) \;=\;
+        \underbrace{\mathbb{E}_{q}\big[\log p_\theta(x_t \mid s_t)\big]}_{\text{reconstruction}}
+        \;-\; \beta\,
+        \underbrace{\mathrm{KL}\!\big[\,q_\theta(z_t \mid h_t, x_t)\,\big\|\,p_\theta(\hat z_t \mid h_t)\,\big]}_{\text{dynamics / representation}}.
+    \label{eq:elbo}
+\end{equation}
+
+The actor and critic are trained on trajectories \emph{imagined} by rolling the
+prior forward without observations, then decoded back to interpretable
+predictions. Two features of this architecture are central to the thesis.
+\textbf{(i)} The belief $(h_t, z_t)$ is a single shared object consumed by
+multiple heads --- the actor, the reward predictor, and the observation decoder
+--- so there is no architecturally separate ``skill'' subspace. \textbf{(ii)}
+Because the decoder maps the latent back to observation space, the model exposes
+an explicit \emph{belief readout}: one can decode what the agent ``believes'' the
+world looks like directly from $s_t$, and watch how that decoded belief changes
+under intervention. This makes the world model an unusually transparent
+substrate for the interpretability questions we now formalise.
+
+% ---------------------------------------------------------------------------
+\section{Representations, Probing, and the Linear Hypothesis}
+\label{sec:bg-representations}
+
+Neural agents encode task-relevant variables in \emph{distributed}
+representations: a concept is not a single unit but a pattern across many units
+\citep{rumelhart1986learning}. The empirically influential \emph{linear
+representation hypothesis} (LRH) sharpens this: many high-level concepts are
+encoded as \emph{directions} in activation space, so that the presence or value
+of a concept is (approximately) an affine function of the hidden state
+\citep{mikolov2013linguistic,park2024linear}. Under the LRH, a hidden state
+$h \in \mathbb{R}^{d}$ decomposes as a sum of concept directions plus residual,
+and the value of concept $i$ is read off by projecting onto a direction $v_i$.
+
+The standard tool for testing this is a \emph{linear probe}: a simple classifier
+trained to predict a labelled latent variable $y$ from a frozen activation $h$
+\citep{alain2017understanding}. For a categorical belief label with classes
+$c$, the probe is a linear--softmax map
+
+\begin{equation}
+    \hat{p}(y = c \mid h) \;=\; \operatorname{softmax}_c\!\big(W h + b\big),
+    \label{eq:probe}
+\end{equation}
+
+and high held-out accuracy is taken as evidence that the information $y$ is
+linearly \emph{decodable} from $h$. A key methodological caution, which this
+thesis makes concrete, is that decodability is a statement about what a
+\emph{downstream reader} could in principle extract --- it does \emph{not} imply
+that the agent's own policy head uses that direction. In our agents we attach
+such a probe as an auxiliary head trained jointly with the policy (a
+``belief head''); it provides a free, continuously-monitored readout of the
+latent belief without feeding back into the actor, so that decodability and use
+can be measured separately. When a concept is linearly represented, a canonical
+estimate of its direction is the \emph{difference of class means} in activation
+space,
+
+\begin{equation}
+    v \;=\; \mu_{+} - \mu_{-}, \qquad
+    \mu_{\pm} \;=\; \frac{1}{|\mathcal{D}_{\pm}|} \sum_{h \in \mathcal{D}_{\pm}} h,
+    \label{eq:diffmeans}
+\end{equation}
+
+where $\mathcal{D}_{+}$ and $\mathcal{D}_{-}$ are activations collected under the
+two values of the concept \citep{marks2024geometry}. The vector $v$ points from
+one class centroid to the other and is the workhorse direction for the
+interventions in the next section. The LRH is, however, only approximate:
+\emph{superposition} lets networks pack more features than dimensions by
+overlapping them in non-orthogonal directions \citep{elhage2022superposition},
+and some features occupy multi-dimensional subspaces rather than single lines.
+This non-orthogonality is precisely what makes targeted intervention leaky, a
+theme we develop in \S\ref{sec:bg-belief}.
+
+% ---------------------------------------------------------------------------
+\section{Activation Steering}
+\label{sec:bg-steering}
+
+\emph{Activation steering} intervenes on a model's computation at inference time
+by editing its hidden states along a chosen direction, rather than retraining
+weights. Given a steering direction $v$ (often estimated by
+\eqref{eq:diffmeans}), a layer activation $h$, and a scale $\alpha$, the
+canonical edit is additive:
+
+\begin{equation}
+    h' \;=\; h + \alpha\, v.
+    \label{eq:steer-add}
+\end{equation}
+
+This is \emph{activation addition} (ActAdd), which injects a contrast vector at
+inference to push behaviour toward or away from a target concept
+\citep{turner2023activation}. \emph{Contrastive Activation Addition} (CAA)
+constructs $v$ as the mean difference of activations over matched positive and
+negative prompt pairs \citep{rimsky2024steering}, i.e.\ a structured instance of
+\eqref{eq:diffmeans}. A complementary operation is directional \emph{ablation},
+which removes a concept by projecting it out of the activation,
+
+\begin{equation}
+    h' \;=\; h - (\hat{v}^{\top} h)\, \hat{v}, \qquad \hat{v} = v / \lVert v \rVert,
+    \label{eq:steer-ablate}
+\end{equation}
+
+as used to suppress the refusal direction in language models
+\citep{arditi2024refusal}. Finer-grained variants steer individual features
+discovered by \emph{sparse autoencoders}, which decompose $h$ into a sparse,
+ideally monosemantic dictionary and amplify or suppress single entries
+\citep{bricken2023monosemanticity,cunningham2024sparse}. In this thesis we apply
+\eqref{eq:steer-add}--\eqref{eq:steer-ablate} to the recurrent belief carrier
+$h_t$ of an RL agent: the direction $v$ is a difference-of-means over the latent
+belief (e.g.\ activations on maps of one category minus another), and it is
+injected over a window of timesteps while the agent acts. The behavioural
+consequence --- whether the intervention changes the agent's downstream choice
+--- is then read out from its actions, and the belief consequence from the
+decoded world model or belief probe.
+
+Every method in this family shares an implicit assumption: that editing along
+$v$ leaves the computations served by other directions untouched. Because
+representations are entangled and non-orthogonal
+(\S\ref{sec:bg-representations}), any edit with a nonzero projection onto other
+functional directions perturbs them too. Whether a given belief direction is
+in fact \emph{used} by the policy, and whether steering it produces a clean
+behavioural change or leaks into unrelated capabilities, are empirical questions
+--- and the ones this thesis is built to answer.
+
+% ---------------------------------------------------------------------------
+\section{Belief, Skill, and the Decoupling Question}
+\label{sec:bg-belief}
+
+We can now state the conceptual frame precisely. We distinguish two readouts of a
+shared latent state $z$ (either the GRU state $h_t$ or the RSSM latent
+$(h_t,z_t)$). The \emph{belief readout} $B(z)$ is the model's inferred
+distribution over hidden world structure --- e.g.\ the decoded observation of a
+world model, or the belief probe~\eqref{eq:probe}. The \emph{policy readout}
+$\pi(z)$ is the distribution over actions. A latent variable is
+\emph{behaviourally load-bearing} when the policy's optimal action depends on it;
+it is \emph{merely decodable} when $B(z)$ recovers it but $\pi(z)$ does not use
+it.
+
+Localised steering implicitly assumes these are separable: that one can edit the
+belief without disturbing the policy, or edit the policy's target behaviour
+without disturbing the belief. Following the diagnostic used in this work, an
+intervention $\delta$ applied to $z$ is \emph{belief-preserving} iff it moves the
+policy while leaving the belief readout intact:
+
+\begin{equation}
+    \big\lVert B(z + \delta) - B(z) \big\rVert < \varepsilon
+    \quad\text{and}\quad
+    \big\lVert \pi(z + \delta) - \pi(z) \big\rVert > \eta,
+    \label{eq:belief-invariance}
+\end{equation}
+
+for pre-specified tolerances $\varepsilon$ (permitted belief drift) and $\eta$
+(required behavioural change). Symmetrically, a behaviour-targeting edit is
+\emph{clean} only if it does not silently shift $B(z)$. When belief and policy
+readouts load onto overlapping directions of a shared latent, no strictly linear
+edit can satisfy \eqref{eq:belief-invariance} exactly; the severity of the
+resulting cross-talk is a property of the representational geometry, not of the
+method. This is why architectures with an explicit belief decoder are valuable:
+they let $B(z)$ be measured directly, turning \eqref{eq:belief-invariance} from a
+philosophical distinction into a checkable quantity.
+
+The environments and agents in the following chapters are designed to make this
+question concrete and controllable. The agent must infer a latent map property
+(the belief) from a partial history and select among behaviours accordingly (the
+skill), while an auxiliary belief head~\eqref{eq:probe} and, for the world-model
+agents, an observation decoder provide independent readouts of $B(z)$. This
+setup lets us ask, and answer empirically, the two questions that motivate the
+thesis: \emph{(i)} when is a decodable belief actually used by the policy, and
+\emph{(ii)} does steering the belief direction change behaviour as intended, or
+does it drift the belief while leaving behaviour untouched --- or vice versa.

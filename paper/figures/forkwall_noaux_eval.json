@@ -1,0 +1,237 @@
+{
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "results": {
+    "1": {
+      "per_category": {
+        "balanced": {
+          "success": 1.0,
+          "wrong_door": 0.0,
+          "timeout": 0.0,
+          "n": 384
+        },
+        "lakes": {
+          "success": 0.9973958333333334,
+          "wrong_door": 0.0026041666666666665,
+          "timeout": 0.0,
+          "n": 384
+        },
+        "rocky": {
+          "success": 0.9973958333333334,
+          "wrong_door": 0.0026041666666666665,
+          "timeout": 0.0,
+          "n": 384
+        }
+      },
+      "overall": {
+        "success": 0.998263888888889,
+        "wrong_door": 0.001736111111111111,
+        "timeout": 0.0
+      },
+      "door_matrix": [
+        [
+          0.7786458333333334,
+          0.22135416666666666,
+          0.0
+        ],
+        [
+          0.0026041666666666665,
+          0.9973958333333334,
+          0.0
+        ],
+        [
+          0.9973958333333334,
+          0.0026041666666666665,
+          0.0
+        ]
+      ],
+      "conditions_on_belief": true
+    },
+    "2": {
+      "per_category": {
+        "balanced": {
+          "success": 1.0,
+          "wrong_door": 0.0,
+          "timeout": 0.0,
+          "n": 384
+        },
+        "lakes": {
+          "success": 1.0,
+          "wrong_door": 0.0,
+          "timeout": 0.0,
+          "n": 384
+        },
+        "rocky": {
+          "success": 0.0,
+          "wrong_door": 0.9947916666666666,
+          "timeout": 0.005208333333333333,
+          "n": 384
+        }
+      },
+      "overall": {
+        "success": 0.6666666666666666,
+        "wrong_door": 0.3315972222222222,
+        "timeout": 0.001736111111111111
+      },
+      "door_matrix": [
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.9947916666666666,
+          0.005208333333333333
+        ]
+      ],
+      "conditions_on_belief": false
+    },
+    "3": {
+      "per_category": {
+        "balanced": {
+          "success": 1.0,
+          "wrong_door": 0.0,
+          "timeout": 0.0,
+          "n": 384
+        },
+        "lakes": {
+          "success": 1.0,
+          "wrong_door": 0.0,
+          "timeout": 0.0,
+          "n": 384
+        },
+        "rocky": {
+          "success": 0.890625,
+          "wrong_door": 0.109375,
+          "timeout": 0.0,
+          "n": 384
+        }
+      },
+      "overall": {
+        "success": 0.9635416666666666,
+        "wrong_door": 0.036458333333333336,
+        "timeout": 0.0
+      },
+      "door_matrix": [
+        [
+          0.041666666666666664,
+          0.9583333333333334,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.890625,
+          0.109375,
+          0.0
+        ]
+      ],
+      "conditions_on_belief": true
+    },
+    "4": {
+      "per_category": {
+        "balanced": {
+          "success": 1.0,
+          "wrong_door": 0.0,
+          "timeout": 0.0,
+          "n": 384
+        },
+        "lakes": {
+          "success": 0.9895833333333334,
+          "wrong_door": 0.010416666666666666,
+          "timeout": 0.0,
+          "n": 384
+        },
+        "rocky": {
+          "success": 1.0,
+          "wrong_door": 0.0,
+          "timeout": 0.0,
+          "n": 384
+        }
+      },
+      "overall": {
+        "success": 0.9965277777777778,
+        "wrong_door": 0.003472222222222222,
+        "timeout": 0.0
+      },
+      "door_matrix": [
+        [
+          0.2682291666666667,
+          0.7317708333333334,
+          0.0
+        ],
+        [
+          0.010416666666666666,
+          0.9895833333333334,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "conditions_on_belief": true
+    },
+    "5": {
+      "per_category": {
+        "balanced": {
+          "success": 1.0,
+          "wrong_door": 0.0,
+          "timeout": 0.0,
+          "n": 384
+        },
+        "lakes": {
+          "success": 1.0,
+          "wrong_door": 0.0,
+          "timeout": 0.0,
+          "n": 384
+        },
+        "rocky": {
+          "success": 0.0,
+          "wrong_door": 1.0,
+          "timeout": 0.0,
+          "n": 384
+        }
+      },
+      "overall": {
+        "success": 0.6666666666666666,
+        "wrong_door": 0.3333333333333333,
+        "timeout": 0.0
+      },
+      "door_matrix": [
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "conditions_on_belief": false
+    }
+  },
+  "n_conditioning": 3
+}

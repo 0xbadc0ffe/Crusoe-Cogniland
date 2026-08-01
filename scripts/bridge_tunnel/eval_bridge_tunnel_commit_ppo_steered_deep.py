@@ -196,11 +196,14 @@ def batched_rollout_steered(policy, rec, n_traj, view_size, max_steps, device,
         # mid-rollout here, so _gru_forward's done-masking is a no-op and the
         # direct gru call is equivalent.
         feat = policy._encode({"minimap": mm, "scalars": sc})   # (B, E)
-        if steer_fn is not None:
+        is_logit_mask = steer_fn is not None and getattr(steer_fn, "kind", "hidden") == "logits"
+        if steer_fn is not None and not is_logit_mask:
             h = steer_fn(h, t, {"progress": progress, "feat": feat})
         _, h = policy.gru(feat[None], h)       # steered input → (1, B, H)
         x = h.squeeze(0)                       # (B, H): post-GRU state feeds ALL heads
         logits, _ = policy._heads(x)
+        if is_logit_mask:                      # action-mask: post-head, never touches x/belief;
+            logits = steer_fn(logits, t, {"progress": progress})  # ignores the deep edit point entirely
         action_probs[active, t] = torch.softmax(logits, dim=-1).cpu().numpy()[active]
         if policy.belief is not None:
             bp = torch.softmax(policy.belief(x), dim=-1).cpu().numpy()
@@ -471,7 +474,7 @@ def main():
     p.add_argument("--out-prefix", type=Path,
                    default=Path("paper/figures/bridge_tunnel_commit/ppo_steered"))
     p.add_argument("--strategy",
-                   choices=sorted(DIRECTION_STRATEGIES) + ["suppress-skill", "substitute-skill"],
+                   choices=sorted(DIRECTION_STRATEGIES) + ["suppress-skill", "substitute-skill", "action-mask"],
                    default="class-mean")
     p.add_argument("--alphas", default="0.25,0.5,1.0,2.0",
                    help="comma-separated steering strengths; each entry is one "
@@ -526,6 +529,12 @@ def main():
     p.add_argument("--sub-stuck-eps", type=float, default=1e-3,
                    help="sub-stuck-gate: progress improvement below this "
                         "over the window still counts as 'stuck'")
+    p.add_argument("--steer-balanced", choices=["rocky", "lakes"], default=None,
+                   help="also steer balanced maps (default: unsteered control row), "
+                        "TOWARD the named archetype: 'rocky' suppresses build / pushes "
+                        "mine / clamps belief->rocky, 'lakes' does the mirror. Uses the "
+                        "lakes alpha from --alphas. Run both and compare — steering "
+                        "balanced only one way bakes in an arbitrary asymmetry")
     p.add_argument("--matrix-maps", type=int, default=20, help="held-out maps/category")
     p.add_argument("--matrix-traj", type=int, default=16, help="stochastic rollouts/map")
     p.add_argument("--grid-seeds", type=int, default=4)
@@ -564,6 +573,15 @@ def main():
               f"(raw ‖Δ‖ before normalization: {raw_norm:.3f})")
         desc = {"balanced": "control, unsteered",
                 "lakes": "steered toward rocky", "rocky": "steered toward lakes"}
+    elif args.strategy == "action-mask":
+        direction, raw_norm = None, None
+        print(f"[action-mask] hard-masks both build and mine logits to -inf "
+              f"(renormalizing over the 4 movement actions) — operates on the "
+              f"post-head logits regardless of edit point, so the deep/shallow "
+              f"distinction is moot here; never touches h, so belief cannot "
+              f"move as a side effect")
+        desc = {"balanced": "control, unsteered",
+                "lakes": "build+mine masked", "rocky": "build+mine masked"}
     else:
         direction, raw_norm = None, None
         print(f"[{args.strategy}] state-dependent behavior clamp on the GRU "
@@ -595,6 +613,11 @@ def main():
             desc = {"balanced": "control, unsteered",
                     "lakes": "π(build) suppressed", "rocky": "π(mine) suppressed"}
 
+    if args.steer_balanced:
+        # balanced now uses the SAME (lakes) convention/alpha — see cat_alpha
+        # and make_bt_steerer's steer_balanced docstring
+        desc["balanced"] = f"steered toward {args.steer_balanced} (balanced terrain)"
+
     def steer_factory(alpha_pair):
         def for_category(cat):
             return make_bt_steerer(
@@ -605,7 +628,8 @@ def main():
                 sub_from_progress=args.sub_from_progress,
                 sub_target=args.sub_target, sub_stuck_gate=args.sub_stuck_gate,
                 sub_stuck_window=args.sub_stuck_window,
-                sub_stuck_eps=args.sub_stuck_eps, through_gru=True)
+                sub_stuck_eps=args.sub_stuck_eps, through_gru=True,
+                steer_balanced=(args.steer_balanced or False))
         return for_category
 
     # baseline (α=0) + each requested alpha setting (α_lakes, α_rocky)

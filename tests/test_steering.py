@@ -10,10 +10,11 @@ import torch
 import torch.nn as nn
 
 from cogniland.bridge_tunnel.steering import (
-    A_BUILD, A_MINE, MOVE_ACTIONS, AllOf, ClampTerm, GradientClamp,
-    LinearSteer, ProgressAtLeast, StepWindow, StuckDetector, _group_entropy,
-    _group_entropy_grad, _group_prob_grad, class_mean_direction, cosine,
-    head_direction, make_bt_steerer, project_out)
+    A_BUILD, A_MINE, BELIEF2I, MOVE_ACTIONS, ActionMask, AllOf, BELIEF_TARGET,
+    ClampTerm, GradientClamp, LinearSteer, PROHIBIT_ACTION, PUSH_ACTION,
+    ProgressAtLeast, STEER_SIGN, StepWindow, StuckDetector, _group_entropy,
+    _group_entropy_grad, _group_prob_grad, cat_alpha, class_mean_direction,
+    cosine, head_direction, make_bt_steerer, project_out, steer_convention)
 
 H, A, C, E, B = 16, 6, 3, 8, 12
 
@@ -124,6 +125,43 @@ def test_linear_steer_matches_legacy_math(h0):
     assert torch.equal(steer(h0, 0, {}), expected)
     outside = LinearSteer(d, alpha=0.25, sign=1.0, logic=StepWindow(5, 9))
     assert torch.equal(outside(h0, 0, {}), h0)
+
+
+def test_action_mask_renormalizes(policy, h0):
+    logits = policy.actor(h0.squeeze(0))
+    mask = ActionMask([A_BUILD, A_MINE])
+    out = mask(logits, 0, {})
+    p = torch.softmax(out, dim=-1)
+    assert torch.allclose(p[:, A_BUILD], torch.zeros(B), atol=1e-6)
+    assert torch.allclose(p[:, A_MINE], torch.zeros(B), atol=1e-6)
+    assert torch.allclose(p.sum(dim=-1), torch.ones(B), atol=1e-5)
+    # unmasked columns keep their relative shape (softmax over the survivors)
+    kept = [i for i in range(A) if i not in (A_BUILD, A_MINE)]
+    expected = torch.softmax(logits[:, kept], dim=-1)
+    assert torch.allclose(p[:, kept], expected, atol=1e-5)
+
+
+def test_action_mask_kind_is_logits():
+    assert ActionMask([A_BUILD]).kind == "logits"
+
+
+def test_action_mask_step_window_gates(policy, h0):
+    logits = policy.actor(h0.squeeze(0))
+    mask = ActionMask([A_BUILD, A_MINE], logic=StepWindow(10, 20))
+    assert torch.equal(mask(logits, 5, {}), logits)
+    out = mask(logits, 15, {})
+    assert not torch.equal(out, logits)
+    assert torch.isinf(out[:, A_BUILD]).all()
+
+
+def test_action_mask_per_sample_gate(policy, h0):
+    logits = policy.actor(h0.squeeze(0))
+    progress = np.zeros(B, dtype=np.float32)
+    progress[: B // 2] = 1.0
+    mask = ActionMask([A_BUILD, A_MINE], logic=ProgressAtLeast(0.5))
+    out = mask(logits, 0, {"progress": progress})
+    assert torch.isinf(out[: B // 2, A_BUILD]).all()
+    assert torch.equal(out[B // 2:], logits[B // 2:])
 
 
 def test_project_out_correction(policy, h0):
@@ -372,3 +410,87 @@ def test_make_bt_steerer_assembly(policy):
     deep = make_bt_steerer("suppress-skill", "rocky", policy, None, 0.5,
                            through_gru=True)
     assert deep.through_gru
+
+
+def test_balanced_still_control_by_default(policy):
+    # unchanged default: alpha nonzero, but balanced is still never steered
+    # unless the caller explicitly opts in
+    torch.manual_seed(5)
+    d = torch.randn(H); d = d / d.norm()
+    assert make_bt_steerer("suppress-skill", "balanced", policy, None, 0.5) is None
+    assert make_bt_steerer("substitute-skill", "balanced", policy, None, 0.5) is None
+    assert make_bt_steerer("belief-clamp", "balanced", policy, None, 0.5) is None
+    assert make_bt_steerer("action-mask", "balanced", policy, None, 0.5) is None
+    assert make_bt_steerer("class-mean", "balanced", policy, d, 0.5) is None
+
+
+def test_steer_convention_resolution():
+    assert steer_convention("lakes") == "lakes"
+    assert steer_convention("rocky") == "rocky"
+    assert steer_convention("balanced") is None
+    assert steer_convention("balanced", False) is None
+    # steering balanced TOWARD an archetype uses the OPPOSITE convention
+    assert steer_convention("balanced", "rocky") == "lakes"
+    assert steer_convention("balanced", "lakes") == "rocky"
+    assert steer_convention("balanced", True) == "lakes"      # back-compat alias
+    with pytest.raises(ValueError):
+        steer_convention("balanced", "banana")
+
+
+@pytest.mark.parametrize("target,conv", [("rocky", "lakes"), ("lakes", "rocky")])
+def test_steer_balanced_both_directions(policy, target, conv):
+    """Balanced can be steered toward EITHER archetype, and each direction
+    mirrors the corresponding lakes/rocky convention exactly."""
+    torch.manual_seed(6)
+    d = torch.randn(H); d = d / d.norm()
+
+    clamp = make_bt_steerer("suppress-skill", "balanced", policy, None, 0.5,
+                            steer_balanced=target)
+    assert clamp.terms[0].indices == (PROHIBIT_ACTION[conv],)
+
+    bclamp = make_bt_steerer("belief-clamp", "balanced", policy, None, 0.5,
+                             steer_balanced=target)
+    assert bclamp.terms[0].indices == (BELIEF_TARGET[conv],)
+    assert bclamp.terms[0].indices == (BELIEF2I[target],)     # clamps toward the TARGET
+
+    lin = make_bt_steerer("class-mean", "balanced", policy, d, 0.5,
+                          steer_balanced=target)
+    assert lin.sign == STEER_SIGN[conv]
+
+    # the steering VECTOR is shared verbatim across categories and directions —
+    # only the sign flips — so balanced-toward-rocky is directly comparable to
+    # the lakes row, and balanced-toward-lakes to the rocky row
+    twin = make_bt_steerer("class-mean", conv, policy, d, 0.5)
+    assert torch.equal(lin.direction, twin.direction)
+    assert lin.sign == twin.sign
+
+
+def test_steer_balanced_directions_are_opposite(policy):
+    torch.manual_seed(7)
+    d = torch.randn(H); d = d / d.norm()
+    to_rocky = make_bt_steerer("class-mean", "balanced", policy, d, 0.5, steer_balanced="rocky")
+    to_lakes = make_bt_steerer("class-mean", "balanced", policy, d, 0.5, steer_balanced="lakes")
+    assert to_rocky.sign == -to_lakes.sign
+    assert torch.equal(to_rocky.direction, to_lakes.direction)
+    # and the suppressed skill is the opposite one in each direction
+    s_r = make_bt_steerer("suppress-skill", "balanced", policy, None, 0.5, steer_balanced="rocky")
+    s_l = make_bt_steerer("suppress-skill", "balanced", policy, None, 0.5, steer_balanced="lakes")
+    assert s_r.terms[0].indices == (A_BUILD,)
+    assert s_l.terms[0].indices == (A_MINE,)
+
+
+def test_cat_alpha_balanced_falls_back_to_lakes():
+    assert cat_alpha((0.3, 0.9), "balanced") == 0.3
+    assert cat_alpha((0.3, 0.9), "lakes") == 0.3
+    assert cat_alpha((0.3, 0.9), "rocky") == 0.9
+
+
+def test_make_bt_steerer_action_mask(policy):
+    # balanced is always the unsteered control; alpha=0 disables
+    assert make_bt_steerer("action-mask", "balanced", policy, None, 0.5) is None
+    assert make_bt_steerer("action-mask", "lakes", policy, None, 0.0) is None
+    for cat in ("lakes", "rocky"):
+        st = make_bt_steerer("action-mask", cat, policy, None, 1.0)
+        assert isinstance(st, ActionMask)
+        assert set(st.indices) == {A_BUILD, A_MINE}
+        assert st.kind == "logits"

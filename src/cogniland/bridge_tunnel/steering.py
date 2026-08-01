@@ -12,7 +12,7 @@ reaching any head; pass ``through_gru=True`` and provide ``ctx["feat"]``).
 ``ctx`` is an open dict of env-side per-step arrays (e.g. ``progress`` (B,),
 ``feat`` (B, E)) that intervention logics and corrections may inspect.
 
-Two method families are provided, both built to be extended:
+Three method families are provided, all built to be extended:
 
 * :class:`GradientClamp` — iterative minimal-edit steering on linear head
   readouts. Each :class:`ClampTerm` names a head (``"actor"`` / ``"belief"``),
@@ -28,6 +28,12 @@ Two method families are provided, both built to be extended:
   (see the direction builders: :func:`head_direction` for actor/belief weight
   rows, :func:`class_mean_direction` for externally collected class means —
   category-, skill-, confounded- or balanced-conditioned alike).
+* :class:`ActionMask` — the odd one out: a hard mask on the actor's LOGITS
+  (``mask(logits, t, ctx) -> logits'``, not ``(h, t, ctx) -> h'``), setting
+  the masked classes to ``-inf`` so softmax renormalizes over what's left.
+  No magnitude, no gradient, and — because it never touches ``h`` — it can
+  never move the belief readout as a side effect, unlike the other two
+  families. Rollout code dispatches on ``getattr(fn, "kind", "hidden")``.
 
 WHEN/WHERE to intervene is factored out into *intervention logics*: callables
 ``logic(t, x, ctx) -> bool | (B,) mask`` attached to a whole steerer and/or to
@@ -40,7 +46,8 @@ for gradient-projection/constraint experiments.
 
 :func:`make_bt_steerer` assembles the standard bridge_tunnel experiment
 strategies (axis pushes, suppress/substitute-skill, belief-clamp) per map
-category, with balanced maps always the unsteered control row.
+category. Balanced maps are the unsteered control row by default; pass
+``steer_balanced=True`` to steer them too (see the function docstring).
 """
 from __future__ import annotations
 
@@ -58,15 +65,45 @@ BELIEF2I = {"balanced": 0, "lakes": 1, "rocky": 2}
 A_BUILD, A_MINE = 4, 5
 ACTION_NAMES = ["up", "down", "left", "right", "build", "mine"]
 MOVE_ACTIONS = (0, 1, 2, 3)                             # up, down, left, right
-# Axis strategies use the unit lakes→rocky (or build→mine) direction; sign +1
-# on lakes pushes toward rocky/mine, −1 on rocky toward lakes/build. Each
-# category is steered toward its SUB-optimal skill; balanced = control.
-STEER_SIGN = {"balanced": 0.0, "lakes": +1.0, "rocky": -1.0}
+# These dicts are keyed by the steering CONVENTION, which for lakes/rocky maps
+# is just the map's own category: each is steered toward its SUB-optimal skill,
+# so the "lakes" convention pushes TOWARD rocky/mine (sign +1 on the unit
+# lakes→rocky axis) and the "rocky" convention pushes TOWARD lakes/build (−1).
+# Balanced terrain favors neither skill, so it has no convention of its own —
+# it is the unsteered control row unless the caller names a TARGET archetype
+# via ``make_bt_steerer(..., steer_balanced="rocky"|"lakes")``, which is then
+# resolved to the opposite convention by :func:`steer_convention`. Steering
+# balanced in BOTH directions and comparing is the clean experiment; steering
+# it in only one direction bakes in an arbitrary asymmetry.
+STEER_SIGN = {"lakes": +1.0, "rocky": -1.0}
 SUBOPT_COMMIT = {"lakes": 2, "rocky": 1}                # mine on lakes, build on rocky
 PROHIBIT_ACTION = {"lakes": A_BUILD, "rocky": A_MINE}   # the optimal skill, forbidden
 PUSH_ACTION = {"lakes": A_MINE, "rocky": A_BUILD}       # the sub-optimal skill
-# belief-clamp: the WRONG archetype each category's belief is clamped toward
+# belief-clamp: the WRONG archetype each convention's belief is clamped toward
 BELIEF_TARGET = {"lakes": BELIEF2I["rocky"], "rocky": BELIEF2I["lakes"]}
+# a convention pushes toward the OTHER archetype, so target ↔ convention swap
+_TARGET_TO_CONVENTION = {"rocky": "lakes", "lakes": "rocky"}
+STEER_TARGET = {"lakes": "rocky", "rocky": "lakes"}     # convention → what it steers toward
+
+
+def steer_convention(category: str, steer_balanced: bool | str = False) -> str | None:
+    """Which convention row of the dicts above applies to ``category``.
+
+    lakes/rocky use their own. Balanced returns None (unsteered) unless
+    ``steer_balanced`` names the archetype to steer TOWARD — ``"rocky"``
+    (⇒ the lakes convention: suppress build, push mine, belief→rocky) or
+    ``"lakes"`` (⇒ the rocky convention: suppress mine, push build,
+    belief→lakes). ``True`` is accepted as a back-compat alias for ``"rocky"``.
+    """
+    if category != "balanced":
+        return category if category in STEER_SIGN else None
+    if not steer_balanced:
+        return None
+    target = "rocky" if steer_balanced is True else str(steer_balanced)
+    if target not in _TARGET_TO_CONVENTION:
+        raise ValueError(f"steer_balanced must be False/True or 'rocky'/'lakes', "
+                         f"got {steer_balanced!r}")
+    return _TARGET_TO_CONVENTION[target]
 
 
 # ── per-category steering strengths ──
@@ -90,7 +127,12 @@ def alpha_label(pair: tuple[float, float]) -> str:
 
 
 def cat_alpha(pair: tuple[float, float], category: str) -> float:
-    return {"lakes": pair[0], "rocky": pair[1]}.get(category, 0.0)
+    """'lakes:rocky' alpha pair -> the value for one category. Balanced falls
+    back to the lakes alpha (it uses the lakes convention when steered at
+    all — see ``make_bt_steerer(..., steer_balanced=True)``); this is a no-op
+    unless the caller actually opts balanced into steering, since
+    ``make_bt_steerer`` gates balanced out by default regardless of alpha."""
+    return {"lakes": pair[0], "rocky": pair[1]}.get(category, pair[0])
 
 
 # ───────────────────────── intervention logic ─────────────────────────
@@ -625,6 +667,46 @@ class LinearSteer:
         return x.unsqueeze(0)
 
 
+# ───────────────────────────── action masking ──────────────────────────────
+
+class ActionMask:
+    """Hard-masks a fixed set of ACTION LOGITS to ``-inf`` — softmax then
+    renormalizes over whatever's left, so this is the literal "this action
+    does not exist right now" intervention, as opposed to LinearSteer/
+    GradientClamp's soft nudges toward it.
+
+    Unlike the other two families, this operates on the actor head's LOGITS
+    (post-head), not on the recurrent hidden state — call signature is
+    ``mask(logits, t, ctx) -> logits'``, not ``(h, t, ctx) -> h'``. It never
+    touches ``h``, so it can never move the belief readout (which reads the
+    same ``h`` the action logits were computed from): any belief movement
+    seen elsewhere is impossible here by construction, making this a clean
+    baseline against which GradientClamp/LinearSteer's belief-entanglement
+    can be judged. ``through_gru`` is meaningless for this family — masking
+    happens after the head regardless of which recurrent edit point (if any)
+    was used upstream.
+
+    Rollout code must dispatch on ``getattr(fn, "kind", "hidden") == "logits"``
+    to know whether to apply a steerer to ``h`` or a mask to the head's
+    output; see ``batched_rollout_steered`` in the eval scripts.
+    """
+    kind = "logits"
+
+    def __init__(self, indices: Sequence[int], logic: InterventionLogic | None = None):
+        self.indices = tuple(indices)
+        self.logic = logic
+
+    def __call__(self, logits: torch.Tensor, t: int, ctx: dict) -> torch.Tensor:
+        gate = _gate(self.logic, t, logits, ctx)
+        if gate is not None and not bool(gate.any()):
+            return logits
+        col = torch.zeros(logits.shape[-1], dtype=torch.bool, device=logits.device)
+        col[list(self.indices)] = True
+        row = (torch.ones(logits.shape[0], dtype=torch.bool, device=logits.device)
+               if gate is None else gate)
+        return logits.masked_fill(row[:, None] & col[None, :], float("-inf"))
+
+
 # ───────────────────── standard bridge_tunnel strategies ─────────────────────
 
 def make_bt_steerer(strategy: str, category: str, policy,
@@ -636,9 +718,17 @@ def make_bt_steerer(strategy: str, category: str, policy,
                     sub_stuck_gate: bool = False, sub_stuck_window: int = 20,
                     sub_stuck_eps: float = 1e-3,
                     belief_floor: float = 0.75, through_gru: bool = False,
-                    corrections: Sequence[Correction] = ()):
+                    corrections: Sequence[Correction] = (),
+                    steer_balanced: bool | str = False):
     """Assemble the steerer for one strategy × map category (None ⇒ unsteered).
-    Balanced maps are always the no-steer control row.
+
+    Balanced maps are the no-steer control row by default. Pass
+    ``steer_balanced="rocky"`` or ``"lakes"`` to steer them TOWARD that
+    archetype — resolved to the opposite convention by :func:`steer_convention`,
+    so ``"rocky"`` suppresses build / pushes mine / clamps belief→rocky and
+    ``"lakes"`` does the mirror. Running balanced BOTH ways and comparing is
+    the clean experiment (one direction alone bakes in an arbitrary asymmetry).
+    ``True`` is a back-compat alias for ``"rocky"``.
 
     Clamp strategies: ``suppress-skill`` (π(prohibited) < clamp_target, plus a
     non-driving push assist when push_beta > 0), ``substitute-skill`` (adds a
@@ -674,26 +764,31 @@ def make_bt_steerer(strategy: str, category: str, policy,
       ProgressAtLeast, so it only engages once a trajectory is actually
       deadlocked rather than firing on every step past sub_from_progress.
 
-    ``belief-clamp`` (P(wrong archetype) > belief_floor). Any other strategy
-    with a precomputed ``direction`` (class-mean, belief-head, skill-mean, …)
+    ``belief-clamp`` (P(wrong archetype) > belief_floor). ``action-mask`` hard-
+    masks BOTH skill actions' logits to ``-inf`` (renormalizing over the 4
+    movement actions) whenever active — no magnitude, no gradient, and it
+    never touches ``h`` so the belief readout cannot move as a side effect;
+    the rollout must dispatch this one onto the actor LOGITS post-head rather
+    than onto ``h`` (see :class:`ActionMask`). Any other strategy with a
+    precomputed ``direction`` (class-mean, belief-head, skill-mean, …)
     becomes a LinearSteer with the category's STEER_SIGN.
     """
     if alpha == 0.0:
         return None
+    conv = steer_convention(category, steer_balanced)
+    if conv is None:
+        return None
     window = StepWindow(steer_from, steer_to)
+    if strategy == "action-mask":
+        return ActionMask([A_BUILD, A_MINE], logic=window)
     if strategy == "belief-clamp":
-        target_cls = BELIEF_TARGET.get(category)
-        if target_cls is None:
-            return None
         return GradientClamp(
-            policy, [ClampTerm("belief", target_cls, "push", belief_floor)],
+            policy, [ClampTerm("belief", BELIEF_TARGET[conv], "push", belief_floor)],
             alpha, clamp_iters, logic=window, through_gru=through_gru,
             corrections=corrections)
     if strategy in ("suppress-skill", "substitute-skill"):
-        prohibit = PROHIBIT_ACTION.get(category)
-        if prohibit is None:
-            return None
-        push = PUSH_ACTION[category]
+        prohibit = PROHIBIT_ACTION[conv]
+        push = PUSH_ACTION[conv]
         terms = [ClampTerm("actor", prohibit, "suppress", clamp_target)]
         if strategy == "substitute-skill":
             if sub_target == "movement":
@@ -717,20 +812,20 @@ def make_bt_steerer(strategy: str, category: str, policy,
                                    weight=push_beta, drives=False))
         return GradientClamp(policy, terms, alpha, clamp_iters, logic=window,
                              through_gru=through_gru, corrections=corrections)
-    sign = STEER_SIGN.get(category, 0.0)
-    if direction is None or sign == 0.0:
+    if direction is None:
         return None
-    return LinearSteer(direction, alpha, sign=sign, logic=window,
+    return LinearSteer(direction, alpha, sign=STEER_SIGN[conv], logic=window,
                        corrections=corrections)
 
 
 __all__ = [
     "A_BUILD", "A_MINE", "ACTION_NAMES", "MOVE_ACTIONS", "BELIEF2I",
-    "BELIEF_TARGET", "PROHIBIT_ACTION", "PUSH_ACTION", "STEER_SIGN", "SUBOPT_COMMIT",
+    "BELIEF_TARGET", "PROHIBIT_ACTION", "PUSH_ACTION", "STEER_SIGN", "STEER_TARGET",
+    "SUBOPT_COMMIT", "steer_convention",
     "parse_alpha_token", "alpha_label", "cat_alpha",
     "Always", "StepWindow", "ProgressAtLeast", "StuckDetector",
     "AllOf", "AnyOf", "Not",
     "Correction", "project_out",
     "head_direction", "class_mean_direction", "cosine",
-    "ClampTerm", "GradientClamp", "LinearSteer", "make_bt_steerer",
+    "ClampTerm", "GradientClamp", "LinearSteer", "ActionMask", "make_bt_steerer",
 ]
