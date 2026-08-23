@@ -87,98 +87,70 @@ def band_by_arm(runs, key, arm_filter):
 
 # ── PPO ──────────────────────────────────────────────────────────────────
 
-def fig_ppo(data, out):
-    runs = data["ppo"]
-    arms = sorted({b["meta"]["arm"] for b in runs.values()})
-    with plt.rc_context(PLT_RC):
-        fig, axes = plt.subplots(2, 3, figsize=(12.4, 6.0))
+def _best_ppo_run(runs):
+    """The released arm's best seed, by mean success over the last 20 iterations."""
+    cand = {n: b for n, b in runs.items() if "★released" in b["meta"]["arm"]} or runs
+    return max(cand.items(), key=lambda kv: xy(kv[1]["series"], "success")[1][-20:].mean())
 
+
+def fig_ppo(data, out):
+    name, blob = _best_ppo_run(data["ppo"])
+    s = blob["series"]
+    with plt.rc_context(PLT_RC):
+        fig, axes = plt.subplots(2, 3, figsize=(12.4, 5.6))
         panels = [
-            ("return", "episode return", "(a) training return"),
-            ("success", "success rate", "(b) training success (reward>0 proxy)"),
-            ("ep_length", "steps", "(c) episode length"),
-            ("belief_acc", "accuracy", "(d) belief-probe accuracy (aux head)"),
-            ("kl", "KL", "(e) policy KL per update"),
+            ("return", "episode return", "(a) training return", None),
+            ("success", "success rate", "(b) training success (proxy)", 2 / 3),
+            ("ep_length", "steps", "(c) episode length", None),
+            ("belief_acc", "accuracy", "(d) belief-probe accuracy", 1 / 3),
+            ("kl", "KL", "(e) policy KL per update", None),
+            ("sps", "steps / s", "(f) throughput", None),
         ]
-        for ax, (key, ylab, title) in zip(axes.flat, panels):
-            for ci, arm in enumerate(arms):
-                agg = band_by_arm(runs, key, arm)
-                if agg is None:
-                    continue
-                g, m, lo, hi, n = agg
-                star = "★" in arm
-                ax.plot(g / 1e6, smooth(m), color=ARM_C[ci % 4], lw=2.0 if star else 1.2,
-                        label=f"{arm} (n={n})", zorder=5 if star else 3)
-                ax.fill_between(g / 1e6, smooth(lo), smooth(hi), color=ARM_C[ci % 4],
-                                alpha=.13, lw=0)
+        for ax, (key, ylab, title, ref) in zip(axes.flat, panels):
+            x, y = xy(s, key)
+            if x.size:
+                ax.plot(x / 1e6, smooth(y, 9), color=C["ppo"], lw=1.8)
+            if ref is not None:
+                ax.axhline(ref, color="#6b7280", ls="--", lw=1.0)
             ax.set_xlabel("environment frames (M)"); ax.set_ylabel(ylab)
             ax.set_title(title, loc="left")
-        axes.flat[1].axhline(2 / 3, color="#6b7280", ls="--", lw=1.0)
-        axes.flat[1].annotate("constant-door ceiling (⅔)", xy=(0.35, 2 / 3),
-                              fontsize=7, color="#6b7280", va="bottom")
-        axes.flat[3].axhline(1 / 3, color="#6b7280", ls="--", lw=1.0)
-
-        ax = axes.flat[5]
-        for ci, arm in enumerate(arms):
-            finals = [xy(b["series"], "success")[1][-20:].mean()
-                      for n, b in runs.items() if n.startswith(arm)
-                      and xy(b["series"], "success")[1].size]
-            ax.scatter([ci] * len(finals), finals, color=ARM_C[ci % 4], s=34, zorder=4)
-            ax.scatter([ci], [np.mean(finals)], marker="_", s=420,
-                       color=ARM_C[ci % 4], zorder=5)
-        ax.axhline(2 / 3, color="#6b7280", ls="--", lw=1.0)
-        ax.set_xticks(range(len(arms)))
-        ax.set_xticklabels([a.replace(" + ", "\n+ ").replace("  ★released", "\n★released")
-                            for a in arms], fontsize=6.5)
-        ax.set_ylabel("final success (last 20 iters)")
-        ax.set_title("(f) per-seed outcome: the basin is a seed lottery", loc="left")
-
-        h, l = axes.flat[0].get_legend_handles_labels()
-        fig.legend(h, l, loc="lower center", ncol=4, frameon=False,
-                   bbox_to_anchor=(.5, -.02))
-        fig.suptitle("PPO+GRU — plain-reward exploration sweep (4 arms × 3 seeds, 4M frames each)",
-                     y=1.0)
-        fig.tight_layout(rect=[0, .035, 1, .975])
+        axes.flat[1].annotate("constant-door ceiling (⅔)", xy=(0.05, .60), fontsize=7,
+                              color="#6b7280", va="top")
+        axes.flat[3].annotate("chance (⅓)", xy=(0.05, .30), fontsize=7,
+                              color="#6b7280", va="top")
+        fig.suptitle(f"PPO + GRU — released run ({name})", y=1.0)
+        fig.tight_layout(rect=[0, 0, 1, .975])
         fig.savefig(out / "fig_ppo_training.png", bbox_inches="tight")
         plt.close(fig)
 
 
 # ── Dreamer ──────────────────────────────────────────────────────────────
 
-def fig_dreamer(data, out):
-    runs = data["dreamer"]
-    order = sorted(runs, key=lambda k: (runs[k]["meta"]["size"],
-                                        runs[k]["meta"]["batch_length"]))
-    cols = {"12M, batch_length 64": "#93c5fd", "12M, batch_length 128": "#2563eb",
-            "25M, batch_length 64": "#fca5a5", "25M, batch_length 128": "#b91c1c"}
+def fig_dreamer(data, out, pick="25M, batch_length 64"):
+    blob = data["dreamer"].get(pick) or list(data["dreamer"].values())[0]
+    s = blob["series"]
     with plt.rc_context(PLT_RC):
-        fig, axes = plt.subplots(2, 3, figsize=(12.4, 6.0))
+        fig, axes = plt.subplots(2, 3, figsize=(12.4, 5.6))
         panels = [
-            ("episode/eval_success", "eval success", "(a) held-out success (eval episodes)"),
-            ("episode/score", "return", "(b) training return"),
-            ("episode/eval_length", "steps", "(c) eval episode length"),
-            ("train/loss/dyn", "KL", "(d) dynamics loss (prior↔posterior KL)"),
-            ("train/loss/rew", "nats", "(e) reward-head loss"),
-            ("train/action_entropy", "nats", "(f) actor entropy"),
+            ("episode/eval_success", "eval success", "(a) held-out success (trainer eval)", 2 / 3),
+            ("episode/score", "return", "(b) training return", None),
+            ("episode/eval_length", "steps", "(c) eval episode length", None),
+            ("train/loss/dyn", "KL", "(d) dynamics loss (prior↔posterior KL)", None),
+            ("train/loss/rew", "nats", "(e) reward-head loss", None),
+            ("train/action_entropy", "nats", "(f) actor entropy", None),
         ]
-        for ax, (key, ylab, title) in zip(axes.flat, panels):
-            for name in order:
-                x, y = xy(runs[name]["series"], key)
-                if x.size == 0:
-                    continue
-                ax.plot(x / 1e6, smooth(y, 15), color=cols.get(name, "#333"),
-                        lw=1.9 if "25M, batch_length 64" == name else 1.2,
-                        label=name)
+        for ax, (key, ylab, title, ref) in zip(axes.flat, panels):
+            x, y = xy(s, key)
+            if x.size:
+                ax.plot(x / 1e6, smooth(y, 15), color=C["dreamer"], lw=1.8)
+            if ref is not None:
+                ax.axhline(ref, color="#6b7280", ls="--", lw=1.0)
             ax.set_xlabel("environment frames (M)"); ax.set_ylabel(ylab)
             ax.set_title(title, loc="left")
-        axes.flat[0].axhline(2 / 3, color="#6b7280", ls="--", lw=1.0)
-        axes.flat[0].annotate("constant-door ceiling (⅔)", xy=(0.5, 2 / 3), fontsize=7,
-                              color="#6b7280", va="bottom")
-        h, l = axes.flat[0].get_legend_handles_labels()
-        fig.legend(h, l, loc="lower center", ncol=4, frameon=False,
-                   bbox_to_anchor=(.5, -.02))
-        fig.suptitle("DreamerV3 (R2) — capacity × training-context sweep", y=1.0)
-        fig.tight_layout(rect=[0, .035, 1, .975])
+        axes.flat[0].annotate("constant-door ceiling (⅔)", xy=(0.05, .60), fontsize=7,
+                              color="#6b7280", va="top")
+        fig.suptitle(f"DreamerV3 — released run ({pick})", y=1.0)
+        fig.tight_layout(rect=[0, 0, 1, .975])
         fig.savefig(out / "fig_dreamer_training.png", bbox_inches="tight")
         plt.close(fig)
 
@@ -188,32 +160,55 @@ def fig_dreamer(data, out):
 def fig_storm(data, out, heldout_csv=None):
     runs = data.get("storm", {})
     if not runs:
-        print("  [storm] no telemetry yet — skipping fig_storm_training.png")
+        print("  [storm] no telemetry yet - skipping fig_storm_training.png")
         return
-    name = sorted(runs)[-1]
-    s = runs[name]["series"]
-    pfx = "train/BridgeTunnel/forkwall/"
+    s = runs[sorted(runs)[-1]]["series"]
+    P = "train/BridgeTunnel/forkwall/"
+    xf, yf = xy(s, P + "frame")            # episode index -> env frames
+
+    def to_frames(key):
+        x, y = xy(s, key)
+        if x.size == 0 or yf.size == 0:
+            return np.array([]), np.array([])
+        return np.interp(x, xf, yf), y
+
     with plt.rc_context(PLT_RC):
-        fig, axes = plt.subplots(2, 3, figsize=(12.4, 6.0))
-        panels = [
-            (pfx + "moving_avg_reward", "return", "(a) training return (moving avg)"),
-            (pfx + "moving_avg_success_rate", "success", "(b) training success (proxy)"),
-            (pfx + "moving_avg_length", "steps", "(c) episode length"),
-            (pfx + "loss/rec", "nats", "(d) reconstruction loss"),
-            (pfx + "loss/rew", "nats", "(e) reward-head loss"),
-            (pfx + "loss/dyn", "KL", "(f) dynamics KL"),
+        fig, axes = plt.subplots(2, 3, figsize=(12.4, 5.6))
+        dense = [
+            (P + "moving_avg_reward", "return", "(a) training return", None, 9),
+            (P + "moving_avg_success_rate", "success", "(b) training success (proxy)", 2 / 3, 9),
+            (P + "moving_avg_length", "steps", "(c) episode length", None, 9),
         ]
-        for ax, (key, ylab, title) in zip(axes.flat, panels):
+        # NB: the trainer's `frame` counter is constant inside a 200k-frame
+        # segment, so interpolating episode->frame would draw staircases.
+        # Episode index is the honest dense axis for these three.
+        for ax, (key, ylab, title, ref, k) in zip(axes.flat[:3], dense):
             x, y = xy(s, key)
-            if x.size == 0:
-                ax.text(.5, .5, "no data", ha="center", va="center",
-                        transform=ax.transAxes, color="#9ca3af")
-            else:
-                ax.plot(x, smooth(y, 9), color=C["storm"], lw=1.4)
+            if x.size:
+                ax.plot(x, smooth(y, 25), color=C["storm"], lw=1.8)
+            if ref is not None:
+                ax.axhline(ref, color="#6b7280", ls="--", lw=1.0)
             ax.set_xlabel("training episode"); ax.set_ylabel(ylab)
             ax.set_title(title, loc="left")
-        fig.suptitle("STORM (storm2) — winning recipe: entropy 0.01, batch_length 128, "
-                     "context 128", y=1.0)
+        axes.flat[1].annotate("constant-door ceiling (⅔)", xy=(20, .60), fontsize=7,
+                              color="#6b7280", va="top")
+
+        # the trainer flushes losses once per 200k-frame segment, so these are
+        # sparse by construction -- draw the samples, not an implied continuum.
+        sparse = [(P + "loss/rec", "nats", "(d) reconstruction loss"),
+                  (P + "loss/rew", "nats", "(e) reward-head loss"),
+                  (P + "loss/dyn", "KL", "(f) dynamics KL")]
+        for ax, (key, ylab, title) in zip(axes.flat[3:], sparse):
+            x, y = to_frames(key)
+            if x.size:
+                ax.plot(x / 1e6, y, "o-", color=C["storm"], lw=1.4, ms=4)
+            else:
+                ax.text(.5, .5, "no data yet", ha="center", va="center",
+                        transform=ax.transAxes, color="#9ca3af")
+            ax.set_xlabel("environment frames (M)"); ax.set_ylabel(ylab)
+            ax.set_title(title + "   (1 sample / 200k frames)", loc="left")
+        fig.suptitle("STORM — released recipe (entropy 0.01, batch_length 128, context 128)",
+                     y=1.0)
         fig.tight_layout(rect=[0, 0, 1, .975])
         fig.savefig(out / "fig_storm_training.png", bbox_inches="tight")
         plt.close(fig)
@@ -244,14 +239,15 @@ def fig_compare(data, out, heldout):
         st = data.get("storm", {})
         if st:
             s = st[sorted(st)[-1]]["series"]
-            k = "train/BridgeTunnel/forkwall/moving_avg_success_rate"
-            xs, ys = xy(s, k)
-            kf = "train/BridgeTunnel/forkwall/frame"
-            xf, yf = xy(s, kf)
-            if xs.size and yf.size:                 # episode index -> env frames
-                frames = np.interp(xs, xf, yf)
-                ax.plot(frames / 1e6, smooth(ys, 9), color=C["storm"], lw=1.8,
-                        label="STORM")
+            xs, ys = xy(s, "train/BridgeTunnel/forkwall/moving_avg_success_rate")
+            xf, yf = xy(s, "train/BridgeTunnel/forkwall/frame")
+            if xs.size and yf.size:
+                # `frame` only updates once per 200k-frame segment, so convert
+                # episode index -> frames with the run's own average episode
+                # cost rather than interpolating a staircase.
+                per_ep = float(yf.max()) / float(xs.max())
+                ax.plot(xs * per_ep / 1e6, smooth(ys, 25), color=C["storm"], lw=1.8,
+                        label="STORM (re-run, in progress)")
         ax.axhline(2 / 3, color="#6b7280", ls="--", lw=1.0)
         ax.annotate("constant-door ceiling (⅔)", xy=(0.05, .60), fontsize=7,
                     color="#6b7280", va="top")

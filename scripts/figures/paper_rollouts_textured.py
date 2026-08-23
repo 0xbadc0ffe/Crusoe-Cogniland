@@ -201,10 +201,6 @@ def rollout(act, reset, rec, agent_name, out_mp4, fps=16, hold=0.9):
 
     for t in range(FORKWALL_KWARGS["max_steps"]):
         frames.append(compose(t))
-        for e in effects:
-            e.t += 1
-        effects = [e for e in effects if e.alive()]
-
         a = act(obs, False)
         facing_before = env._facing
         obs, r, term, trunc, info = env.step(a)
@@ -218,7 +214,11 @@ def rollout(act, reset, rec, agent_name, out_mp4, fps=16, hold=0.9):
             effects.append(Effect(cell, kind, rng))
             n_build += int(kind == "build")
             n_mine += int(kind == "mine")
-            for _ in range(Effect.DUR):          # let the animation play out
+            # Hold the replay until the burst has fully played out, so tool use
+            # reads as an event instead of a one-frame flicker. Nothing else
+            # advances during the hold: the agent has already acted, and the
+            # next action is only requested once `effects` is empty.
+            while effects:
                 frames.append(compose(t))
                 for e in effects:
                     e.t += 1

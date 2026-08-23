@@ -287,47 +287,42 @@ def fig_reward(by_cat, out, ppo_ckpt):
 
 
 def fig_dataset(records, out, meta_path):
-    """Dataset composition + geometry statistics per category."""
+    """Per-category coverage: one panel each, ordered rocky -> balanced -> lakes."""
     with open(meta_path, "rb") as f:
         meta = pickle.load(f)
-    cats = [r.category for r in records]
-    counts = {c: cats.count(c) for c in CATS}
-    water = {c: [] for c in CATS}
-    rock = {c: [] for c in CATS}
+    order = ("rocky", "balanced", "lakes")
+    water = {c: [] for c in order}
+    rock = {c: [] for c in order}
     for r in records:
         if r.category not in water:
             continue
-        water[r.category].append(float((r.terrain == 1).mean()))
-        rock[r.category].append(float((r.terrain == 2).mean()))
+        water[r.category].append(float((r.terrain == 1).mean()) * 100)
+        rock[r.category].append(float((r.terrain == 2).mean()) * 100)
 
+    w_col = np.array(TILE_COLORS[1]) / 255
+    r_col = np.array(TILE_COLORS[2]) / 255
+    bins = np.linspace(0, 28, 45)
     with plt.rc_context(PLT_RC):
-        fig, axes = plt.subplots(1, 3, figsize=(10.6, 3.1))
-        ax = axes[0]
-        ax.bar(list(counts), list(counts.values()),
-               color=["#3d71b8", "#7c8b96", "#6e6e6e"])
-        ax.set_title("(a) train split composition", loc="left")
-        ax.set_ylabel("maps")
-        for i, (k, v) in enumerate(counts.items()):
-            ax.text(i, v, str(v), ha="center", va="bottom", fontsize=8)
-
-        ax = axes[1]
-        ax.boxplot([water[c] for c in CATS], labels=CATS, showfliers=False)
-        ax.set_title("(b) water coverage", loc="left"); ax.set_ylabel("fraction of cells")
-
-        ax = axes[2]
-        ax.boxplot([rock[c] for c in CATS], labels=CATS, showfliers=False)
-        ax.set_title("(c) rock coverage", loc="left"); ax.set_ylabel("fraction of cells")
-
-        fig.suptitle("The category is identifiable from terrain statistics alone "
-                     "(water/rock coverage), visible only before the corridor", y=1.03,
-                     fontsize=9.5)
+        fig, axes = plt.subplots(1, 3, figsize=(11.4, 3.0), sharey=True, sharex=True)
+        for ax, cat in zip(axes, order):
+            ax.hist(water[cat], bins=bins, color=w_col, alpha=.80, label="water")
+            ax.hist(rock[cat], bins=bins, color=r_col, alpha=.80, label="rock")
+            ax.axvline(np.mean(water[cat]), color=w_col, lw=1.4, ls="--")
+            ax.axvline(np.mean(rock[cat]), color=r_col, lw=1.4, ls="--")
+            ax.set_title(f"{cat} coverage", loc="left")
+            ax.set_xlabel("% of map cells")
+        axes[0].set_ylabel("maps")
+        axes[0].legend(frameon=False, fontsize=8)
+        fig.suptitle("Each map type is a different pair of terrain fractions — that "
+                     "difference is the only signal the agent can use", y=1.04)
         fig.tight_layout()
         fig.savefig(out / "fig_dataset.png", bbox_inches="tight")
         plt.close(fig)
 
-    return dict(meta=meta, counts=counts,
-                water={c: (float(np.mean(water[c])), float(np.std(water[c]))) for c in CATS},
-                rock={c: (float(np.mean(rock[c])), float(np.std(rock[c]))) for c in CATS})
+    return dict(meta=meta,
+                counts={c: len(water[c]) for c in order},
+                water={c: (float(np.mean(water[c])), float(np.std(water[c]))) for c in order},
+                rock={c: (float(np.mean(rock[c])), float(np.std(rock[c]))) for c in order})
 
 
 def main():

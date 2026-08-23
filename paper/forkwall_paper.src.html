@@ -1,4 +1,4 @@
-<title>Fork Wall</title>
+<title>Cogniland</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,300;0,400;0,600;0,700;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -218,12 +218,12 @@ footer{grid-column:1/-1; justify-self:center; width:min(1180px,96vw); margin-top
 <div class="wrap">
 
 <header class="mast">
-  <p class="kicker">Cogniland · bridge_tunnel · technical report</p>
-  <h1>Fork Wall
+  <p class="kicker">Cogniland · technical report</p>
+  <h1>Cogniland
     <span class="sub">A minimal POMDP where the only difficulty is remembering — and three agents
       that solve it: recurrent PPO, DreamerV3, and STORM</span></h1>
   <div class="byline">
-    <span><b>Task</b> bridge_tunnel · fork_wall (BT rules)</span>
+    <span><b>Environment</b> Cogniland (bridge_tunnel engine)</span>
     <span><b>Agents</b> PPO+GRU · DreamerV3 (RSSM) · STORM (Transformer)</span>
     <span><b>Data</b> forkwall6k, 4 800 train / 1 200 held-out maps</span>
     <span><b>Evaluation</b> 900 held-out episodes per agent, identical harness</span>
@@ -232,7 +232,7 @@ footer{grid-column:1/-1; justify-self:center; width:min(1180px,96vw); margin-top
 
 <div class="abstract">
   <span class="lbl">Abstract</span>
-  <p><b>fork_wall</b> is a 32×64 grid-world POMDP built so that memory is the <em>only</em>
+  <p><b>Cogniland</b> is a 32×64 grid-world POMDP built so that memory is the <em>only</em>
   hard part. Terrain statistics at the start of an episode identify one of three map
   categories; the category is then hidden behind an information-free corridor; at the far
   wall the agent picks one of two doors, and only the door matching the remembered category
@@ -263,7 +263,7 @@ TRUE door metric, each agent in its native action mode. Wilson 95 % intervals in
 
 <p class="lede">Most benchmarks that require memory also require something else — exploration,
 credit assignment over sparse reward, visual abstraction, long-horizon control. When an agent
-fails, the failure is hard to attribute. fork_wall was built to remove every confound except
+fails, the failure is hard to attribute. Cogniland was built to remove every confound except
 one.</p>
 
 <p>The design constraints were: (i) the information the agent must retain is a <em>single
@@ -292,11 +292,11 @@ walks past.</p>
 
 <figure class="plate">
   <img src="{{FIG:fig_task_categories.png}}" alt="Three example maps, one per category, with rewarded and decoy doors outlined">
-  <figcaption><span class="tag">Figure 1</span><b>The three map categories.</b> Water (blue) and
-  rock (grey) coverage identify the category. The rewarded door is outlined in green, the decoy in
-  red; the white dot is the spawn. <em>rocky</em> → top door, <em>lakes</em> → bottom door,
-  <em>balanced</em> → either door is accepted. Trees (dark green) are impassable and only clutter
-  the route; sand and dirt are cosmetic fringes that behave like grass.</figcaption>
+  <figcaption><span class="tag">Figure 1</span><b>The three Cogniland map types.</b> Water and
+  rock coverage identify the type. The rewarded door is outlined in green, the decoy in red; the
+  white dot is the spawn. Trees are impassable and can be neither bridged nor mined; sand and dirt
+  are cosmetic fringes that behave like grass. Water and rock <em>can</em> be crossed with the
+  build and mine actions, or simply walked around.</figcaption>
 </figure>
 
 <p>An episode has four phases. The agent crosses open terrain where the category is visible; it
@@ -307,30 +307,29 @@ either door ends the episode; only the matching one pays the bonus.</p>
 
 <figure class="plate">
   <img src="{{FIG:fig_task_anatomy.png}}" alt="One map annotated with the four phases of an episode, plus a zoomed view of the fork">
-  <figcaption><span class="tag">Figure 2</span><b>Anatomy of an episode.</b> The shaded band is
-  the memory corridor: 16 columns containing no information about the category. By the time the
-  agent can see the doors, the evidence is roughly 75 steps behind it. The zoom (b) shows the
-  passage — the only way through the tree wall — and the two doors.</figcaption>
+  <figcaption><span class="tag">Figure 2</span><b>Anatomy of an episode.</b> (a) one real PPO
+  episode; the shaded band is the memory corridor — 16 columns scrubbed of category evidence.
+  (b) the fork, cropped door to door: the passage is the only way through the tree wall. (c–e) the
+  agent's <em>actual input</em> at three moments of that same episode, rendered in Crafter tiles:
+  terrain evidence in view, then the blind corridor, then the fork. The observation is a 21×21
+  egocentric crop of tile ids (one-hot over 9 types) plus 5 scalars — a one-hot heading and elapsed
+  time — 3 974 numbers in total; black is out-of-bounds padding. Nothing in it names the type.</figcaption>
 </figure>
 
 <h3><span class="num">2.2</span>Observation and action space</h3>
 
 <p>The agent never sees the map. It receives a <b>21×21 egocentric crop</b> of tile ids —
-symbolic, not pixels — one-hot encoded over the 9 tile types, concatenated with 5 scalars: a
-one-hot heading (4) and elapsed time as a fraction of the step limit (1). Cells outside the map
-are filled with a dedicated out-of-bounds id. The flattened observation is
-<code>21·21·9 + 5 = 3 974</code> floats. Actions are <code>Discrete(6)</code>: four moves plus
-build-raft and mine-harness, which are inert in this task's rule set (they exist in the parent
-environment family and are kept so the action space matches).</p>
+symbolic, not pixels — one-hot over the 9 tile types, concatenated with 5 scalars: a one-hot
+heading (4) and elapsed time as a fraction of the step limit (1). Out-of-map cells carry a
+dedicated out-of-bounds id. The flattened observation is <code>21·21·9 + 5 = 3 974</code> floats.
+Panels (c–e) of Figure 2 show three real observations from one episode.</p>
 
-<figure class="plate">
-  <img src="{{FIG:fig_observation.png}}" alt="Privileged world state, the 21x21 egocentric crop the agent sees, and the five scalar inputs">
-  <figcaption><span class="tag">Figure 3</span><b>What the agent actually sees.</b> (a) the world
-  state, shown for the reader only; the white box is the agent's field of view. (b) the
-  observation: a 21×21 crop, here 27 % out-of-bounds padding because the agent is near the top
-  edge. (c) the five scalars. Nothing in the observation names the category — it is a statistical
-  property of terrain the agent has already walked past.</figcaption>
-</figure>
+<p>Actions are <code>Discrete(6)</code>: four moves, plus <b>build</b> (turn the faced water tile
+into a wooden plank) and <b>mine</b> (turn the faced rock into grass). Both tools are optional —
+every obstacle can also be walked around — and agents use them only where cutting through is
+shorter. In the clips of Section 4.1 you can watch an agent lay a seven-plank bridge across a
+lake.</p>
+
 
 <h3><span class="num">2.3</span>Reward</h3>
 
@@ -358,20 +357,26 @@ the episode with no bonus — it is not punished, it simply ends the run.</p>
 
 <figure class="plate">
   <img src="{{FIG:fig_reward.png}}" alt="Cumulative and per-step reward decomposition along one real PPO episode">
-  <figcaption><span class="tag">Figure 4</span><b>Reward along a real episode</b> (the released
+  <figcaption><span class="tag">Figure 3</span><b>Reward along a real episode</b> (the released
   PPO agent, 93 steps, return +3.36). Slack accumulates to −0.93 while shaping plus the bonus
   contribute +4.29. (b) the per-step view: shaping pays roughly +0.005 per step of progress, and
   the +3 bonus is the spike at the end.</figcaption>
 </figure>
 
-<div class="note warn">
-  <span class="h">Metric pitfall</span>
-  Dense shaping makes <code>episode return &gt; 0</code> a <em>biased</em> success test. A fast
-  wrong-door episode (~80 steps) collects more shaping than slack and finishes with a positive
-  return, so the naive proxy scores it as a success. Measured against the true door state, the
-  proxy overstates success by <b>6–13 points</b> depending on the agent. Every number in this
-  report uses the <b>TRUE door metric</b>: an episode succeeds iff the agent's final cell is in
-  the map's rewarded-door set.
+<div class="note key">
+  <span class="h">Two metrics, and why we report the stricter one</span>
+  Dense shaping means a fast wrong-door episode (~80 steps) collects more shaping than slack and
+  ends with a <em>positive return</em>. So <code>episode return &gt; 0</code> and "reached the
+  right door" are genuinely different questions, and they differ by <b>6–13 points</b> depending
+  on the agent.
+  <p style="margin:.6em 0 0">Neither is wrong; they measure different things. By the reward's own
+  logic a wrong door is a perfectly respectable outcome — it beats a timeout outright, since it
+  banks the shaping, ends the episode early and stops paying slack. An agent optimising return is
+  <em>right</em> to prefer a decisive wrong door over dithering. But this environment exists to
+  measure <b>memory</b>, and only the door identity answers that question. Every number in this
+  report therefore uses the <b>door metric</b>: success iff the final cell is in the map's
+  rewarded-door set, with wrong-door and timeout reported separately so both readings stay
+  visible.</p>
 </div>
 
 <h3><span class="num">2.4</span>Dataset</h3>
@@ -384,10 +389,11 @@ comparisons would partly measure luck.</p>
 
 <figure class="plate">
   <img src="{{FIG:fig_dataset.png}}" alt="Dataset composition and per-category water and rock coverage distributions">
-  <figcaption><span class="tag">Figure 5</span><b>The dataset is balanced and the categories are
-  statistically separable.</b> Water coverage runs 2.6 % (rocky) → 8.8 % (balanced) → 14.4 %
-  (lakes) and rock coverage mirrors it, but the distributions overlap: a single glance at one
-  lake is not decisive, so the agent has to integrate terrain over the approach.</figcaption>
+  <figcaption><span class="tag">Figure 4</span><b>Coverage by map type</b> (4 800 training maps,
+  1 600 per type). Water runs 2.6 % → 8.8 % → 14.4 % across rocky, balanced and lakes, and rock
+  mirrors it. The distributions have real spread and the balanced type overlaps both neighbours,
+  so no single glance at one lake is decisive — the agent has to integrate terrain over the whole
+  approach.</figcaption>
 </figure>
 
 <h3><span class="num">2.5</span>The number to beat</h3>
@@ -399,7 +405,7 @@ Its expected success is exactly <b>⅔ ≈ 66.7 %</b>.</p>
 
 <p>This is the constant-door optimum, and it is a genuine attractor: it earns two-thirds of the
 reward for none of the memory. Every agent in this report gets stuck in it at some point during
-training (Section&nbsp;6). Because balanced maps are free, the sharper statistic is
+training (Section&nbsp;8). Because balanced maps are free, the sharper statistic is
 <b>decisive-door success</b> — accuracy restricted to lakes and rocky maps, where a constant-door
 policy scores 50 %.</p>
 
@@ -422,7 +428,215 @@ policy scores 50 %.</p>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
-<h2><span class="num">3</span>Watch the agents play</h2>
+<h2><span class="num">3</span>How a Cogniland map is made</h2>
+
+<p class="lede">The generator is the part of this environment that decides what the agent
+has to remember. This chapter walks it end to end — first the noise that gives the terrain its
+shape, then the six stages that turn a field of floating-point numbers into a playable map, and
+finally the one line of code that separates a <em>rocky</em> map from a <em>lakes</em> map.</p>
+
+<h3><span class="num">3.1</span>Why not just place random tiles?</h3>
+
+<p>Sampling each cell independently — grass with probability <i>p</i>, water otherwise — produces
+static, not terrain. Every cell is uncorrelated with its neighbours, so you get salt-and-pepper
+noise with no lakes, no coastlines and no navigable structure. What a map needs is
+<b>spatially correlated randomness</b>: nearby cells should usually agree, distant cells should be
+independent, and the correlation length should be tunable. That is exactly what
+<b>gradient noise</b> provides.</p>
+
+<h3><span class="num">3.2</span>A primer on Perlin (gradient) noise</h3>
+
+<p>Ken Perlin's 1985 construction is the canonical way to get smooth, repeatable, band-limited
+randomness. The idea is short enough to state completely:</p>
+
+<ol>
+  <li>Overlay an integer <b>lattice</b> on the plane. Assign every lattice point a fixed random
+  <b>unit gradient vector</b> — not a value, a direction. The assignment is a deterministic hash
+  of the coordinates, so the same point always gets the same vector, and the field is infinite
+  and reproducible without storing anything.</li>
+  <li>To evaluate the noise at a point <span class="mono">p</span>, find the cell containing it.
+  For each of the 4 corners (8 in 3-D), take the <b>offset vector</b> from that corner to
+  <span class="mono">p</span> and compute its <b>dot product</b> with the corner's gradient. This
+  gives four scalars — each is "how far along this corner's preferred direction is the sample?"</li>
+  <li><b>Blend</b> the four values bilinearly, but warp the interpolation parameter through an
+  ease curve first. Perlin's improved curve is
+  <span class="mono">6t⁵ − 15t⁴ + 10t³</span>, whose first <em>and</em> second derivatives vanish
+  at <span class="mono">t = 0</span> and <span class="mono">t = 1</span>. Linear blending would
+  leave visible creases along cell boundaries; the quintic makes the field C²-continuous.</li>
+</ol>
+
+<figure class="plate-wide">
+  <img src="{{FIG:fig_noise_primer.png}}" alt="Value noise versus gradient noise, the four-corner dot product construction, and the quintic ease curve">
+  <figcaption><span class="tag">Figure 5</span><b>What gradient noise is.</b> (a) <em>value</em>
+  noise interpolates random <em>values</em> stored at lattice points — the lattice stays visible as
+  a grid of blobs. (b) <em>gradient</em> noise interpolates random <em>slopes</em>; because every
+  lattice point evaluates to exactly zero, the grid disappears and the extrema fall between lattice
+  points. (c) the construction inside one cell: four dot products of gradient with offset, then a
+  blend. (d) the ease curve that removes the seams.</figcaption>
+</figure>
+
+<p>One noise field has a single characteristic feature size, which looks artificial. Real terrain
+has structure at every scale: continents, then bays, then boulders. The standard fix is
+<b>fractal Brownian motion</b> — sum several noise fields ("octaves"), each at half the wavelength
+and half the amplitude of the last:</p>
+
+<div class="eq">
+  <div class="line">
+    h(x) = Σ<sub>k=0..N−1</sub> &nbsp; <span class="term t-shape">a<sup>k</sup></span> ·
+    noise( <span class="term t-bonus">x / (λ · 2<sup>−k</sup>)</span> )
+  </div>
+  <div class="where">Cogniland uses <b>N = 5</b> octaves with amplitude ratio <b>a = ½</b> and a
+  base wavelength <b>λ = max(H, W)/4.5 ≈ 14.2 cells</b>, giving wavelengths of roughly 14.2, 7.1,
+  3.6, 1.8 and 0.9 cells with weights 1, ½, ¼, ⅛, 1⁄16. The sum is normalised by the total weight.
+  The lowest octave decides where the continent-scale lakes go; the highest just roughens the
+  coastline.</div>
+</div>
+
+<figure class="plate-wide">
+  <img src="{{FIG:fig_noise_octaves.png}}" alt="Five noise octaves and their weighted sum, with one-dimensional cross-sections">
+  <figcaption><span class="tag">Figure 6</span><b>Fractal summation.</b> Top: the five octaves
+  actually used, then their weighted sum. Bottom: the same fields sampled along the centre row —
+  the low octaves contribute slow swings, the high octaves a fine tremor. The result has detail at
+  every scale while remaining smooth.</figcaption>
+</figure>
+
+<div class="note">
+  <span class="h">Perlin vs simplex — what the code actually calls</span>
+  Cogniland uses <b>OpenSimplex</b> (<code>opensimplex.noise2array</code>), not classical Perlin.
+  Simplex noise, also by Perlin (2001), replaces the square lattice with a simplicial one
+  (triangles in 2-D), which costs O(n²) instead of O(2ⁿ) corner evaluations per sample and — more
+  importantly here — removes the axis-aligned directional bias that square-lattice Perlin leaves
+  behind. OpenSimplex is a patent-free variant of that idea. Everything in §3.2 carries over
+  unchanged: random gradients, dot products against offsets, smooth interpolation. The pictures
+  above are generated with the same library the environment uses.
+</div>
+
+<h3><span class="num">3.3</span>Domain warping</h3>
+
+<p>Fractal noise alone still looks a bit like a topographic map of nowhere: the level sets are
+soft and rounded. <b>Domain warping</b> fixes this by distorting the coordinates before sampling —
+the field is evaluated not at <span class="mono">(r, c)</span> but at
+<span class="mono">(r + α·w<sub>r</sub>(r,c), c + α·w<sub>c</sub>(r,c))</span>, where
+<span class="mono">w<sub>r</sub></span> and <span class="mono">w<sub>c</sub></span> are two more
+(cheaper, 2-octave) noise fields. Cogniland uses <span class="mono">α = 0.10 · max(H, W)</span>,
+so features can be dragged sideways by up to ~6 cells. Round blobs become bays and peninsulas.</p>
+
+<figure class="plate-wide">
+  <img src="{{FIG:fig_warp.png}}" alt="A heightmap, the two offset fields that warp it, and the warped result">
+  <figcaption><span class="tag">Figure 7</span><b>Domain warping.</b> The two offset fields (b, c)
+  say how far to displace each sample in rows and columns; the result (d) has the same statistics
+  as (a) but visibly more organic coastlines. This costs two extra noise evaluations and no
+  tuning.</figcaption>
+</figure>
+
+<h3><span class="num">3.4</span>Stamping in the set pieces</h3>
+
+<p>Pure noise gives texture but not <em>landmarks</em>. On top of the warped heightmap the
+generator stamps a handful of explicit features, each a smooth scalar field added to (mountains)
+or subtracted from (lakes) the height, with weight ±1.3:</p>
+
+<ul>
+  <li><b>2–4 lakes</b> and <b>2–4 mountains</b>, each 50/50 either a <em>logistic disk</em> (a
+  flat-topped round basin) or a <em>massif</em> (3–5 overlapping Gaussian lobes, which reads as an
+  irregular natural formation);</li>
+  <li><b>0–1 ridge</b>, a <em>capsule</em> field — a line segment with Gaussian falloff and a
+  sinusoidal wiggle, giving a meandering mountain range or riverbed.</li>
+</ul>
+
+<p>Feature radii are drawn as <span class="mono">R = big · (lo + (hi−lo) · U²)</span> with
+<span class="mono">U ~ Uniform(0,1)</span>. Squaring the uniform biases the draw toward the small
+end, so most maps have several small features and only occasionally one dominating landmass —
+which is what keeps the map distribution varied rather than same-y.</p>
+
+<figure class="plate-wide">
+  <img src="{{FIG:fig_features.png}}" alt="The three overlay primitives: logistic disk, massif, and wiggling capsule">
+  <figcaption><span class="tag">Figure 8</span><b>The three overlay primitives</b>, shown in
+  isolation.</figcaption>
+</figure>
+
+<h3><span class="num">3.5</span>The line that creates the map types</h3>
+
+<p>Here is the mechanism the whole task rests on. The heightmap is a continuous field; turning it
+into tiles requires two cut points, and the generator picks them <b>by quantile</b> rather than by
+absolute value:</p>
+
+<pre>water_level = quantile(h, water_frac)          # lowest water_frac of cells become WATER
+rock_level  = quantile(h, 1 - rock_frac)       # highest rock_frac of cells become ROCK</pre>
+
+<p>Because a quantile is defined by <em>rank</em>, this guarantees the requested coverage
+regardless of how that particular heightmap happened to come out. A map asked for 24.5 % water
+gets 24.5 % water, every time. The three map types are then nothing more than three pairs of
+fractions:</p>
+
+<div class="tw">
+  <table>
+    <caption><b>Table 1.</b> The complete definition of the three map types. Everything else in
+      the generator — noise, warping, features, trees, walls, doors — is identical.</caption>
+    <thead><tr><th>Map type</th><th class="num">water_frac</th><th class="num">rock_frac</th>
+      <th>rewarded door</th><th>rule</th></tr></thead>
+    <tbody>
+      <tr><td><b>rocky</b></td><td class="num">0.035</td><td class="num">0.245</td><td>top</td>
+        <td class="small">rock_frac &gt; 1.5 × water_frac</td></tr>
+      <tr><td><b>balanced</b></td><td class="num">0.14</td><td class="num">0.14</td><td>either</td>
+        <td class="small">neither dominates</td></tr>
+      <tr><td><b>lakes</b></td><td class="num">0.245</td><td class="num">0.035</td><td>bottom</td>
+        <td class="small">water_frac &gt; 1.5 × rock_frac</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<figure class="plate-wide">
+  <img src="{{FIG:fig_quantile.png}}" alt="One heightmap histogram with three pairs of cut points, and the three resulting maps">
+  <figcaption><span class="tag">Figure 9</span><b>One heightmap, three map types.</b> (a) the
+  distribution of heights, with each type's water level (solid) and rock level (dashed). (b–d) the
+  same field thresholded three ways. The geometry is identical — the same bays in the same
+  places — only the water line moved. This is why the category cannot be read off the
+  <em>shape</em> of the terrain and has to be integrated from its <em>statistics</em>.</figcaption>
+</figure>
+
+<h3><span class="num">3.6</span>The remaining stages</h3>
+
+<p>Four steps finish the map:</p>
+
+<ol>
+  <li><b>Cosmetic fringes.</b> A sparse one-cell speckle of SAND around water (30 % of the dilated
+  ring) and DIRT around rock (25 %). Both behave exactly like grass — they exist so the eye reads
+  a shoreline, and so a tile-identity probe cannot trivially equal a walkability probe.</li>
+  <li><b>Edge bands.</b> The leftmost and rightmost 10 columns are cleared to grass, guaranteeing
+  the spawn is never walled in and — importantly — that the fork apparatus at the right edge never
+  eats into the terrain that carries the category signal.</li>
+  <li><b>Trees.</b> Small impassable patches covering ~3 % of the map, biased toward the top and
+  bottom walls so that hugging a wall is not a free route. Trees can be neither bridged nor mined;
+  a reachability guard thins any patch that would seal off the goal.</li>
+  <li><b>The fork apparatus.</b> A TREE wall one column from the right edge with a 3-cell passage
+  at mid-height; two single-cell doors on the right wall at rows <span class="mono">H/4</span> and
+  <span class="mono">H − 1 − H/4</span>; and the <span class="mono">mem_gap</span> = 16 columns
+  immediately before the wall overwritten with pure grass — the memory corridor.</li>
+</ol>
+
+<figure class="plate">
+  <img src="{{FIG:fig_pipeline.png}}" alt="Six stages of generating one map, from raw fractal noise to the finished playable map">
+  <figcaption><span class="tag">Figure 10</span><b>One real map, start to finish</b> (seed 4, type
+  <em>lakes</em>). Stages 1–3 are floating-point fields; stage 4 is the quantile threshold that
+  first produces tiles; stage 5 adds fringes, edge bands and trees; stage 6 installs the wall,
+  passage and doors.</figcaption>
+</figure>
+
+<h3><span class="num">3.7</span>Winnability</h3>
+
+<p>A map is only useful if it can actually be solved, so generation is
+<b>rejection-sampled</b>. After a candidate is built, a breadth-first search checks that the
+rewarded door is reachable under the crossing tool the map's type implies — water-crossing for
+<em>lakes</em>, rock-mining for <em>rocky</em>, either for <em>balanced</em>. If the check fails
+the seed is advanced by a prime offset (100 003) and the map is rebuilt, up to 400 times. The
+record keeps the <em>requested</em> seed, so a map is still reproducible from its id alone.</p>
+
+<p>The consequence worth stating: <b>every map in the dataset is winnable, and winnable in the way
+its type implies</b>. A failure at evaluation time is never the environment's fault.</p>
+
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<h2><span class="num">4</span>Watch the agents play</h2>
 
 <p>Six held-out maps, two per category — the <em>same</em> maps for all three agents, so the
 routes are directly comparable. The trail fades behind the agent; the HUD shows the running
@@ -482,7 +696,7 @@ style, not outcome.</p>
   </div>
 </div>
 
-<h3><span class="num">3.1</span>The same episodes from inside the agent</h3>
+<h3><span class="num">4.1</span>The same episodes from inside the agent</h3>
 
 <p>The videos above are drawn from the privileged world state, which is useful for
 following what happens but is <em>not</em> what the agent works with. Below, the left panel is
@@ -505,11 +719,11 @@ only when cutting through is shorter.</p>
 
   <div class="vgrid" data-panel="ppo-obs">
     <div class="vcard"><video src="{{VID:ppo_obs_map16_lakes.mp4}}" controls loop muted playsinline preload="metadata"></video>
-      <div class="vmeta"><span><b>map 16</b> · lakes · <b>builds a 7-plank bridge</b></span><span class="ok">✓ 124 steps</span></div></div>
+      <div class="vmeta"><span><b>map 16</b> · lakes · <b>builds a 7-plank bridge</b></span><span class="ok">✓ 110 steps</span></div></div>
     <div class="vcard"><video src="{{VID:ppo_obs_map3_rocky.mp4}}" controls loop muted playsinline preload="metadata"></video>
-      <div class="vmeta"><span><b>map 3</b> · rocky · mines 1</span><span class="ok">✓ 116 steps</span></div></div>
+      <div class="vmeta"><span><b>map 3</b> · rocky · mines 2</span><span class="ok">✓ 109 steps</span></div></div>
     <div class="vcard"><video src="{{VID:ppo_obs_map7_balanced.mp4}}" controls loop muted playsinline preload="metadata"></video>
-      <div class="vmeta"><span><b>map 7</b> · balanced · no tools</span><span class="ok">✓ 92 steps</span></div></div>
+      <div class="vmeta"><span><b>map 7</b> · balanced · no tools</span><span class="ok">✓ 93 steps</span></div></div>
   </div>
 
   <div class="vgrid vhide" data-panel="dreamer-obs">
@@ -543,35 +757,36 @@ only when cutting through is shorter.</p>
 
 <figure class="plate-wide">
   <img src="{{FIG:fig_trajectories.png}}" alt="Trajectories of all three agents on three identical held-out maps">
-  <figcaption><span class="tag">Figure 6</span><b>The same three maps, three agents.</b> Colour
-  runs dark→bright with time. Dreamer (deterministic) takes the tightest routes (76–85 steps);
-  PPO is close behind; STORM, which acts by sampling from its policy, wanders measurably more
-  (96–134 steps) and pays for it in return, but reaches the correct door just as reliably.
-  Note that all three commit to the correct <em>vertical</em> half of the map well before the
-  doors are visible — the decision is made from memory, not from sight.</figcaption>
+  <figcaption><span class="tag">Figure 11</span><b>24 episodes per panel, same maps.</b> Each
+  line is one stochastic rollout at 16 % opacity, so agreement accumulates into a bright highway
+  and lone deviations stay faint but visible. The contrast is structural: Dreamer acts
+  deterministically, so its 24 runs coincide exactly and draw a single hard line; PPO fans
+  slightly; STORM samples from its policy and fans widest — it pays for that in episode length
+  without losing accuracy. All three commit to the correct <em>half</em> of the map long before a
+  door is visible.</figcaption>
 </figure>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
-<h2><span class="num">4</span>The three agents</h2>
+<h2><span class="num">5</span>The three agents</h2>
 
 <p>The agents span the two dominant families in modern model-based / model-free RL, and within
 the model-based family, the two dominant sequence backbones.</p>
 
-<h3><span class="num">4.1</span>PPO + GRU <span class="agent-ppo">— model-free</span></h3>
+<h3><span class="num">5.1</span>PPO + GRU <span class="agent-ppo">— model-free</span></h3>
 <p>A convolutional encoder over the one-hot minimap feeds a 128-unit GRU; actor and critic are
 linear heads on the recurrent state. Memory is whatever the GRU carries forward. An auxiliary
 head predicts the map category from the hidden state — it is a probe used to <em>measure</em>
 whether the belief exists, and in the released configuration it also shapes the representation
 (<code>belief_coef 0.3</code>). Trained with standard clipped PPO on 32 parallel environments.</p>
 
-<h3><span class="num">4.2</span>DreamerV3 <span class="agent-dreamer">— RSSM world model</span></h3>
+<h3><span class="num">5.2</span>DreamerV3 <span class="agent-dreamer">— RSSM world model</span></h3>
 <p>An RSSM learns latent dynamics from a replay buffer: a deterministic GRU path of width 3 072
 plus 32×24 discrete stochastic latents. The actor and critic are trained almost entirely inside
 imagined rollouts (horizon 15) rather than on real experience. Memory here is the recurrent
 latent state, and — crucially — the gradient that teaches the model to <em>retain</em> the
 category can only travel as far back as the training sequence is long.</p>
 
-<h3><span class="num">4.3</span>STORM <span class="agent-storm">— Transformer world model</span></h3>
+<h3><span class="num">5.3</span>STORM <span class="agent-storm">— Transformer world model</span></h3>
 <p>Same imagination-based actor-critic, but the dynamics core is a 2-layer, 512-dimensional
 causal Transformer over (latent, action) tokens instead of a recurrent cell. During training the
 whole replay sequence is processed in parallel under a causal mask; at acting time a rolling
@@ -593,7 +808,7 @@ attention summary of the past.</p>
   <table>
     <caption><b>Table 2.</b> Agent configurations as trained. Every row above the rule is a
       property of the algorithm; below the rule are the settings that mattered for this task
-      (Section&nbsp;6).</caption>
+      (Section&nbsp;8).</caption>
     <thead><tr><th></th><th class="agent-ppo">PPO + GRU</th><th class="agent-dreamer">DreamerV3</th><th class="agent-storm">STORM</th></tr></thead>
     <tbody>
       <tr><td>family</td><td>model-free, on-policy</td><td>model-based, imagination</td><td>model-based, imagination</td></tr>
@@ -615,7 +830,7 @@ attention summary of the past.</p>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
-<h2><span class="num">5</span>Protocol</h2>
+<h2><span class="num">6</span>Protocol</h2>
 
 <p>Cross-agent comparisons are only as good as the things held fixed, so we state them
 explicitly.</p>
@@ -637,7 +852,7 @@ explicitly.</p>
 </ul>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
-<h2><span class="num">6</span>Results</h2>
+<h2><span class="num">7</span>Results</h2>
 
 <div class="tw">
   <table>
@@ -675,7 +890,7 @@ but takes 40 % longer routes because it samples; PPO sits between the two.</p>
 
 <figure class="plate-wide">
   <img src="{{FIG:fig_compare.png}}" alt="Training curves for all three agents, final held-out success with confidence intervals, and error decomposition">
-  <figcaption><span class="tag">Figure 7</span><b>Three agents, one task.</b> (a) training-time
+  <figcaption><span class="tag">Figure 12</span><b>Three agents, one task.</b> (a) training-time
   success against environment frames — note this is each trainer's own proxy metric, which is why
   the curves sit above the honest numbers in (b); the PPO band spans three seeds. (b) the unified
   held-out evaluation with Wilson intervals; the intervals overlap heavily. (c) how the remaining
@@ -683,7 +898,7 @@ but takes 40 % longer routes because it samples; PPO sits between the two.</p>
   is entirely wrong doors and never a timeout.</figcaption>
 </figure>
 
-<h3><span class="num">6.1</span>Per-category breakdown</h3>
+<h3><span class="num">7.1</span>Per-category breakdown</h3>
 
 <div class="tw">
   <table>
@@ -707,13 +922,13 @@ failures are memory failures — a slightly wrong belief at the fork — rather 
 failures.</p>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
-<h2><span class="num">7</span>What each agent needed</h2>
+<h2><span class="num">8</span>What each agent needed</h2>
 
 <p class="lede">This is the part of the study that carries information. Reaching ~98 % was, in
 every case, gated on exactly one hyperparameter — a different one for each agent — and the
 default value of that hyperparameter produced a confident constant-door policy instead.</p>
 
-<h3><span class="num">7.1</span>PPO: an exploration problem</h3>
+<h3><span class="num">8.1</span>PPO: an exploration problem</h3>
 
 <p>With default entropy, plain-reward PPO reliably collapses to the constant-door optimum. The
 diagnosis is unambiguous and slightly surprising: <b>the belief is there and the policy ignores
@@ -728,15 +943,14 @@ contingency has been discovered.</p>
 
 <figure class="plate-wide">
   <img src="{{FIG:fig_ppo_training.png}}" alt="PPO training curves across four exploration arms and three seeds">
-  <figcaption><span class="tag">Figure 8</span><b>PPO exploration sweep</b> — 4 arms × 3 seeds,
-  4M frames each; bands span seeds. (b) the ⅔ line is the thing to beat, and low-entropy arms sit
-  on it. (d) belief-probe accuracy climbs to ~0.85 in <em>every</em> arm, including the ones stuck
-  at the ceiling — memory is not the bottleneck, use of memory is. (f) per-seed outcomes: even the
-  released recipe escapes on only 2 of 3 seeds, so the basin is a seed lottery, not a solved
-  problem.</figcaption>
+  <figcaption><span class="tag">Figure 13</span><b>PPO + GRU, released run.</b> (b) success
+  climbs past the ⅔ line only after the annealing schedule has had time to act. (d) the
+  belief probe reaches ~0.85 — and in the arms that stay stuck at ⅔ (not plotted) it reaches the
+  same value, which is the evidence that memory is not the bottleneck, use of memory is. (e) the
+  policy KL grows as entropy anneals and the policy sharpens.</figcaption>
 </figure>
 
-<h3><span class="num">7.2</span>DreamerV3: a context-length problem</h3>
+<h3><span class="num">8.2</span>DreamerV3: a context-length problem</h3>
 
 <p>Dreamer's failure mode looked identical from the outside — a policy parked at ⅔ — but the
 cause is different. R2-Dreamer's replay sampler draws independent chunks and does not carry RSSM
@@ -751,14 +965,14 @@ window; every configuration with a long enough window clears the ceiling.</p>
 
 <figure class="plate-wide">
   <img src="{{FIG:fig_dreamer_training.png}}" alt="DreamerV3 sweep over model size and batch length">
-  <figcaption><span class="tag">Figure 9</span><b>Dreamer capacity × context sweep.</b> (a) 12M
-  with <code>batch_length 64</code> (pale blue) never leaves the ⅔ band across the whole run,
-  while the other three converge to ~1.0 on the trainer's eval metric. (d) the dynamics KL tells
-  the same story from inside the model: the failing run's prior stays furthest from its posterior.
-  (f) actor entropy — the successful runs commit, the failing run stays diffuse.</figcaption>
+  <figcaption><span class="tag">Figure 14</span><b>DreamerV3, released run</b> (25M,
+  <code>batch_length</code> 64). (a) the trainer's own eval metric crosses the ⅔ line at ~1M frames
+  and saturates near 1.0. (d) the dynamics KL peaks while the world model is still fitting the
+  terrain and then relaxes. (f) actor entropy collapses as the policy commits to a door
+  rule.</figcaption>
 </figure>
 
-<h3><span class="num">7.3</span>STORM: a window problem, twice</h3>
+<h3><span class="num">8.3</span>STORM: a window problem, twice</h3>
 
 <p>STORM needed the same lever as Dreamer and then a second one that has no Dreamer analogue.
 The first is <code>batch_length</code> 64 → 128, for exactly the reason above: a causal
@@ -776,11 +990,13 @@ than PPO — and too much sampling noise actively prevents the policy from sharp
 
 <figure class="plate-wide">
   <img src="{{FIG:fig_storm_training.png}}" alt="STORM training curves for the winning configuration">
-  <figcaption><span class="tag">Figure 10</span><b>STORM, winning recipe</b>
-  (entropy 0.01, <code>batch_length</code> 128, context 128). Curves are from a faithful re-run of
-  the released configuration — the original run's telemetry was lost in a repository cleanup, and
-  the checkpoint we evaluate comes from that original run. Unlike the entropy-0.03 arms, this
-  configuration never spends time at the ⅔ ceiling.</figcaption>
+  <figcaption><span class="tag">Figure 15</span><b>STORM, released recipe</b> (entropy 0.01,
+  <code>batch_length</code> 128, context 128). Curves come from a faithful re-run of the released
+  configuration — the original run's telemetry was lost in a repository cleanup, and the evaluated
+  checkpoint comes from that original run. <b>This re-run is still in progress</b> (~0.9M of 6M
+  frames at the time of writing), which is why (a–c) stop early and the loss panels have few
+  samples: the trainer flushes losses once per 200 k-frame segment, so those panels are sparse by
+  construction rather than by choice.</figcaption>
 </figure>
 
 <div class="note">
@@ -792,7 +1008,7 @@ than PPO — and too much sampling noise actively prevents the policy from sharp
   final checkpoint instead would have understated the method by about a point.
 </div>
 
-<h3><span class="num">7.4</span>The pattern</h3>
+<h3><span class="num">8.4</span>The pattern</h3>
 
 <p>Three agents, three different single points of failure, one shared symptom:</p>
 
@@ -816,25 +1032,25 @@ than PPO — and too much sampling noise actively prevents the policy from sharp
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
-<h2><span class="num">8</span>Limitations</h2>
+<h2><span class="num">9</span>Limitations</h2>
 
 <ul>
   <li><b>Single seed per released agent.</b> Table 3 compares one checkpoint per method. The
-  seed-to-seed variance visible in Figure 8(f) is larger than the between-agent differences, so
-  the ranking in Table 3 should not be read as a ranking of methods.</li>
+  seed-to-seed variance across the sweeps (Section 8) is larger than the between-agent
+  differences, so the ranking in Table 3 should not be read as a ranking of methods.</li>
   <li><b>Checkpoint selection differs.</b> STORM's checkpoint was selected on held-out data from
   an archive; PPO's and Dreamer's are end-of-training. This favours STORM by roughly a point.</li>
-  <li><b>Action modes differ</b> (Section 5). Defensible, but it means the comparison is
+  <li><b>Action modes differ</b> (Section 6). Defensible, but it means the comparison is
   "each method at its best" rather than a controlled ablation.</li>
   <li><b>Compute is not matched.</b> PPO reaches its result in 27 minutes; the world-model agents
   take 6–10 hours for comparable accuracy. On this task, the model-based machinery buys nothing
   in final performance — the interesting claim is only that it can be made to work at all on a
   memory task of this shape.</li>
-  <li><b>One task.</b> Every conclusion here is about fork_wall.</li>
+  <li><b>One task.</b> Every conclusion here is about Cogniland.</li>
 </ul>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
-<h2><span class="num">9</span>Reproducing this</h2>
+<h2><span class="num">10</span>Reproducing this</h2>
 
 <p>Everything below runs from the repository root. The three pipelines use three separate
 environments and never import each other; they share only the environment package and the map
@@ -880,7 +1096,7 @@ python scripts/figures/paper_eval_all.py --agent {ppo|dreamer|storm} --episodes 
 </details>
 
 <footer>
-  <p><b>Fork Wall</b> · bridge_tunnel technical report · generated from repository state at
+  <p><b>Cogniland</b> · technical report · generated from repository state at
   commit time. Figures and videos are produced by the scripts listed above; every number in
   Tables 3–4 comes from <code>paper/figures/forkwall_paper/eval_all.json</code>, written by a
   single evaluation harness run once per agent.</p>
