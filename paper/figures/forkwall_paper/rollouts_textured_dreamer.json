@@ -1,0 +1,35 @@
+[
+ {
+  "agent": "DREAMER",
+  "category": "rocky",
+  "success": false,
+  "steps": 88,
+  "ret": 0.2,
+  "builds": 0,
+  "mines": 14,
+  "frames": 214,
+  "map_id": 3
+ },
+ {
+  "agent": "DREAMER",
+  "category": "lakes",
+  "success": true,
+  "steps": 81,
+  "ret": 3.36,
+  "builds": 7,
+  "mines": 0,
+  "frames": 151,
+  "map_id": 16
+ },
+ {
+  "agent": "DREAMER",
+  "category": "balanced",
+  "success": true,
+  "steps": 82,
+  "ret": 3.41,
+  "builds": 0,
+  "mines": 0,
+  "frames": 96,
+  "map_id": 7
+ }
+]

@@ -482,6 +482,65 @@ style, not outcome.</p>
   </div>
 </div>
 
+<h3><span class="num">3.1</span>The same episodes from inside the agent</h3>
+
+<p>The videos above are drawn from the privileged world state, which is useful for
+following what happens but is <em>not</em> what the agent works with. Below, the left panel is
+the agent's entire input — the 21×21 egocentric crop, drawn with the Crafter tile set, with
+out-of-bounds cells blacked out — and the right panel is the world, shown only so the reader can
+keep their bearings. The map scrolls under a stationary agent, the doors only enter view in the
+final seconds, and the black band shows how much of the input is wasted on padding near an edge.</p>
+
+<p>These three maps also exercise the two tools. Water can be bridged with
+<b>build</b> (planks appear, white sparkle) and rock tunnelled with <b>mine</b> (yellow rubble
+burst); both are optional — every obstacle can also be walked around, and the agents use tools
+only when cutting through is shorter.</p>
+
+<div class="gal plate">
+  <div class="tabs" role="tablist" aria-label="Choose agent, observation view">
+    <button role="tab" aria-selected="true" data-agent="ppo-obs">PPO + GRU</button>
+    <button role="tab" aria-selected="false" data-agent="dreamer-obs">DreamerV3</button>
+    <button role="tab" aria-selected="false" data-agent="storm-obs">STORM</button>
+  </div>
+
+  <div class="vgrid" data-panel="ppo-obs">
+    <div class="vcard"><video src="{{VID:ppo_obs_map16_lakes.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 16</b> · lakes · <b>builds a 7-plank bridge</b></span><span class="ok">✓ 124 steps</span></div></div>
+    <div class="vcard"><video src="{{VID:ppo_obs_map3_rocky.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 3</b> · rocky · mines 1</span><span class="ok">✓ 116 steps</span></div></div>
+    <div class="vcard"><video src="{{VID:ppo_obs_map7_balanced.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 7</b> · balanced · no tools</span><span class="ok">✓ 92 steps</span></div></div>
+  </div>
+
+  <div class="vgrid vhide" data-panel="dreamer-obs">
+    <div class="vcard"><video src="{{VID:dreamer_obs_map16_lakes.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 16</b> · lakes · <b>builds a 7-plank bridge</b></span><span class="ok">✓ 81 steps</span></div></div>
+    <div class="vcard"><video src="{{VID:dreamer_obs_map3_rocky.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 3</b> · rocky · <b>mines 14</b></span><span style="color:var(--flag);font-weight:600">✗ wrong door, 88 steps</span></div></div>
+    <div class="vcard"><video src="{{VID:dreamer_obs_map7_balanced.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 7</b> · balanced · no tools</span><span class="ok">✓ 82 steps</span></div></div>
+  </div>
+
+  <div class="vgrid vhide" data-panel="storm-obs">
+    <div class="vcard"><video src="{{VID:storm_obs_map16_lakes.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 16</b> · lakes · <b>builds a 7-plank bridge</b></span><span class="ok">✓ 131 steps</span></div></div>
+    <div class="vcard"><video src="{{VID:storm_obs_map3_rocky.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 3</b> · rocky · mines 1</span><span class="ok">✓ 176 steps</span></div></div>
+    <div class="vcard"><video src="{{VID:storm_obs_map7_balanced.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 7</b> · balanced · no tools</span><span class="ok">✓ 105 steps</span></div></div>
+  </div>
+</div>
+
+<div class="note warn">
+  <span class="h">A caught failure</span>
+  Dreamer's <b>map 3</b> clip is the one failure in this set, and it is instructive. On a rocky
+  map it tunnels straight through the ridge — 14 mine actions, the most aggressive tool use of
+  any clip — arrives at the fork fast (88 steps, the shortest run on that map), and then takes the
+  <em>wrong</em> door. Speed and tool skill are intact; the belief is what slipped. This is the
+  shape of essentially all residual error in Table 3: not lost agents, but confident agents
+  arriving at the fork with the wrong memory.
+</div>
+
 <figure class="plate-wide">
   <img src="{{FIG:fig_trajectories.png}}" alt="Trajectories of all three agents on three identical held-out maps">
   <figcaption><span class="tag">Figure 6</span><b>The same three maps, three agents.</b> Colour

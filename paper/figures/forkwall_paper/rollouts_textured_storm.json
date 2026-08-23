@@ -1,0 +1,35 @@
+[
+ {
+  "agent": "STORM",
+  "category": "rocky",
+  "success": true,
+  "steps": 176,
+  "ret": 2.545,
+  "builds": 0,
+  "mines": 1,
+  "frames": 198,
+  "map_id": 3
+ },
+ {
+  "agent": "STORM",
+  "category": "lakes",
+  "success": true,
+  "steps": 131,
+  "ret": 2.86,
+  "builds": 7,
+  "mines": 0,
+  "frames": 201,
+  "map_id": 16
+ },
+ {
+  "agent": "STORM",
+  "category": "balanced",
+  "success": true,
+  "steps": 105,
+  "ret": 3.18,
+  "builds": 0,
+  "mines": 0,
+  "frames": 119,
+  "map_id": 7
+ }
+]

@@ -31,7 +31,12 @@ def main():
 
     def sub(m):
         kind, name = m.group(1), m.group(2)
-        path = assets / ("videos/" + name if kind == "VID" else name)
+        if kind == "VID":
+            path = assets / "videos" / name
+            if not path.exists():
+                path = assets / "videos_textured" / name
+        else:
+            path = assets / name
         if not path.exists():
             missing.append(name)
             return ""
