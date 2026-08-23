@@ -1087,21 +1087,53 @@ than PPO — and too much sampling noise actively prevents the policy from sharp
 <figure class="plate-wide">
   <img src="{{FIG:fig_storm_training.png}}" alt="STORM training curves for the winning configuration">
   <figcaption><span class="tag">Figure 17</span><b>STORM, released recipe</b> (entropy 0.01,
-  <code>batch_length</code> 128, context 128). Curves come from a faithful re-run of the released
-  configuration — the original run's telemetry was lost in a repository cleanup, and the evaluated
-  checkpoint comes from that original run. <b>This re-run is still in progress</b> (~0.9M of 6M
-  frames at the time of writing), which is why (a–c) stop early and the loss panels have few
-  samples: the trainer flushes losses once per 200 k-frame segment, so those panels are sparse by
-  construction rather than by choice.</figcaption>
+  <code>batch_length</code> 128, context 128), complete 6M-frame run: 33 443 episodes in 9 h 33 m
+  on one GPU. Curves come from a faithful re-run of the released configuration — the original
+  run's telemetry was lost in a repository cleanup, and the evaluated checkpoint in Table 4 comes
+  from that original run. (a–c) are per-episode, and the escape from the constant-door basin is
+  the sharpest event in the whole study: the run sits <em>on</em> the ⅔ line for its first ~10 000
+  episodes, then lifts to ~0.95 within a few hundred and stays there, with episode length dropping
+  from ~250 to ~150 steps at the same moment. (d–f) are logged once per 200 k-frame segment, which
+  is why they are sparse — note the reward head's loss <em>rising</em> between 1M and 3M frames:
+  that is the model learning that the door payout is contingent on something it has to remember,
+  which is harder to predict than a constant.</figcaption>
+</figure>
+
+<figure class="plate-wide">
+  <img src="{{FIG:fig_metastability.png}}" alt="Held-out success of every archived checkpoint from one STORM run, with per-category breakdown and outcome decomposition">
+  <figcaption><span class="tag">Figure 18</span><b>Door-binding is metastable.</b> All 40 archived
+  checkpoints of the run in Figure 17, each evaluated through the same harness (300 held-out
+  episodes, sampled actions). (a) up to ~275 k steps the run is parked in the constant-door basin
+  — and the per-category lines show exactly which basin: <em>balanced</em> and <em>rocky</em> at
+  100 %, <em>lakes</em> at <b>0 %</b>, i.e. always the top door, which is precisely the ⅔ policy.
+  Around 285 k it binds both doors and lakes goes from 0 to 1 within one checkpoint. After that it
+  does not stay put: rocky dips at 500 k and 550 k, the run collapses <b>completely</b> at 650 k,
+  and at 675 k it comes back as the <em>mirror-image</em> constant-door policy (rocky 1.7 %,
+  bottom door always) before recovering. (b) the collapse at 650 k is not a wrong-door failure at
+  all — it is <b>100 % timeouts</b>, a checkpoint whose controller simply deadlocks.</figcaption>
 </figure>
 
 <div class="note">
-  <span class="h">Metastability</span>
-  Door-binding in STORM is not a one-way transition. Across a run, held-out success oscillates
-  between ~0.99 and dips as low as 0.72, recovering over 2–3 checkpoints; individual seeds differ
-  in when (and whether) they bind. We therefore archive checkpoints every 50 k gradient steps and
-  select on held-out data — the released checkpoint is the best of that archive, and reporting the
-  final checkpoint instead would have understated the method by about a point.
+  <span class="h">Why we archive and select</span>
+  Figure 18 is the argument for the checkpoint policy, and it is a much stronger argument than we
+  expected before measuring it. Within a single run, adjacent checkpoints 25 k gradient steps
+  apart score <b>99.0 %</b> and <b>0.0 %</b>. Taking the end of training would have given
+  <b>96.3 %</b> — 2.7 points below the best of the archive — and taking the checkpoint
+  25 k steps earlier than that would have given a number in the seventies. None of this is
+  visible in the training curves of Figure 17, which show only a shallow dip at the same place,
+  because the trainer's own success proxy is computed on the maps the agent is training on.
+  The practical rule: archive every 50 k steps, evaluate the archive with the real metric, and
+  never report a world-model agent from its final checkpoint alone.
+</div>
+
+<div class="note">
+  <span class="h">A caveat on that selection</span>
+  Selecting the argmax over an archive and then reporting the same number is optimistically
+  biased, and with 300-episode evaluations the top few checkpoints are within noise of each other
+  anyway. The honest statement is that this recipe produces checkpoints in the 96–99 % band for
+  most of the second half of training, that the band is what reproduces, and that any single
+  number drawn from it — including the one in Table 4 — carries about a point of selection
+  optimism. See Section 9.
 </div>
 
 <h3><span class="num">8.4</span>The pattern</h3>
@@ -1132,12 +1164,19 @@ than PPO — and too much sampling noise actively prevents the policy from sharp
 
 <ul>
   <li><b>Single seed per released agent.</b> Table 4 compares one checkpoint per method. The
-  seed-to-seed variance across the sweeps (Section 8) is larger than the between-agent
+  seed-to-seed variance across the sweeps (Section 8) — and, as Figure 18 shows, the
+  <em>within-run, checkpoint-to-checkpoint</em> variance — is larger than the between-agent
   differences, so the ranking in Table 4 should not be read as a ranking of methods.</li>
-  <li><b>Checkpoint selection differs.</b> STORM's checkpoint was selected on held-out data from
-  an archive; PPO's and Dreamer's are end-of-training. This favours STORM by roughly a point.</li>
-  <li><b>Action modes differ</b> (Section 6). Defensible, but it means the comparison is
-  "each method at its best" rather than a controlled ablation.</li>
+  <li><b>Checkpoint selection differs, and it matters more than we assumed.</b> STORM's
+  checkpoint was selected on held-out data from an archive; PPO's and Dreamer's are
+  end-of-training. Figure 18 measures the size of that advantage on a full run: best-of-archive
+  99.0 % against 96.3 % at the end of training, so call it 2–3 points in STORM's favour, not one.
+  Selecting the argmax on the test split and then reporting it is also optimistically biased.
+  Both effects push the same way, and both apply to STORM alone.</li>
+  <li><b>Only one architecture per family, at one scale.</b> "DreamerV3 is worse than STORM
+  here" means <em>this</em> 25M-parameter RSSM at <code>batch_length</code> 64 was worse than
+  <em>this</em> transformer at 128. Section 8 shows both are sensitive enough to their context
+  hyperparameter that the ordering could plausibly move with a different budget.</li>
   <li><b>Compute is not matched.</b> PPO reaches its result in 27 minutes; the world-model agents
   take 6–10 hours for comparable accuracy. On this task, the model-based machinery buys nothing
   in final performance — the interesting claim is only that it can be made to work at all on a
@@ -1181,6 +1220,7 @@ PYTHONPATH=src python scripts/figures/paper_mapgen_figs.py     # Fig 5-10
 PYTHONPATH=src python scripts/figures/paper_traj_density.py    # Fig 11
 python scripts/figures/paper_dreams.py --agent {dreamer|storm} # Fig 12-13
 python scripts/figures/paper_training_figs.py                  # Fig 14-17
+python scripts/figures/paper_metastability.py                  # Fig 18
 python scripts/figures/paper_results_table.py                  # Tables 4-5
 python scripts/figures/build_paper.py                          # inline everything</pre>
 

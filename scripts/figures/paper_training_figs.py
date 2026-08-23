@@ -246,11 +246,15 @@ def fig_compare(data, out, heldout):
                 # episode index -> frames with the run's own average episode
                 # cost rather than interpolating a staircase.
                 per_ep = float(yf.max()) / float(xs.max())
-                ax.plot(xs * per_ep / 1e6, smooth(ys, 25), color=C["storm"], lw=1.8,
-                        label="STORM (re-run, in progress)")
+                # STORM logs per episode (~33k points) where PPO and Dreamer log
+                # a few hundred, so it needs a proportionally wider window to be
+                # visually comparable rather than a green haze.
+                ax.plot(xs * per_ep / 1e6, smooth(ys, 501), color=C["storm"], lw=1.8,
+                        label="STORM")
         ax.axhline(2 / 3, color="#6b7280", ls="--", lw=1.0)
-        ax.annotate("constant-door ceiling (⅔)", xy=(0.05, .60), fontsize=7,
-                    color="#6b7280", va="top")
+        ax.annotate("constant-door ceiling (⅔)", xy=(5.9, .655), fontsize=7,
+                    color="#6b7280", ha="right", va="top",
+                    bbox=dict(boxstyle="round,pad=.18", fc="white", alpha=.85, ec="none"))
         ax.set_xlabel("environment frames (M)")
         ax.set_ylabel("training success (proxy)")
         ax.set_title("(a) training-time learning curves", loc="left")
