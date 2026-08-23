@@ -5,9 +5,9 @@ Runs in the dedicated ``r2dreamer`` conda env with the repo's ``src`` on
 PYTHONPATH so both ``cogniland.memory_env`` and the r2dreamer package import::
 
     PYTHONPATH=src conda run -n r2dreamer python scripts/memory_env/eval_r2dreamer.py \
-        --ckpt-2cue external/r2dreamer/runs/memory_2cue/latest.pt \
-        --ckpt-3cue external/r2dreamer/runs/memory_3cue/latest.pt \
-        --ckpt-4cue external/r2dreamer/runs/memory_4cue/latest.pt \
+        --ckpt-2cue r2dreamer_model/runs/memory_2cue/latest.pt \
+        --ckpt-3cue r2dreamer_model/runs/memory_3cue/latest.pt \
+        --ckpt-4cue r2dreamer_model/runs/memory_4cue/latest.pt \
         --device cuda:0
 
 All three models are evaluated on the SAME held-out 4-cue test set (via

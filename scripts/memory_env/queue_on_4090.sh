@@ -13,16 +13,16 @@ while pgrep -f "dreamerv3_bridge_tunnel.py|train_ppo_bridge_tunnel.py" >/dev/nul
 echo "[queue] $(date) GPU free -> starting 3 MemoryEnv trainings (logs -> $T)" | tee -a "$Q"
 for CUE in 2cue 3cue 4cue; do
   echo "[queue] $(date) === training memory_${CUE} ===" | tee -a "$Q"
-  PYTHONPATH=src conda run -n r2dreamer python external/r2dreamer/train.py \
+  PYTHONPATH=src conda run -n r2dreamer python r2dreamer_model/train.py \
     env=memory env.task=memory_${CUE} model=size25M env.steps=30e6 \
-    device=cuda:0 seed=0 logdir=external/r2dreamer/runs/memory_${CUE} >> "$T" 2>&1 \
+    device=cuda:0 seed=0 logdir=r2dreamer_model/runs/memory_${CUE} >> "$T" 2>&1 \
     && echo "[queue] $(date) memory_${CUE} DONE" | tee -a "$Q" \
     || echo "[queue] $(date) memory_${CUE} FAILED (continuing)" | tee -a "$Q"
 done
 echo "[queue] $(date) evaluating + plotting per-cue reward..." | tee -a "$Q"
 PYTHONPATH=src conda run -n r2dreamer python scripts/memory_env/eval_r2dreamer.py \
-  --ckpt-2cue external/r2dreamer/runs/memory_2cue/latest.pt \
-  --ckpt-3cue external/r2dreamer/runs/memory_3cue/latest.pt \
-  --ckpt-4cue external/r2dreamer/runs/memory_4cue/latest.pt --device cuda:0 >> "$Q" 2>&1 \
+  --ckpt-2cue r2dreamer_model/runs/memory_2cue/latest.pt \
+  --ckpt-3cue r2dreamer_model/runs/memory_3cue/latest.pt \
+  --ckpt-4cue r2dreamer_model/runs/memory_4cue/latest.pt --device cuda:0 >> "$Q" 2>&1 \
   && echo "[queue] $(date) ALL DONE -> outputs/report/memoryenv_reward_per_cue.png" | tee -a "$Q" \
   || echo "[queue] $(date) eval FAILED" | tee -a "$Q"

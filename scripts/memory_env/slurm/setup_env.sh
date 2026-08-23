@@ -17,7 +17,7 @@ echo "[setup] env    = $CONDA_ENV"
 conda create -y -n "$CONDA_ENV" python=3.11
 # install r2dreamer (core deps: torch, torchrl, hydra, gymnasium, ...) + minigrid
 # + wandb (the SLURM sweep agent needs it) + matplotlib (eval plot).
-conda run -n "$CONDA_ENV" pip install -e "$REPO/external/r2dreamer"
+conda run -n "$CONDA_ENV" pip install -e "$REPO/r2dreamer_model"
 conda run -n "$CONDA_ENV" pip install minigrid matplotlib wandb
 
 # sanity: MemoryEnv must import + produce the (56,56,3) obs (cogniland.memory_env

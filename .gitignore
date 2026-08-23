@@ -257,5 +257,5 @@ paper/*.out
 # pipelines' local state
 STORM_model/.venv/
 STORM_model/outputs/
-external/r2dreamer/runs/
+r2dreamer_model/runs/
 scripts/bridge_tunnel/slurm/logs/

@@ -16,14 +16,14 @@ MemoryEnv (dense PBRS so the 33-cell corridor is learnable; shaping is
 shape/colour/branch-agnostic and leaks no task info).
 
 ## 0. Get the repo on the cluster
-`git clone`/`rsync` this repo to the cluster. The `external/r2dreamer/` code and
+`git clone`/`rsync` this repo to the cluster. The `r2dreamer_model/` code and
 `src/cogniland/memory_env/` are both needed; nothing else from cogniland is.
 
 ## 1. One-time env setup (login or interactive GPU node)
 ```bash
 bash scripts/memory_env/slurm/setup_env.sh        # creates conda env `r2dreamer`
 ```
-Creates a Python 3.11 conda env, `pip install -e external/r2dreamer` + `minigrid`
+Creates a Python 3.11 conda env, `pip install -e r2dreamer_model` + `minigrid`
 + `matplotlib`, and sanity-checks that MemoryEnv imports and produces a (56,56,3)
 observation. Override the env name with `CONDA_ENV=...`.
 
@@ -50,7 +50,7 @@ Override-via-env knobs in `train_memory.sbatch`: `REPO`, `CONDA_ENV`, `STEPS`,
 `MODEL`, `SEED`.
 
 ## 3. Outputs
-- Checkpoints: `external/r2dreamer/runs/memory_{2,3,4}cue/latest.pt`
+- Checkpoints: `r2dreamer_model/runs/memory_{2,3,4}cue/latest.pt`
   (saved at end of training; key `agent_state_dict`).
 - TensorBoard / metric logs: under each `runs/memory_*` dir.
 - Final plot: **`outputs/report/memoryenv_reward_per_cue.png`** — grouped bars,
@@ -64,7 +64,7 @@ After the eval job finishes, copy that PNG back for analysis.
 - Doors are 50/50 left/right; the cue spawns uniformly over the 6 non-corridor
   cells of the 3×3 start room — both randomised per episode.
 - To change the step budget cluster-wide: edit `steps:` in
-  `external/r2dreamer/configs/env/memory.yaml` (currently `10e6`) or pass
+  `r2dreamer_model/configs/env/memory.yaml` (currently `10e6`) or pass
   `STEPS=...` to the sbatch job.
 - Single-GPU sequential alternative (no SLURM):
   `bash scripts/memory_env/launch_r2dreamer.sh`.

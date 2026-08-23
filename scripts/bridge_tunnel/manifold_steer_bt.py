@@ -17,7 +17,7 @@ Conceptual coordinate  z = sign(category) * corridor_progress
 
 Run (r2dreamer env, PYTHONPATH=src):
   python scripts/bridge_tunnel/manifold_steer_bt.py \
-      --checkpoint external/r2dreamer/runs/forkwall_nocommit/latest.pt \
+      --checkpoint r2dreamer_model/runs/forkwall_nocommit/latest.pt \
       --out outputs/bridge_tunnel_forkwall/manifold_steer_data.json
 """
 from __future__ import annotations
@@ -191,7 +191,7 @@ def to_jsonable(obj):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--checkpoint", default="external/r2dreamer/runs/forkwall_nocommit/latest.pt")
+    ap.add_argument("--checkpoint", default="r2dreamer_model/runs/forkwall_nocommit/latest.pt")
     ap.add_argument("--out", default="outputs/bridge_tunnel_forkwall/manifold_steer_data.json")
     ap.add_argument("--raw-cache", default="outputs/bridge_tunnel_forkwall/manifold_steer_raw.pkl")
     ap.add_argument("--decoder-cache", default="outputs/bridge_tunnel_forkwall/belief_report_raw.pkl",

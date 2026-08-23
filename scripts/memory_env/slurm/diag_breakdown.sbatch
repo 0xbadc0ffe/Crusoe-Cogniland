@@ -16,8 +16,8 @@ cd "$REPO"
 export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 SUFFIX="${SUFFIX:-.2m}"   # run-dir suffix: e.g. ".2m", "_gate", "_rew2"
 srun python scripts/memory_env/diag_breakdown.py \
-  --ckpt-2cue "external/r2dreamer/runs/memory_2cue${SUFFIX}/latest.pt" \
-  --ckpt-3cue "external/r2dreamer/runs/memory_3cue${SUFFIX}/latest.pt" \
-  --ckpt-4cue "external/r2dreamer/runs/memory_4cue${SUFFIX}/latest.pt" \
+  --ckpt-2cue "r2dreamer_model/runs/memory_2cue${SUFFIX}/latest.pt" \
+  --ckpt-3cue "r2dreamer_model/runs/memory_3cue${SUFFIX}/latest.pt" \
+  --ckpt-4cue "r2dreamer_model/runs/memory_4cue${SUFFIX}/latest.pt" \
   --device cuda:0 --n 96
 echo "[diag] done"

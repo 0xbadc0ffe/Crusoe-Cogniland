@@ -39,11 +39,11 @@ cd "$REPO"
 export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 export BT_MAPS="$MAPS"          # fixed-map dataset for the wrapper
 
-srun python external/r2dreamer/train.py \
+srun python r2dreamer_model/train.py \
   env=bridge_tunnel_forkwall env.task=bridgetunnel_forkwall \
   model="$MODEL" model.rep_loss=dreamer env.steps="$STEPS" \
   model.act_entropy="$ACT_ENTROPY" model.imag_horizon="$IMAG_HORIZON" \
   env.train_ratio="$TRAIN_RATIO" batch_length="$BATCH_LENGTH" \
   device=cuda:0 seed="$SEED" \
-  logdir="external/r2dreamer/runs/${RUN_NAME}"
-echo "[job] $(date) ${RUN_NAME} done -> external/r2dreamer/runs/${RUN_NAME}/latest.pt"
+  logdir="r2dreamer_model/runs/${RUN_NAME}"
+echo "[job] $(date) ${RUN_NAME} done -> r2dreamer_model/runs/${RUN_NAME}/latest.pt"

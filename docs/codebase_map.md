@@ -14,7 +14,7 @@ src/cogniland/
   memory_env/           MiniGrid MemoryEnv fork (T-maze; secondary task)
   assets/sprites/       rendering sprites
 purejaxwm/              in-tree DreamerV3 algorithm library (JAX)
-external/r2dreamer/     DreamerV3 training pipeline (runs/ holds fw_sw_* sweep)
+r2dreamer_model/        DreamerV3 training pipeline (runs/ holds fw_sw_* sweep)
 STORM_model/            STORM training pipeline (agent `storm2`; own README)
 scripts/
   bridge_tunnel/        PPO train/eval/viz + slurm/ launchers + dataset builder

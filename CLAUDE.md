@@ -2,7 +2,7 @@
 
 One POMDP memory task (`bridge_tunnel` fork_wall), three agents trained on the
 identical env + reward + fixed 6k-map dataset — **PPO+GRU** (PyTorch,
-model-free), **DreamerV3** (`external/r2dreamer`, RSSM world model), **STORM**
+model-free), **DreamerV3** (`r2dreamer_model`, RSSM world model), **STORM**
 (`STORM_model`, transformer world model) — built as a substrate for mechanistic
 interpretability (belief/skill probing + steering). The curated checkpoints and
 per-agent reproduction commands live in `final_models/` (read its
@@ -22,7 +22,7 @@ src/cogniland/
   memory_env/                   MiniGrid MemoryEnv fork (T-maze; kept secondary)
   assets/sprites/               rendering sprites
 purejaxwm/                      in-tree DreamerV3 lib (RSSM, TwoHot, LaProp, …)
-external/r2dreamer/             Dreamer pipeline (conda env `r2dreamer`)
+r2dreamer_model/                Dreamer pipeline (conda env `r2dreamer`)
 STORM_model/                    STORM pipeline (own .venv; agent `storm2`)
 scripts/bridge_tunnel/          PPO train/eval/viz + slurm/ launchers
 scripts/memory_env/             memory_env training + analysis
@@ -43,7 +43,7 @@ top/bottom door pair. Only the category-matching door is rewarded
 `+3.0` at the correct door; wrong door ends the episode unrewarded.
 Obs `{minimap: (21,21) int8, scalars: (5,)}`; `max_steps=800`; γ=0.99.
 Canonical kwargs: `configs/bridge_tunnel/btc_ppo_forkwall_plain_solved.yaml`,
-mirrored byte-for-byte in `external/r2dreamer/envs/bridge_tunnel.py` and
+mirrored byte-for-byte in `r2dreamer_model/envs/bridge_tunnel.py` and
 `STORM_model/cl/environments/bridge_tunnel.py` (`FORKWALL_KWARGS`).
 
 ## How to run

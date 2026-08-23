@@ -6,7 +6,7 @@ independent samples are overlaid at low alpha, so the coloured density shows the
 policy's path distribution and the door-decision consistency under stochasticity.
 
   python scripts/bridge_tunnel/viz_rollout_actions.py \
-      --checkpoint external/r2dreamer/runs/fw_sw_25M_bl64_h15/latest.pt \
+      --checkpoint r2dreamer_model/runs/fw_sw_25M_bl64_h15/latest.pt \
       --model-size size25M --maps data/bridge_tunnel/forkwall6k/test.pkl \
       --per-cat 2 --n-rollouts 32 --seed 1 --out paper/figures/cogniland/rollout_actions.png
 """
@@ -20,7 +20,7 @@ from matplotlib.collections import LineCollection
 from matplotlib.lines import Line2D
 
 _REPO = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_REPO / "src")); sys.path.insert(0, str(_REPO / "external/r2dreamer"))
+sys.path.insert(0, str(_REPO / "src")); sys.path.insert(0, str(_REPO / "r2dreamer_model"))
 sys.path.insert(0, str(_REPO / "scripts/bridge_tunnel"))
 from hydra import compose, initialize_config_dir
 import dreamer_belief_report_r2d as R
@@ -42,7 +42,7 @@ ACTIONS = [
 
 
 def load(checkpoint, device, model_size):
-    cfg_dir = str((_REPO / "external/r2dreamer/configs").resolve())
+    cfg_dir = str((_REPO / "r2dreamer_model/configs").resolve())
     with initialize_config_dir(version_base=None, config_dir=cfg_dir):
         cfg = compose(config_name="configs", overrides=[
             "env=bridge_tunnel_forkwall", "env.task=bridgetunnel_forkwall",
@@ -118,7 +118,7 @@ def draw_map(ax, terrain, cat, eps, alpha):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--checkpoint", default="external/r2dreamer/runs/fw_sw_25M_bl64_h15/latest.pt")
+    ap.add_argument("--checkpoint", default="r2dreamer_model/runs/fw_sw_25M_bl64_h15/latest.pt")
     ap.add_argument("--model-size", default="size25M")
     ap.add_argument("--maps", default="data/bridge_tunnel/forkwall6k/test.pkl")
     ap.add_argument("--device", default="cuda:0")

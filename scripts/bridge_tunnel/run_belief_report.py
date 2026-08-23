@@ -2,7 +2,7 @@
 """Produce the data bundle for the bridge_tunnel fork_wall belief report.
 
     python scripts/bridge_tunnel/run_belief_report.py \
-        --checkpoint external/r2dreamer/runs/forkwall_nocommit/latest.pt \
+        --checkpoint r2dreamer_model/runs/forkwall_nocommit/latest.pt \
         --out outputs/bridge_tunnel_forkwall/belief_report_data.json \
         --n-per-category 65
 """
@@ -37,7 +37,7 @@ def to_jsonable(obj):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--checkpoint", default="external/r2dreamer/runs/forkwall_nocommit/latest.pt")
+    ap.add_argument("--checkpoint", default="r2dreamer_model/runs/forkwall_nocommit/latest.pt")
     ap.add_argument("--out", default="outputs/bridge_tunnel_forkwall/belief_report_data.json")
     ap.add_argument("--raw-cache", default="outputs/bridge_tunnel_forkwall/belief_report_raw.pkl")
     ap.add_argument("--device", default="cuda:0")

@@ -16,22 +16,22 @@
 #   test needed `model.compile=False`.
 # * All three models are later evaluated on the SAME held-out 4-cue test set:
 #     PYTHONPATH=src conda run -n r2dreamer python scripts/memory_env/eval_r2dreamer.py \
-#         --ckpt-2cue external/r2dreamer/runs/memory_2cue/latest.pt \
-#         --ckpt-3cue external/r2dreamer/runs/memory_3cue/latest.pt \
-#         --ckpt-4cue external/r2dreamer/runs/memory_4cue/latest.pt --device cuda:0
+#         --ckpt-2cue r2dreamer_model/runs/memory_2cue/latest.pt \
+#         --ckpt-3cue r2dreamer_model/runs/memory_3cue/latest.pt \
+#         --ckpt-4cue r2dreamer_model/runs/memory_4cue/latest.pt --device cuda:0
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
 DEVICE="${DEVICE:-cuda:0}"
 
-PYTHONPATH=src conda run -n r2dreamer python external/r2dreamer/train.py \
+PYTHONPATH=src conda run -n r2dreamer python r2dreamer_model/train.py \
   env=memory env.task=memory_2cue model=size25M env.steps=10e6 \
-  device="${DEVICE}" seed=0 logdir=external/r2dreamer/runs/memory_2cue
+  device="${DEVICE}" seed=0 logdir=r2dreamer_model/runs/memory_2cue
 
-PYTHONPATH=src conda run -n r2dreamer python external/r2dreamer/train.py \
+PYTHONPATH=src conda run -n r2dreamer python r2dreamer_model/train.py \
   env=memory env.task=memory_3cue model=size25M env.steps=10e6 \
-  device="${DEVICE}" seed=0 logdir=external/r2dreamer/runs/memory_3cue
+  device="${DEVICE}" seed=0 logdir=r2dreamer_model/runs/memory_3cue
 
-PYTHONPATH=src conda run -n r2dreamer python external/r2dreamer/train.py \
+PYTHONPATH=src conda run -n r2dreamer python r2dreamer_model/train.py \
   env=memory env.task=memory_4cue model=size25M env.steps=10e6 \
-  device="${DEVICE}" seed=0 logdir=external/r2dreamer/runs/memory_4cue
+  device="${DEVICE}" seed=0 logdir=r2dreamer_model/runs/memory_4cue

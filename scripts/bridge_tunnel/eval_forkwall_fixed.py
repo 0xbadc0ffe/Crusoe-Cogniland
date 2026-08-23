@@ -6,7 +6,7 @@ learned the category memory (rocky/lakes well above the 50% door-chance) or is
 just guessing the door after navigating.
 
   python scripts/bridge_tunnel/eval_forkwall_fixed.py \
-      --checkpoint external/r2dreamer/runs/forkwall_fixed_dreamer/latest.pt \
+      --checkpoint r2dreamer_model/runs/forkwall_fixed_dreamer/latest.pt \
       --maps data/bridge_tunnel/forkwall6k/test.pkl --n 200
 """
 from __future__ import annotations
@@ -15,7 +15,7 @@ from collections import defaultdict
 import numpy as np, torch, gymnasium as gym
 
 _REPO = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_REPO/"src")); sys.path.insert(0, str(_REPO/"external/r2dreamer"))
+sys.path.insert(0, str(_REPO/"src")); sys.path.insert(0, str(_REPO/"r2dreamer_model"))
 sys.path.insert(0, str(_REPO/"scripts/bridge_tunnel"))
 from hydra import compose, initialize_config_dir
 import dreamer_belief_report_r2d as R
@@ -27,7 +27,7 @@ CATS = ["balanced","lakes","rocky"]
 
 
 def load(checkpoint, device, model_size="size25M"):
-    cfg_dir = str((_REPO/"external/r2dreamer/configs").resolve())
+    cfg_dir = str((_REPO/"r2dreamer_model/configs").resolve())
     with initialize_config_dir(version_base=None, config_dir=cfg_dir):
         cfg = compose(config_name="configs", overrides=[
             "env=bridge_tunnel_forkwall","env.task=bridgetunnel_forkwall",
@@ -67,7 +67,7 @@ def run_episode(agent, device, rec):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--checkpoint", default="external/r2dreamer/runs/forkwall_fixed_dreamer/latest.pt")
+    ap.add_argument("--checkpoint", default="r2dreamer_model/runs/forkwall_fixed_dreamer/latest.pt")
     ap.add_argument("--maps", default="data/bridge_tunnel/forkwall6k/test.pkl")
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--n", type=int, default=200, help="episodes per category")

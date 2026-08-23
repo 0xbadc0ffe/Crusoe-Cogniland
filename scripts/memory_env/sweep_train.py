@@ -9,7 +9,7 @@ a subprocess, so the hydra entrypoint and wandb stay cleanly separated.
 
 The wandb run is just a dispatch/record; r2dreamer writes its own
 tensorboard logs + the `latest.pt` checkpoint under
-``external/r2dreamer/runs/memory_<cue>/``.
+``r2dreamer_model/runs/memory_<cue>/``.
 """
 from __future__ import annotations
 import os
@@ -34,9 +34,9 @@ def main() -> int:
         os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
 
     tag = os.environ.get("MEMENV_TAG", "")           # experiment-arm logdir suffix
-    logdir = f"external/r2dreamer/runs/memory_{cue}" + (f"_{tag}" if tag else "")
+    logdir = f"r2dreamer_model/runs/memory_{cue}" + (f"_{tag}" if tag else "")
     cmd = [
-        sys.executable, "external/r2dreamer/train.py",
+        sys.executable, "r2dreamer_model/train.py",
         "env=memory", f"env.task=memory_{cue}",
         f"model={model}", f"env.steps={steps}",
         "device=cuda:0", f"seed={seed}",

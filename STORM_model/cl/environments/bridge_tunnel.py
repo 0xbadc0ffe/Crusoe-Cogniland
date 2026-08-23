@@ -6,7 +6,7 @@ commit=False) unmodified -- the pure-JAX port of bridge_tunnel doesn't have
 fork_wall yet, so this reuses the exact env the released PPO fork_wall
 no-commit agent was trained on (100% held-out success,
 ``configs/bridge_tunnel/btc_ppo_forkwall_nocommit.yaml``) and that
-``external/r2dreamer/envs/bridge_tunnel.py`` already trains a Dreamer baseline
+``r2dreamer_model/envs/bridge_tunnel.py`` already trains a Dreamer baseline
 on. Episodes are drawn from the SAME fixed map pool
 (``data/bridge_tunnel/forkwall6k/{train,test}.pkl``) so PPO / Dreamer / STORM
 are compared on identical data, not independently-sampled procedural streams.
@@ -51,7 +51,7 @@ from cogniland.bridge_tunnel.env import BridgeTunnelEnv  # noqa: E402
 from cogniland.bridge_tunnel.map_pool import MapPool  # noqa: E402
 from cogniland.bridge_tunnel.tiles import NUM_TILES  # noqa: E402
 
-# Mirrors external/r2dreamer/envs/bridge_tunnel.py::_TASKS["forkwall"] and
+# Mirrors r2dreamer_model/envs/bridge_tunnel.py::_TASKS["forkwall"] and
 # configs/bridge_tunnel/btc_ppo_forkwall_nocommit.yaml (released PPO: 100% success).
 FORKWALL_KWARGS: Dict[str, Any] = dict(
     variant="btc", commit=False, fork_wall=True,

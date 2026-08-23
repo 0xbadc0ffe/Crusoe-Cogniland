@@ -12,9 +12,9 @@ state per episode and resets on is_first); env rendering is headless via
 MiniGrid get_frame.
 
     PYTHONPATH=src python scripts/memory_env/render_agents.py \
-        --ckpt-2cue external/r2dreamer/runs/memory_2cue/latest.pt \
-        --ckpt-3cue external/r2dreamer/runs/memory_3cue/latest.pt \
-        --ckpt-4cue external/r2dreamer/runs/memory_4cue/latest.pt \
+        --ckpt-2cue r2dreamer_model/runs/memory_2cue/latest.pt \
+        --ckpt-3cue r2dreamer_model/runs/memory_3cue/latest.pt \
+        --ckpt-4cue r2dreamer_model/runs/memory_4cue/latest.pt \
         --device cuda:0
 """
 from __future__ import annotations

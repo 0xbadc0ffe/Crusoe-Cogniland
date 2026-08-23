@@ -42,7 +42,7 @@ src/cogniland/
   memory_env/            MiniGrid MemoryEnv fork (T-maze; secondary task)
   assets/                sprites for rendering
 purejaxwm/               in-tree DreamerV3 algorithm library (JAX)
-external/r2dreamer/      DreamerV3 pipeline used for the Dreamer result
+r2dreamer_model/         DreamerV3 pipeline used for the Dreamer result
 STORM_model/             STORM pipeline (JAX/Flax; agent `storm2`)
 scripts/
   bridge_tunnel/         PPO training, eval, viz, slurm launchers

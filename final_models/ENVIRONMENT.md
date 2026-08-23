@@ -79,7 +79,7 @@ points, all set by the canonical parameters below:
 ## 4. Canonical parameters (the single source of truth)
 
 Every field below is **identical** across the DreamerV3 wrapper
-(`external/r2dreamer/envs/bridge_tunnel.py :: FORKWALL_KWARGS`), the STORM wrapper
+(`r2dreamer_model/envs/bridge_tunnel.py :: FORKWALL_KWARGS`), the STORM wrapper
 (`STORM_model/cl/environments/bridge_tunnel.py :: FORKWALL_KWARGS`), and the PPO
 config (`final_models/ppo/config.yaml`).
 

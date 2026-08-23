@@ -19,7 +19,7 @@ import argparse, pathlib, pickle, sys
 import numpy as np, torch, gymnasium as gym
 
 _REPO = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_REPO/"src")); sys.path.insert(0, str(_REPO/"external/r2dreamer"))
+sys.path.insert(0, str(_REPO/"src")); sys.path.insert(0, str(_REPO/"r2dreamer_model"))
 sys.path.insert(0, str(_REPO/"scripts/bridge_tunnel"))
 from hydra import compose, initialize_config_dir
 import dreamer_belief_report_r2d as R
@@ -33,7 +33,7 @@ A_UP, A_DOWN = 0, 1
 
 
 def load(checkpoint, device):
-    cfg_dir = str((_REPO/"external/r2dreamer/configs").resolve())
+    cfg_dir = str((_REPO/"r2dreamer_model/configs").resolve())
     with initialize_config_dir(version_base=None, config_dir=cfg_dir):
         cfg = compose(config_name="configs", overrides=[
             "env=bridge_tunnel_forkwall","env.task=bridgetunnel_forkwall",
@@ -78,7 +78,7 @@ def rollout(agent, device, rec):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--checkpoint", default="external/r2dreamer/runs/forkwall_fixed_dreamer/latest.pt")
+    ap.add_argument("--checkpoint", default="r2dreamer_model/runs/forkwall_fixed_dreamer/latest.pt")
     ap.add_argument("--maps", default="data/bridge_tunnel/forkwall6k/test.pkl")
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--n", type=int, default=40, help="episodes per category")

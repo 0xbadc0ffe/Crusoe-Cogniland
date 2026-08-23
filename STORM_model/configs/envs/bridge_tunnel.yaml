@@ -1,6 +1,6 @@
 # bridge_tunnel fork_wall (BT-rules, commitment disabled) -- vector obs, no CNN.
 # Mirrors configs/bridge_tunnel/btc_ppo_forkwall_nocommit.yaml (released PPO:
-# 100% success) and external/r2dreamer/configs/env/bridge_tunnel_forkwall.yaml
+# 100% success) and r2dreamer_model/configs/env/bridge_tunnel_forkwall.yaml
 # (Dreamer baseline). Fixed map pool: data/bridge_tunnel/forkwall6k/{train,test}.pkl
 # so PPO / Dreamer / STORM all compare on identical data.
 experiment_name: bridge_tunnel_forkwall

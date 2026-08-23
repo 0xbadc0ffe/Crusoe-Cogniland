@@ -47,10 +47,10 @@ conda activate "$CONDA_ENV"
 cd "$REPO"
 export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 
-srun python external/r2dreamer/train.py \
+srun python r2dreamer_model/train.py \
   env=memory env.task=memory_${CUE} \
   model=${MODEL} env.steps=${STEPS} \
   device=cuda:0 seed=${SEED} \
-  logdir=external/r2dreamer/runs/memory_${CUE}
+  logdir=r2dreamer_model/runs/memory_${CUE}
 
-echo "[job] $(date) memory_${CUE} finished -> external/r2dreamer/runs/memory_${CUE}/latest.pt"
+echo "[job] $(date) memory_${CUE} finished -> r2dreamer_model/runs/memory_${CUE}/latest.pt"

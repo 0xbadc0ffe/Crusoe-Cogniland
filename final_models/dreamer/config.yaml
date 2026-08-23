@@ -206,7 +206,7 @@ model:
   units: 384
   act: SiLU
   norm: true
-logdir: external/r2dreamer/runs/fw_sw_25M_bl64_h15
+logdir: r2dreamer_model/runs/fw_sw_25M_bl64_h15
 seed: 0
 deterministic_run: false
 device: cuda:0

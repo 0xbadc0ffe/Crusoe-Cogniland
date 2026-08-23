@@ -51,11 +51,11 @@ conda activate "$CONDA_ENV"
 cd "$REPO"
 export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 
-srun python external/r2dreamer/train.py \
+srun python r2dreamer_model/train.py \
   env=bridge_tunnel_forkwall env.task=bridgetunnel_forkwall \
   model="${MODEL}" env.steps="${STEPS}" \
   model.act_entropy="${ACT_ENTROPY}" \
   device=cuda:0 seed="${SEED}" \
-  logdir="external/r2dreamer/runs/${RUN_NAME}"
+  logdir="r2dreamer_model/runs/${RUN_NAME}"
 
-echo "[job] $(date) ${RUN_NAME} finished -> external/r2dreamer/runs/${RUN_NAME}/latest.pt"
+echo "[job] $(date) ${RUN_NAME} finished -> r2dreamer_model/runs/${RUN_NAME}/latest.pt"

@@ -20,7 +20,7 @@
 #
 # Submit:  sbatch scripts/memory_env/slurm/train_memory_forkgate.sbatch
 # Re-submitting with the SAME logdir warm-starts from its `latest.pt` (see
-# external/r2dreamer/train.py) -- safe to resubmit with a larger STEPS if one
+# r2dreamer_model/train.py) -- safe to resubmit with a larger STEPS if one
 # 24h job doesn't reach the breakthrough (the PPO run's breakthrough came late,
 # ~68% through its budget).
 #
@@ -46,10 +46,10 @@ conda activate "$CONDA_ENV"
 cd "$REPO"
 export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 
-srun python external/r2dreamer/train.py \
+srun python r2dreamer_model/train.py \
   env=memory env.task=memory_4cue \
   model="${MODEL}" env.steps="${STEPS}" \
   device=cuda:0 seed="${SEED}" \
-  logdir="external/r2dreamer/runs/${RUN_NAME}"
+  logdir="r2dreamer_model/runs/${RUN_NAME}"
 
-echo "[job] $(date) ${RUN_NAME} finished -> external/r2dreamer/runs/${RUN_NAME}/latest.pt"
+echo "[job] $(date) ${RUN_NAME} finished -> r2dreamer_model/runs/${RUN_NAME}/latest.pt"

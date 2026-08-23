@@ -46,7 +46,7 @@ def decode_full(agent, device, feats_t, stoch_shape):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--checkpoint", default="external/r2dreamer/runs/forkwall_nocommit/latest.pt")
+    ap.add_argument("--checkpoint", default="r2dreamer_model/runs/forkwall_nocommit/latest.pt")
     ap.add_argument("--raw-cache", default="outputs/bridge_tunnel_forkwall/manifold_steer_raw.pkl")
     ap.add_argument("--decoder-cache", default="outputs/bridge_tunnel_forkwall/belief_report_raw.pkl")
     ap.add_argument("--out", default="outputs/bridge_tunnel_forkwall/manifold_steer_data.json")

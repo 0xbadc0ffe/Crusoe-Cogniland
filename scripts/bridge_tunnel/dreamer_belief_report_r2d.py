@@ -22,7 +22,7 @@ Two experiments, both driven off the trained RSSM's belief state (stoch+deter
 
 Run (r2dreamer conda env, PYTHONPATH=src):
   python scripts/bridge_tunnel/dreamer_belief_report_r2d.py \
-      --checkpoint external/r2dreamer/runs/forkwall_nocommit/latest.pt \
+      --checkpoint r2dreamer_model/runs/forkwall_nocommit/latest.pt \
       --out outputs/bridge_tunnel_forkwall/belief_report_data.json
 """
 from __future__ import annotations

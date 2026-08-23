@@ -16,7 +16,7 @@ export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
 export BT_MAPS="$PWD/data/bridge_tunnel/forkwall6k/test.pkl"
 declare -A SZ=( [fw_sw_12M_bl64_h15]=size12M [fw_sw_12M_bl128_h15]=size12M [fw_sw_25M_bl64_h15]=size25M [fw_sw_25M_bl128_h15]=size25M )
 for n in fw_sw_12M_bl128_h15 fw_sw_12M_bl64_h15 fw_sw_25M_bl128_h15 fw_sw_25M_bl64_h15; do
-  ck=external/r2dreamer/runs/$n/latest.pt
+  ck=r2dreamer_model/runs/$n/latest.pt
   [ -f "$ck" ] || { echo "=== $n: NO CHECKPOINT ==="; continue; }
   echo ""; echo "################## HELD-OUT TEST EVAL: $n (${SZ[$n]}) ##################"
   python scripts/bridge_tunnel/eval_forkwall_fixed.py \
