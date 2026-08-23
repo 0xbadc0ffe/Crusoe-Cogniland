@@ -1,0 +1,186 @@
+# STORM v2 (cl/agents/storm2.py) on bridge_tunnel fork_wall -- faithful to the
+# original weipu-zhang/STORM recipe (config_files/STORM.yaml):
+#   * transformer 2L / 512D / 8H, max_length 64          (same)
+#   * imagination: context 8, rollout 16                 (same)
+#   * KL dyn 0.5 / rep 0.1, free_nats 1, unimix 0.01     (same)
+#   * lr 1e-4 single optimizer                           (same)
+#   * gamma via horizon: original 0.985; here 0.99 to match the released
+#     PPO fork_wall agent's gamma for this exact task
+#   * update-to-data ratio: original trains one full 16x64 batch PER ENV STEP
+#     (train_ratio 1024 in this framework's units); constrained by this GPU we
+#     use 256 -- still 32x the paper-default-8 the failed runs 1-2 used
+#   * entropy 0.01 (repo precedent: purejaxwm DreamerV3 needed 3e-4 -> 0.01 on
+#     this env family, REGISTRY.md)
+agent:
+  name: storm2
+  type: storm2
+
+  batch_size: 16
+  batch_length: 64
+  train_ratio: 256
+  pretrain: 1024
+
+  replay:
+    capacity: 1e6
+    online: true
+
+  model:
+    loss_scales:
+      rec: 1.0
+      rew: 1.0
+      con: 1.0
+      dyn: 0.5
+      rep: 0.1
+      policy: 1.0
+      value: 1.0
+
+    opt:
+      lr: 1e-4
+      agc: 0.3
+      eps: 1e-20
+      beta1: 0.9
+      beta2: 0.999
+      momentum: true
+      wd: 0.0
+      schedule: const
+      warmup: 1000
+      anneal: 0
+
+    dyn:
+      typ: transformer
+      stoch_dim: 32
+      classes: 32
+      unimix: 0.01
+      free_nats: 1.0
+      transformer:
+        feat_dim: 512
+        num_layers: 2
+        num_heads: 8
+        max_length: 64
+        dropout: 0.1     # unused (storm2 runs the transformer without dropout)
+
+    enc:
+      typ: simple
+      simple:
+        units: 512
+        norm: rms
+        act: silu
+        depth: 64        # unused (no image keys)
+        mults: [2, 3, 4, 4]
+        layers: 3
+        kernel: 5
+        symlog: false
+        strided: false
+        winit: trunc_normal_in
+
+    dec:
+      typ: simple
+      simple:
+        units: 512
+        norm: rms
+        act: silu
+        outscale: 1.0
+        depth: 64
+        mults: [2, 3, 4, 4]
+        layers: 3
+        kernel: 5
+        symlog: false
+        bspace: 8
+        strided: false
+        winit: trunc_normal_in
+        discrete_keys: []
+
+    rewhead:
+      layers: 1
+      units: 512
+      act: silu
+      norm: rms
+      dist: symexp_twohot
+      outscale: 0.0
+      winit: trunc_normal_in
+      bins: 255
+
+    conthead:
+      layers: 1
+      units: 512
+      act: silu
+      norm: rms
+      dist: binary
+      outscale: 1.0
+      winit: trunc_normal_in
+
+    actor:
+      layers: 2
+      units: 512
+      act: silu
+      norm: rms
+      dist: categorical
+      minstd: 0.1
+      maxstd: 1.0
+      outscale: 0.01
+      unimix: 0.01
+      winit: trunc_normal_in
+
+    critic:
+      layers: 2
+      units: 512
+      act: silu
+      norm: rms
+      dist: symexp_twohot
+      outscale: 0.0
+      winit: trunc_normal_in
+      bins: 255
+
+    # imagination (original STORM: ImagineContextLength 8, ImagineBatchLength 16)
+    imag_context: 8
+    imag_length: 16
+    imag_window_stride: 8   # windows per replay sequence -> 7 * batch_size rollouts
+    env_context: 32         # rolling (z, a) window for action selection
+    horizon: 100            # gamma = 1 - 1/horizon = 0.99 (matches PPO's gamma here)
+    contdisc: true
+
+    imag_loss:
+      slowtar: false
+      lam: 0.95
+      # 0.01 -> 0.03 (run 7): at 0.01 the greedy policy deadlocks (7-8%
+      # timeouts, oscillating at obstacles) while sampling escapes all
+      # deadlocks but flips ~12% of door choices -- the policy is not robust
+      # under its own stochasticity. PPO solves this env at 99.5% trained AND
+      # evaluated stochastically with ent 0.045; move toward that regime.
+      actent: 0.03
+      slowreg: 1.0
+
+    slowvalue:
+      rate: 0.02
+      every: 1
+
+    retnorm:
+      impl: perc
+      rate: 0.01
+      limit: 1.0
+      perclo: 5.0
+      perchi: 95.0
+      debias: false
+
+    valnorm:
+      impl: none
+      rate: 0.01
+      limit: 1e-8
+
+    advnorm:
+      impl: none
+      rate: 0.01
+      limit: 1e-8
+
+    grad_checkpoint: true
+
+  visualization:
+    enabled: false
+
+  checkpoint:
+    enabled: true
+    # sparse-but-archived: run 5 showed held-out success oscillates between
+    # checkpoints (0.90 at step 610k vs 0.87 at the final 749k), so keep the
+    # whole run's checkpoints for post-hoc best-on-held-out selection.
+    interval: 50000
+    keep_last: 40

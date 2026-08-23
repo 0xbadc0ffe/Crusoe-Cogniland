@@ -1,0 +1,232 @@
+env:
+  task: bridgetunnel_forkwall
+  steps: 3000000.0
+  env_num: 24
+  eval_episode_num: 10
+  action_repeat: 1
+  train_ratio: 64
+  time_limit: 800
+  size:
+  - 64
+  - 64
+  seed: ${seed}
+  device: ${device}
+  encoder:
+    mlp_keys: vector
+    cnn_keys: $^
+  decoder:
+    mlp_keys: vector
+    cnn_keys: $^
+model:
+  act_entropy: 0.01
+  kl_free: 1.0
+  imag_horizon: 15
+  horizon: 333
+  lamb: 0.95
+  compile: true
+  log_grads: false
+  device: ${device}
+  rep_loss: dreamer
+  lr: 4.0e-05
+  agc: 0.3
+  pmin: 0.001
+  eps: 1.0e-20
+  beta1: 0.9
+  beta2: 0.999
+  warmup: 1000
+  slow_target_update: 1
+  slow_target_fraction: 0.02
+  loss_scales:
+    barlow: 0.05
+    infonce: 1.0
+    recon: 1.0
+    rew: 1.0
+    con: 1.0
+    dyn: 1.0
+    rep: 0.1
+    policy: 1.0
+    value: 1.0
+    repval: 0.3
+    swav: 1.0
+    temp: 1.0
+    norm: 1.0
+  r2dreamer:
+    lambd: 0.0005
+  dreamer_pro:
+    warm_up: 1
+    num_prototypes: 2500
+    proto_dim: 32
+    temperature: 0.1
+    sinkhorn_eps: 0.05
+    sinkhorn_iters: 3
+    ema_update_every: 1
+    ema_update_fraction: 0.05
+    freeze_prototypes_iters: 10000
+    aug:
+      max_delta: 3.0
+      same_across_time: true
+      bilinear: true
+  rssm:
+    stoch: 32
+    deter: ${model.deter}
+    hidden: ${model.hidden}
+    discrete: ${model.discrete}
+    img_layers: 2
+    obs_layers: 1
+    dyn_layers: 1
+    blocks: 8
+    act: ${model.act}
+    norm: ${model.norm}
+    unimix_ratio: 0.01
+    initial: learned
+    device: ${device}
+  encoder:
+    mlp_keys: ${env.encoder.mlp_keys}
+    cnn_keys: ${env.encoder.cnn_keys}
+    mlp:
+      shape: null
+      layers: 3
+      units: ${model.units}
+      act: ${model.act}
+      norm: ${model.norm}
+      device: ${device}
+      outscale: null
+      symlog_inputs: true
+      name: mlp_encoder
+    cnn:
+      act: ${model.act}
+      norm: ${model.norm}
+      kernel_size: 5
+      minres: 4
+      depth: ${model.depth}
+      mults:
+      - 2
+      - 3
+      - 4
+      - 4
+  decoder:
+    mlp_keys: ${env.decoder.mlp_keys}
+    cnn_keys: ${env.decoder.cnn_keys}
+    mlp_dist:
+      name: symlog_mse
+    cnn_dist:
+      name: mse
+    mlp:
+      shape: null
+      layers: 3
+      units: ${model.units}
+      act: ${model.act}
+      norm: ${model.norm}
+      dist:
+        name: identity
+      device: ${device}
+      outscale: 1.0
+      symlog_inputs: false
+      name: mlp_decoder
+    cnn:
+      depth: ${model.depth}
+      units: ${model.units}
+      bspace: 8
+      mults:
+      - 2
+      - 3
+      - 4
+      - 4
+      act: ${model.act}
+      norm: ${model.norm}
+      kernel_size: 5
+      minres: 4
+      outscale: 1.0
+  reward:
+    shape:
+    - 255
+    layers: 1
+    units: ${model.units}
+    act: ${model.act}
+    norm: ${model.norm}
+    dist:
+      name: symexp_twohot
+      bin_num: 255
+    outscale: 0.0
+    device: ${device}
+    symlog_inputs: false
+    name: reward
+  cont:
+    shape:
+    - 1
+    layers: 1
+    units: ${model.units}
+    act: ${model.act}
+    norm: ${model.norm}
+    dist:
+      name: binary
+    outscale: 1.0
+    device: ${device}
+    symlog_inputs: false
+    name: cont
+  actor:
+    shape: null
+    layers: 3
+    units: ${model.units}
+    act: ${model.act}
+    norm: ${model.norm}
+    device: ${device}
+    dist:
+      cont:
+        name: bounded_normal
+        min_std: 0.1
+        max_std: 1.0
+      disc:
+        name: onehot
+        unimix_ratio: 0.01
+      multi_disc:
+        name: multi_onehot
+        unimix_ratio: 0.01
+    outscale: 0.01
+    symlog_inputs: false
+    name: actor
+  critic:
+    shape:
+    - 255
+    layers: 3
+    units: ${model.units}
+    act: ${model.act}
+    norm: ${model.norm}
+    device: ${device}
+    dist:
+      name: symexp_twohot
+      bin_num: 255
+    outscale: 0.0
+    symlog_inputs: false
+    name: value
+  deter: 3072
+  hidden: 384
+  discrete: 24
+  depth: 24
+  units: 384
+  act: SiLU
+  norm: true
+logdir: external/r2dreamer/runs/fw_sw_25M_bl64_h15
+seed: 0
+deterministic_run: false
+device: cuda:0
+batch_size: 16
+batch_length: 64
+buffer:
+  batch_size: ${batch_size}
+  batch_length: ${batch_length}
+  max_size: 500000.0
+  device: ${device}
+  storage_device: ${device}
+trainer:
+  steps: ${env.steps}
+  pretrain: 0
+  eval_every: 10000.0
+  eval_episode_num: ${env.eval_episode_num}
+  batch_size: ${batch_size}
+  batch_length: ${batch_length}
+  train_ratio: ${env.train_ratio}
+  video_pred_log: false
+  params_hist_log: false
+  update_log_every: 5000.0
+  action_repeat: ${env.action_repeat}

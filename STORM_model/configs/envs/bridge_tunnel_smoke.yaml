@@ -1,0 +1,28 @@
+# Tiny-frame smoke-test variant of bridge_tunnel.yaml (fast end-to-end wiring check).
+experiment_name: bridge_tunnel_forkwall_smoke
+results_path: results/
+offline: True
+
+entity: cogniland
+project: bridge_tunnel_storm
+
+seed: 0
+
+envs: [
+  "BridgeTunnel/forkwall",
+]
+
+env:
+  num_parallel_envs: 8
+  num_parallel_envs_eval: 8
+  maps_path: data/bridge_tunnel/forkwall6k/train.pkl
+
+trainer:
+  num_train_frames: 4000
+  num_eval_frames: 800
+  eval_interval_frames: 2000
+  log_interval_episodes: 2
+
+metrics_tracker:
+  aggregate_metric_names: ["avg_reward", "avg_success"]
+  moving_avg_window_size: 10

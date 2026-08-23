@@ -2,3 +2,6 @@ released_models/bridge_tunnel/dreamerv3/checkpoints/** filter=lfs diff=lfs merge
 released_models/bridge_tunnel_commit/dreamerv3_commit/checkpoints/** filter=lfs diff=lfs merge=lfs -text
 released_models/memory_env/**/checkpoints/** filter=lfs diff=lfs merge=lfs -text
 released_models/memory_env/**/*.npz filter=lfs diff=lfs merge=lfs -text
+final_models/storm/checkpoint*/** filter=lfs diff=lfs merge=lfs -text
+final_models/dreamer/*.pt filter=lfs diff=lfs merge=lfs -text
+final_models/ppo/*.pt filter=lfs diff=lfs merge=lfs -text

@@ -1,0 +1,41 @@
+# bridge_tunnel fork_wall (BT-rules, commitment disabled) -- vector obs, no CNN.
+# Mirrors configs/bridge_tunnel/btc_ppo_forkwall_nocommit.yaml (released PPO:
+# 100% success) and external/r2dreamer/configs/env/bridge_tunnel_forkwall.yaml
+# (Dreamer baseline). Fixed map pool: data/bridge_tunnel/forkwall6k/{train,test}.pkl
+# so PPO / Dreamer / STORM all compare on identical data.
+experiment_name: bridge_tunnel_forkwall
+results_path: results/
+offline: True
+
+entity: cogniland
+project: bridge_tunnel_storm
+
+seed: 2
+# EnvironmentManager reads these top-level (not under `env:`) to pick a fresh
+# per-call seed for eval envs; without this it reuses `seed` every eval call,
+# so BridgeTunnelVectorized's per-env MapPool RNGs reset identically each time
+# and the periodic eval silently repeats the same ~16 maps.
+eval_env_seeds: [50000, 999999]
+
+envs: [
+  "BridgeTunnel/forkwall",
+]
+
+env:
+  num_parallel_envs: 32
+  num_parallel_envs_eval: 32
+  # NOTE: periodic in-training eval below also draws from the train pool (the
+  # generic Trainer has no train/test env_name split); the held-out
+  # forkwall6k/test.pkl split is used for the final reported success rate via
+  # a standalone eval script instead.
+  maps_path: data/bridge_tunnel/forkwall6k/train.pkl
+
+trainer:
+  num_train_frames: 6000000
+  num_eval_frames: 25600
+  eval_interval_frames: 200000
+  log_interval_episodes: 10
+
+metrics_tracker:
+  aggregate_metric_names: ["avg_reward", "avg_success"]
+  moving_avg_window_size: 50

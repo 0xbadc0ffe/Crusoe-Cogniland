@@ -1,0 +1,21 @@
+# bridge_tunnel fork_wall (BT-rules, commit disabled) -- vector obs, no CNN.
+# Mirrors configs/bridge_tunnel/btc_ppo_forkwall_nocommit.yaml (released PPO:
+# 100% success). Never trained with any Dreamer variant before.
+task: 'bridgetunnel_forkwall'
+steps: 6e6
+env_num: 24
+eval_episode_num: 10
+action_repeat: 1
+train_ratio: 64
+time_limit: 800
+size: [64, 64]     # unused (mlp-only obs); kept for shared-code compat
+
+seed: ${seed}
+device: ${device}
+
+encoder:
+  mlp_keys: 'vector'
+  cnn_keys: '$^'
+decoder:
+  mlp_keys: 'vector'
+  cnn_keys: '$^'

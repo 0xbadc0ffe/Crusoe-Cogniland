@@ -1,0 +1,182 @@
+experiment_name: bridge_tunnel_forkwall
+results_path: results/
+offline: true
+entity: cogniland
+project: bridge_tunnel_storm
+seed: 0
+eval_env_seeds:
+- 50000
+- 999999
+envs:
+- BridgeTunnel/forkwall
+env:
+  num_parallel_envs: 32
+  num_parallel_envs_eval: 32
+  maps_path: data/bridge_tunnel/forkwall6k/train.pkl
+trainer:
+  num_train_frames: 6000000
+  num_eval_frames: 25600
+  eval_interval_frames: 200000
+  log_interval_episodes: 10
+metrics_tracker:
+  aggregate_metric_names:
+  - avg_reward
+  - avg_success
+  moving_avg_window_size: 50
+agent:
+  name: storm2
+  type: storm2
+  batch_size: 16
+  batch_length: 128
+  train_ratio: 256
+  pretrain: 1024
+  replay:
+    capacity: 1000000.0
+    online: true
+  model:
+    loss_scales:
+      rec: 1.0
+      rew: 1.0
+      con: 1.0
+      dyn: 0.5
+      rep: 0.1
+      policy: 1.0
+      value: 1.0
+    opt:
+      lr: 0.0001
+      agc: 0.3
+      eps: 1.0e-20
+      beta1: 0.9
+      beta2: 0.999
+      momentum: true
+      wd: 0.0
+      schedule: const
+      warmup: 1000
+      anneal: 0
+    dyn:
+      typ: transformer
+      stoch_dim: 32
+      classes: 32
+      unimix: 0.01
+      free_nats: 1.0
+      transformer:
+        feat_dim: 512
+        num_layers: 2
+        num_heads: 8
+        max_length: 128
+        dropout: 0.1
+    enc:
+      typ: simple
+      simple:
+        units: 512
+        norm: rms
+        act: silu
+        depth: 64
+        mults:
+        - 2
+        - 3
+        - 4
+        - 4
+        layers: 3
+        kernel: 5
+        symlog: false
+        strided: false
+        winit: trunc_normal_in
+    dec:
+      typ: simple
+      simple:
+        units: 512
+        norm: rms
+        act: silu
+        outscale: 1.0
+        depth: 64
+        mults:
+        - 2
+        - 3
+        - 4
+        - 4
+        layers: 3
+        kernel: 5
+        symlog: false
+        bspace: 8
+        strided: false
+        winit: trunc_normal_in
+        discrete_keys: []
+    rewhead:
+      layers: 1
+      units: 512
+      act: silu
+      norm: rms
+      dist: symexp_twohot
+      outscale: 0.0
+      winit: trunc_normal_in
+      bins: 255
+    conthead:
+      layers: 1
+      units: 512
+      act: silu
+      norm: rms
+      dist: binary
+      outscale: 1.0
+      winit: trunc_normal_in
+    actor:
+      layers: 2
+      units: 512
+      act: silu
+      norm: rms
+      dist: categorical
+      minstd: 0.1
+      maxstd: 1.0
+      outscale: 0.01
+      unimix: 0.01
+      winit: trunc_normal_in
+    critic:
+      layers: 2
+      units: 512
+      act: silu
+      norm: rms
+      dist: symexp_twohot
+      outscale: 0.0
+      winit: trunc_normal_in
+      bins: 255
+    imag_context: 16
+    imag_length: 16
+    imag_window_stride: 16
+    env_context: 128
+    horizon: 100
+    contdisc: true
+    imag_loss:
+      slowtar: false
+      lam: 0.95
+      actent: 0.01
+      slowreg: 1.0
+    slowvalue:
+      rate: 0.02
+      every: 1
+    retnorm:
+      impl: perc
+      rate: 0.01
+      limit: 1.0
+      perclo: 5.0
+      perchi: 95.0
+      debias: false
+    valnorm:
+      impl: none
+      rate: 0.01
+      limit: 1.0e-08
+    advnorm:
+      impl: none
+      rate: 0.01
+      limit: 1.0e-08
+    grad_checkpoint: true
+  visualization:
+    enabled: false
+  checkpoint:
+    enabled: true
+    interval: 50000
+    keep_last: 40
+name: bridge_tunnel_storm2_run6_stormH_ent001_bl128
+pid: 2214504
+device_id: 0
+results_dir: results/t2hl7qnp
+max_actions: 6

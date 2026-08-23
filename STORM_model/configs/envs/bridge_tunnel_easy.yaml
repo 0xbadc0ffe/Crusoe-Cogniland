@@ -1,0 +1,31 @@
+# Diagnostic-only: small single-target bt-rules task (no fork_wall, no
+# MapPool -- fresh procedural map every episode). Used to check whether STORM
+# can learn basic navigation on bridge_tunnel at all, isolating that question
+# from whether the fork_wall belief/door-selection task specifically is hard.
+experiment_name: bridge_tunnel_easy
+results_path: results/
+offline: True
+
+entity: cogniland
+project: bridge_tunnel_storm
+
+seed: 0
+eval_env_seeds: [50000, 999999]
+
+envs: [
+  "BridgeTunnel/easy",
+]
+
+env:
+  num_parallel_envs: 16
+  num_parallel_envs_eval: 16
+
+trainer:
+  num_train_frames: 800000
+  num_eval_frames: 12800
+  eval_interval_frames: 100000
+  log_interval_episodes: 10
+
+metrics_tracker:
+  aggregate_metric_names: ["avg_reward", "avg_success"]
+  moving_avg_window_size: 50

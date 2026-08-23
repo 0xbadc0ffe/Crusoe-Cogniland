@@ -1,0 +1,203 @@
+# STORM on bridge_tunnel fork_wall. Copy of configs/agents/storm.yaml with the
+# Navix-specific `env:` override removed and visualization disabled (the shared
+# video_predict() util hardcodes an 'image' obs modality; bridge_tunnel is
+# vector-only, no CNN).
+agent:
+  name: storm
+  type: storm
+
+  # Training
+  batch_size: 16
+  batch_length: 64
+  # 8 (paper default) is 8x lower than the working purejaxwm DreamerV3
+  # baseline's train_ratio=64 for this same task (scripts/bridge_tunnel/
+  # dreamerv3_bridge_tunnel.py) -- runs 1-2 (train_ratio=8) never learned
+  # past a random-ish policy; raised to match.
+  train_ratio: 64
+  pretrain: 1000
+
+  # Replay buffer
+  replay:
+    capacity: 1e6
+    online: true
+
+  # Model configuration
+  model:
+    # Loss scales
+    loss_scales:
+      rec: 1.0      # Reconstruction loss
+      rew: 1.0      # Reward prediction loss
+      con: 1.0      # Continuation (discount) prediction loss
+      dyn: 0.5      # Dynamics loss (KL with stop_grad on posterior)
+      rep: 0.1      # Representation loss (KL with stop_grad on prior)
+      policy: 1.0   # Policy (actor) loss
+      value: 1.0    # Value (critic) loss
+      repval: 0.3   # Representation value loss
+
+    # Single optimizer for all components (LaProp)
+    opt:
+      lr: 1e-4           # Learning rate (slightly higher than DreamerV3)
+      agc: 0.3           # Adaptive gradient clipping
+      eps: 1e-20         # Epsilon for numerical stability
+      beta1: 0.9         # Adam momentum
+      beta2: 0.999       # Adam RMS decay
+      momentum: true     # Use momentum
+      wd: 0.0            # Weight decay
+      schedule: const    # Learning rate schedule
+      warmup: 1000       # Warmup steps
+      anneal: 0          # Annealing steps
+
+    # Transformer dynamics configuration (replaces RSSM)
+    dyn:
+      typ: transformer
+      stoch_dim: 32        # Number of categorical distributions
+      classes: 32          # Classes per categorical (stochastic state size)
+      unimix: 0.01         # Uniform mixture for regularization
+      free_nats: 1.0       # Free nats for KL divergence
+      transformer:
+        feat_dim: 512      # Transformer hidden dimension
+        num_layers: 2      # Number of transformer layers
+        num_heads: 8       # Number of attention heads
+        max_length: 64     # Maximum sequence length for positional encoding
+        dropout: 0.1       # Dropout rate
+
+    # Encoder configuration -- MLP only (bridge_tunnel obs is one flat
+    # {vector: (V*V*NUM_TILES + n_scalars,)} key; no image modality).
+    enc:
+      typ: simple
+      simple:
+        units: 512
+        norm: rms
+        act: silu
+        depth: 64        # unused (no image keys)
+        mults: [2, 3, 4, 4]
+        layers: 3
+        kernel: 5
+        symlog: false    # obs is already one-hot + normalized scalars
+        strided: false
+        winit: trunc_normal_in
+
+    # Decoder configuration (mirrors encoder; no image modality either)
+    dec:
+      typ: simple
+      simple:
+        units: 512
+        norm: rms
+        act: silu
+        outscale: 1.0
+        depth: 64        # unused (no image keys)
+        mults: [2, 3, 4, 4]
+        layers: 3
+        kernel: 5
+        symlog: false
+        bspace: 8
+        strided: false
+        winit: trunc_normal_in
+        discrete_keys: []   # no categorical-observation keys (unlike Navix's 'direction')
+
+    # Reward predictor
+    rewhead:
+      layers: 1
+      units: 512
+      act: silu
+      norm: rms
+      dist: symexp_twohot
+      outscale: 0.0
+      winit: trunc_normal_in
+      bins: 255
+
+    # Continuation (discount) predictor
+    conthead:
+      layers: 1
+      units: 512
+      act: silu
+      norm: rms
+      dist: binary
+      outscale: 1.0
+      winit: trunc_normal_in
+
+    # Actor (policy) network
+    actor:
+      layers: 3
+      units: 512
+      act: silu
+      norm: rms
+      dist: categorical
+      minstd: 0.1
+      maxstd: 1.0
+      outscale: 0.01
+      unimix: 0.01
+      winit: trunc_normal_in
+
+    # Critic (value function)
+    critic:
+      layers: 3
+      units: 512
+      act: silu
+      norm: rms
+      dist: symexp_twohot
+      outscale: 0.0
+      winit: trunc_normal_in
+      bins: 255
+
+    # Imagination
+    imag_last: 0
+    imag_length: 15
+    horizon: 333
+    contdisc: true
+
+    imag_loss:
+      slowtar: false
+      lam: 0.95
+      # 3e-4 (paper default) got 0 successes in 6M frames -- cold-start
+      # exploration failure. Raised to match the working purejaxwm DreamerV3
+      # fix for this same task family (REGISTRY.md: entropy_coef 3e-4->0.01).
+      actent: 0.01
+      slowreg: 1.0
+
+    repl_loss:
+      slowtar: false
+      lam: 0.95
+      slowreg: 1.0
+
+    slowvalue:
+      rate: 0.02
+      every: 1
+
+    retnorm:
+      impl: perc
+      rate: 0.01
+      limit: 1.0
+      perclo: 5.0
+      perchi: 95.0
+      debias: false
+
+    valnorm:
+      impl: none
+      rate: 0.01
+      limit: 1e-8
+
+    advnorm:
+      impl: none
+      rate: 0.01
+      limit: 1e-8
+
+    reward_grad: true
+    repval_loss: true
+    repval_grad: true
+    ac_grads: false
+    report: true
+    report_gradnorms: false
+    grad_checkpoint: true
+
+  # video_predict() hardcodes an 'image' obs modality -- bridge_tunnel is
+  # vector-only, so world-model visualization must stay off.
+  visualization:
+    enabled: false
+    interval: 500
+    num_episodes: 5
+
+  checkpoint:
+    enabled: true
+    interval: 2000
+    keep_last: 5

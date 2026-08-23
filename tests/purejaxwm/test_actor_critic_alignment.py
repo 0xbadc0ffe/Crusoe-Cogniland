@@ -14,7 +14,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from purejaxwm.dreamerv3.behavior import imag_loss, RetNorm  # noqa: E402
 from purejaxwm.dreamerv3.world_model import State  # noqa: E402

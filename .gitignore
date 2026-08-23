@@ -253,3 +253,9 @@ paper/*.out
 # Released MemoryEnv PPO checkpoints — keep despite the generic ignore (git-LFS)
 !released_models/memory_env/*/checkpoints/
 !released_models/memory_env/*/checkpoints/**
+
+# pipelines' local state
+STORM_model/.venv/
+STORM_model/outputs/
+external/r2dreamer/runs/
+scripts/bridge_tunnel/slurm/logs/
