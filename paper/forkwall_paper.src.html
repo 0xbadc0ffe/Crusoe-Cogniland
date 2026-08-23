@@ -820,22 +820,23 @@ on its own dynamics, decoding every imagined latent back into a 21&times;21 obse
   <img src="{{FIG:fig_dream_dreamer.png}}" alt="DreamerV3 imagined observations compared against what really happened">
   <figcaption><span class="tag">Figure 12</span><b>DreamerV3 dreaming.</b> Top: what really
   happened. Bottom: what the RSSM predicted, given no observations after the context frame.
-  Tile-level agreement decays from <b>90%</b> at +1 to <b>44%</b> at +18. The lake, the rock
-  outcrop and the tree line stay in place; the coastline is what smears first.</figcaption>
+  Tile-level agreement decays from <b>90 %</b> at +1 to <b>59 %</b> at +16 (44 % by +18, the end
+  of the roll-out). The lake, the rock outcrop and the tree line stay in place; the coastline is
+  what smears first.</figcaption>
 </figure>
 
 <figure class="plate-wide">
   <img src="{{FIG:fig_dream_storm.png}}" alt="STORM imagined observations compared against what really happened">
   <figcaption><span class="tag">Figure 13</span><b>STORM dreaming</b>, same protocol and the same
-  map. Agreement decays from <b>82%</b> to <b>63%</b> over 18 steps &mdash; a slower decay
-  than Dreamer's on this episode, consistent with attention re-reading the whole context at every
-  imagined step rather than threading it through a single recurrent state.</figcaption>
+  map. Agreement decays from <b>82 %</b> at +1 to <b>66 %</b> at +16 (63 % by +18) &mdash; a
+  slower decay than Dreamer's on this episode, consistent with attention re-reading the whole
+  context at every imagined step rather than threading it through a single recurrent state.</figcaption>
 </figure>
 
 <p>The detail worth pausing on: this is a <em>lakes</em> map, and in both dreams the agent
-imagines itself <b>laying a bridge across the water</b> &mdash; the brown plank line that appears
-in the bottom rows around +10 is the model predicting the consequence of its own build actions,
-and it matches what the real episode does. These models have learned not just the terrain but the
+imagines itself <b>laying a bridge across the water</b> &mdash; the brown plank line that grows
+out from the agent from about +7 onward is the model predicting the consequence of its own build
+actions, and it appears in the same place and at the same time as in the real episode. These models have learned not just the terrain but the
 effect of their tools on it, which is precisely the part that has to be right for
 imagination-based policy learning to work at all.</p>
 
