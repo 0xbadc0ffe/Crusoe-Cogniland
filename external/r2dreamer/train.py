@@ -48,14 +48,21 @@ def main(config):
         act_space,
     ).to(config.device)
 
+    # Weight warm-start: if this logdir already has a checkpoint (e.g. a prior
+    # run that hit the SLURM wall, or a deliberate continuation with a larger
+    # `env.steps`), resume from its weights instead of a fresh random init.
+    # This does NOT restore the replay buffer or the step counter -- schedules
+    # (eval_every, lr, etc.) restart from step 0 against the NEW `env.steps`
+    # budget, but the agent does not relearn from scratch.
+    ckpt_path = logdir / "latest.pt"
+    if ckpt_path.exists():
+        print(f"Resuming agent weights from {ckpt_path}")
+        ckpt = torch.load(ckpt_path, map_location=config.device, weights_only=False)
+        agent.load_state_dict(ckpt["agent_state_dict"])
+
     policy_trainer = OnlineTrainer(config.trainer, replay_buffer, logger, logdir, train_envs, eval_envs)
     policy_trainer.begin(agent)
-
-    items_to_save = {
-        "agent_state_dict": agent.state_dict(),
-        "optims_state_dict": tools.recursively_collect_optim_state_dict(agent),
-    }
-    torch.save(items_to_save, logdir / "latest.pt")
+    policy_trainer.save_checkpoint(agent)
 
 
 if __name__ == "__main__":

@@ -42,6 +42,7 @@ def build_geometry(*, pre_cue_steps=1, pre_branch_corridor_len=5, branch_len=4,
     x_pre_end = x_pre_start + pre_len - 1
     x_branch_start = x_pre_end + 1
     x_branch_end = x_branch_start + branch_len - 1
+    x_mark = x_branch_start + branch_len // 2   # marker-door column (mid-branch)
     x_post_start = x_branch_end + 1
     x_post_end = x_post_start + post_len - 1
     x_doorcol = x_post_end + 1
@@ -109,6 +110,7 @@ def build_geometry(*, pre_cue_steps=1, pre_branch_corridor_len=5, branch_len=4,
         x_room_start=int(x_room_start), x_room_end=int(x_room_end),
         x_pre_start=int(x_pre_start), x_pre_end=int(x_pre_end),
         x_branch_start=int(x_branch_start), x_branch_end=int(x_branch_end),
+        x_mark=int(x_mark),
         x_post_start=int(x_post_start), x_post_end=int(x_post_end),
         x_doorcol=int(x_doorcol),
     )

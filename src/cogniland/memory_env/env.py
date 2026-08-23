@@ -64,7 +64,7 @@ import gymnasium as gym
 from minigrid.core.constants import COLORS
 from minigrid.core.grid import Grid
 from minigrid.core.mission import MissionSpace
-from minigrid.core.world_object import Key, Wall, WorldObj
+from minigrid.core.world_object import Door, Key, Wall, WorldObj
 from minigrid.minigrid_env import MiniGridEnv
 from minigrid.utils.rendering import fill_coords, point_in_circle, point_in_rect
 from minigrid.wrappers import RGBImgPartialObsWrapper
@@ -72,10 +72,16 @@ from minigrid.wrappers import RGBImgPartialObsWrapper
 # --------------------------------------------------------------------------- #
 # Actions — native MiniGrid action space (Discrete(7)).
 #   0 = turn left, 1 = turn right, 2 = forward, 3 = pickup, 4 = drop,
-#   5 = toggle, 6 = done.  We navigate purely with {left, right, forward}.
+#   5 = toggle, 6 = done.  Navigation uses {left, right, forward}; toggle (5)
+#   opens the mid-branch marker doors (the JAX env's A_OPEN = 3 maps to it).
 # --------------------------------------------------------------------------- #
 A_LEFT_TURN, A_RIGHT_TURN, A_FORWARD = 0, 1, 2
+A_TOGGLE = 5
 NUM_ACTIONS = 7
+
+# Marker-door colours: neutral (non-task) MiniGrid colours, purple = top branch
+# corridor, yellow = bottom. Branch-identity evidence with no colour semantics.
+MARKER_TOP_COLOR, MARKER_BOT_COLOR = "purple", "yellow"
 
 # Direction ids in MiniGrid: 0=east(+x) 1=south(+y) 2=west(-x) 3=north(-y).
 DIR_EAST, DIR_SOUTH, DIR_WEST, DIR_NORTH = 0, 1, 2, 3
@@ -261,6 +267,7 @@ class _MemoryMiniGridEnv(MiniGridEnv):
         self._x_pre_end = self._x_pre_start + self._pre_len - 1
         self._x_branch_start = self._x_pre_end + 1
         self._x_branch_end = self._x_branch_start + self._branch_len - 1
+        self._x_mark = self._x_branch_start + self._branch_len // 2  # marker-door col
         self._x_post_start = self._x_branch_end + 1
         self._x_post_end = self._x_post_start + self._post_len - 1
         self._x_doorcol = self._x_post_end + 1     # vertical door split column
@@ -308,6 +315,7 @@ class _MemoryMiniGridEnv(MiniGridEnv):
         self.door_pos_blue = "bottom"
         self.taken_branch: str | None = None
         self.selected_door: str | None = None
+        self.opened_marker: str | None = None
         self._pending_branch_intent: str | None = None
 
     # -- cue sampling (uses the gym np_random seeded by reset) ------------- #
@@ -426,6 +434,14 @@ class _MemoryMiniGridEnv(MiniGridEnv):
             carve(x, ru)
             carve(x, rl)
             # the rows between ru and rl stay Wall -> the thick central wall
+        # Mid-branch marker doors: each branch corridor is blocked half-way by a
+        # neutral-coloured door (purple top / yellow bottom). Both always open
+        # with `toggle` and stay open; the branch reward is paid at that event.
+        self._mark_top_pos = (self._x_mark, ru)
+        self._mark_bot_pos = (self._x_mark, rl)
+        self.grid.set(*self._mark_top_pos, _MarkerDoor(MARKER_TOP_COLOR))
+        self.grid.set(*self._mark_bot_pos, _MarkerDoor(MARKER_BOT_COLOR))
+        self.opened_marker: str | None = None   # first-opened marker: "top"/"bottom"
         # Junction: carve a vertical slot at the last pre-branch column so the
         # agent can turn from the middle corridor up to ru or down to rl. The
         # slot spans ru..rl, so it works for any central-wall thickness.
@@ -583,9 +599,8 @@ class _MemoryMiniGridEnv(MiniGridEnv):
                 self.agent_dir = DIR_EAST
                 self.taken_branch = forced_to
                 self.step_count += 1
+                # (no branch reward here: it is paid at the marker-door OPEN event)
                 reward = float(c.step_penalty)
-                if forced_to == self.correct_branch:
-                    reward += c.branch_bonus
                 phi = self._progress_phi()
                 reward += c.shaping_coef * (phi - self._prev_phi)
                 self._prev_phi = phi
@@ -603,26 +618,42 @@ class _MemoryMiniGridEnv(MiniGridEnv):
                 ):
                     action = 6  # 'done' == no-op
 
+        # --- marker-door open detection: a `toggle` on a closed marker door
+        # directly ahead will open it this step (it then stays open forever).
+        opening: str | None = None
+        if action == A_TOGGLE:
+            fx, fy = int(self.front_pos[0]), int(self.front_pos[1])
+            fcell = self.grid.get(fx, fy)
+            if isinstance(fcell, _MarkerDoor) and not fcell.is_open:
+                opening = "up" if (fx, fy) == self._mark_top_pos else "down"
+
         obs, reward, terminated, truncated, info = super().step(action)
         reward = float(c.step_penalty)
+
+        # --- branch reward: paid at the marker-door OPEN event, but ONLY for
+        # the FIRST marker opened this episode (the commitment) — otherwise the
+        # reconnect corridor allows farming the correct-marker bonus after
+        # passing through the wrong branch.
+        if opening is not None:
+            if self.opened_marker is None:
+                self.opened_marker = "top" if opening == "up" else "bottom"
+                if opening == self.correct_branch:
+                    reward += c.branch_bonus
+                else:
+                    reward += c.wrong_branch_penalty
 
         ax = int(self.agent_pos[0])
         ay = int(self.agent_pos[1])
 
-        # --- record which branch row the agent entered. ------------------ #
+        # --- record which branch row the agent entered (analysis only). --- #
         if self.taken_branch is None and self._x_branch_start <= ax <= self._x_branch_end:
             if ay == self._row_up:
                 self.taken_branch = "up"
             elif ay == self._row_lo:
                 self.taken_branch = "down"
             if self.taken_branch is not None:
-                if self.taken_branch == self.correct_branch:
-                    reward += c.branch_bonus
-                else:
-                    # shape-wrong branch: penalise and (optionally) end the episode
-                    reward += c.wrong_branch_penalty
-                    if c.wrong_branch_terminates:
-                        terminated = True
+                if self.taken_branch != self.correct_branch and c.wrong_branch_terminates:
+                    terminated = True
 
         # --- door termination: stepping onto a coloured door cell ends it.
         cell = (ax, ay)
@@ -647,6 +678,23 @@ class _MemoryMiniGridEnv(MiniGridEnv):
     def reset(self, *, seed=None, options=None):
         self._episode_done = False
         return super().reset(seed=seed, options=options)
+
+
+class _MarkerDoor(Door):
+    """A neutral mid-corridor door that blocks the branch until opened.
+
+    Opened with the MiniGrid ``toggle`` action (5) when directly ahead; once
+    open it STAYS open (a second toggle does not re-close it — mirrors the JAX
+    env's monotone ``mark_*_open`` flags). Its colour (purple / yellow) is a
+    branch-identity symbol with no task-colour semantics.
+    """
+
+    def __init__(self, color: str):
+        super().__init__(color, is_open=False, is_locked=False)
+
+    def toggle(self, env, pos):
+        self.is_open = True
+        return True
 
 
 class _ColoredDoor(WorldObj):
@@ -818,6 +866,7 @@ class MemoryEnv:
             "branch_correct": branch_correct,
             "target_door_color": mg.target_door_color,
             "selected_door_color": selected,
+            "opened_marker": mg.opened_marker,
             "door_position_green": mg.door_pos_green,
             "door_position_blue": mg.door_pos_blue,
             "success": bool(success),
@@ -908,13 +957,22 @@ def oracle_action(info: dict[str, Any], env: "MemoryEnv | None" = None) -> int:
     else:                               # at the door column: go to the door row
         desired, allow_east = door_row, False
 
+    def _closed_marker_ahead() -> bool:
+        fx, fy = int((mg.agent_pos + mg.dir_vec)[0]), int((mg.agent_pos + mg.dir_vec)[1])
+        cell = mg.grid.get(fx, fy)
+        return isinstance(cell, _MarkerDoor) and not cell.is_open
+
     if ay != desired:
         tgt = DIR_NORTH if desired < ay else DIR_SOUTH
         a = face(tgt)
-        return a if a is not None else A_FORWARD
+        if a is not None:
+            return a
+        return A_TOGGLE if _closed_marker_ahead() else A_FORWARD
     if allow_east:
         a = face(DIR_EAST)
-        return a if a is not None else A_FORWARD
+        if a is not None:
+            return a
+        return A_TOGGLE if _closed_marker_ahead() else A_FORWARD
     return A_FORWARD
 
 

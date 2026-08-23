@@ -17,6 +17,10 @@ fork_wall: true
 no_commit: true
 passage_half: 1
 wall_margin: 1
+mem_gap: 16
+shaping_gamma: 1.0
+wrong_door_penalty: 3.0
+balanced_neutral: true
 gae_lambda: 0.95
 gamma: 0.99
 goal_half: 0

@@ -49,8 +49,10 @@ TILE_RGB = np.array([
     [0.60, 0.90, 0.60],  # 6 DOOR_GREEN
     [0.60, 0.78, 0.92],  # 7 DOOR_BLUE
     [0.82, 0.82, 0.82],  # 8 OOB
+    [0.56, 0.27, 0.68],  # 9 MARK_A (purple marker door, top corridor)
+    [0.85, 0.70, 0.13],  # 10 MARK_B (yellow marker door, bottom corridor)
 ])
-CUE_MARK = {2: "^", 3: "^", 4: "v", 5: "v"}
+CUE_MARK = {2: "^", 3: "^", 4: "v", 5: "v", 9: "A", 10: "B"}
 
 
 def _params(cfg, cue, door_random_prob):

@@ -90,6 +90,11 @@ def make_env(config, id):
 
         env = Memory(task, size=config.size, seed=config.seed + id)
         env = wrappers.OneHotAction(env)
+    elif suite == "bridgetunnel":
+        from envs.bridge_tunnel import BridgeTunnel
+
+        env = BridgeTunnel(task, seed=config.seed + id)
+        env = wrappers.OneHotAction(env)
     elif suite == "crafter":
         import envs.crafter as crafter
 

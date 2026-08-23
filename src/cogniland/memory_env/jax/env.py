@@ -14,7 +14,8 @@ from .state import EnvParams, EnvState
 
 
 class MemoryJaxEnv(environment.Environment[EnvState, EnvParams]):
-    """Pure-JAX MemoryEnv. Symbolic egocentric obs; Discrete(3) actions."""
+    """Pure-JAX MemoryEnv. Symbolic egocentric obs; Discrete(4) actions
+    (turn-L / turn-R / forward / open-marker-door)."""
 
     def __init__(self, default_params: EnvParams | None = None):
         super().__init__()

@@ -90,6 +90,7 @@ class Memory(gym.Env):
         img_shape = self._size + (3,)
         return gym.spaces.Dict({
             "image": gym.spaces.Box(0, 255, img_shape, np.uint8),
+            "log_success": gym.spaces.Box(-np.inf, np.inf, (1,), np.float32),
             "is_first": gym.spaces.Box(0, 1, (), dtype=bool),
             "is_last": gym.spaces.Box(0, 1, (), dtype=bool),
             "is_terminal": gym.spaces.Box(0, 1, (), dtype=bool),
@@ -99,10 +100,11 @@ class Memory(gym.Env):
     def action_space(self):
         return gym.spaces.Discrete(self._env.action_space.n)
 
-    def _obs(self, image, is_first, is_last, is_terminal):
+    def _obs(self, image, success, is_first, is_last, is_terminal):
         image = _resize_nn(np.asarray(image, dtype=np.uint8), self._size)
         return {
             "image": image,
+            "log_success": float(success),
             "is_first": is_first,
             "is_last": is_last,
             "is_terminal": is_terminal,
@@ -118,7 +120,8 @@ class Memory(gym.Env):
     def step(self, action):
         image, reward, terminated, truncated, info = self._env.step(int(action))
         done = bool(terminated or truncated)
-        obs = self._obs(image, is_first=False, is_last=done, is_terminal=bool(terminated))
+        obs = self._obs(image, info.get("success", False),
+                        is_first=False, is_last=done, is_terminal=bool(terminated))
         return obs, float(reward), done, self._clean_info(info)
 
     def reset(self):
@@ -126,4 +129,4 @@ class Memory(gym.Env):
         # advance the seed so successive episodes in this worker differ while
         # staying deterministic and well below the held-out test range.
         self._seed += 1
-        return self._obs(image, is_first=True, is_last=False, is_terminal=False)
+        return self._obs(image, False, is_first=True, is_last=False, is_terminal=False)

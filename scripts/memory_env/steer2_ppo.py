@@ -121,6 +121,83 @@ def belief_plane(pr):
     return ax1, ax2, axlab, land, lims
 
 
+def belief_field(cfg, net, params, pr, gridn=27, pad=2.0):
+    """Decision heatmap + GRU dynamics vector field over the belief plane.
+
+    The plane is the 2-D affine slice through the mean trained-cue hidden state
+    spanned by an ORTHONORMALIZED (e1, e2) version of the belief_plane axes.
+    For every grid point h(u,v) = base + u*e1 + v*e2:
+      * heat  = the cue-identity probe's P(cue) blended into the cue colors
+                (the probe's decision regions in the plane);
+      * arrow = the in-plane displacement after ONE GRU step under a neutral
+                mid-corridor observation (the memory-maintenance input) —
+                the attractor flow of the recurrent dynamics.
+    """
+    from matplotlib.colors import to_rgb
+
+    trained, clf = pr["trained"], pr["clf"]
+    ax1, ax2, axlab, _land, _lims = belief_plane(pr)
+    e1 = ax1 / np.linalg.norm(ax1)
+    e2 = ax2 - (ax2 @ e1) * e1
+    e2 = e2 / np.linalg.norm(e2)
+    if abs(float(ax2 @ e1)) > 0.05:
+        axlab = (axlab[0], axlab[1] + " (orthogonalized)")
+    Xt = pr["Xt"]
+    hbar = Xt.mean(0)
+    p1, p2 = Xt @ e1, Xt @ e2
+    lims = ((p1.min() - pad, p1.max() + pad), (p2.min() - pad, p2.max() + pad))
+    us = np.linspace(*lims[0], gridn)
+    vs = np.linspace(*lims[1], gridn)
+    UU, VV = np.meshgrid(us, vs)
+    base = hbar - (hbar @ e1) * e1 - (hbar @ e2) * e2
+    H = base[None] + UU.reshape(-1, 1) * e1[None] + VV.reshape(-1, 1) * e2[None]
+
+    P = cue_probs(H, clf)                                        # (N, K)
+    cols = np.array([to_rgb(CUE_COL[c]) for c in trained])
+    bg = P @ cols                                                # blend per point
+    bg = 1.0 - 0.42 * (1.0 - bg)                                 # lighten toward white
+    bg_img = bg.reshape(gridn, gridn, 3)
+
+    # neutral maintenance observation: mid pre-branch corridor, facing east
+    from cogniland.memory_env.jax import make_state
+    cue0 = trained[0]
+    p_env = D._env_params(cfg, CUE_NAMES[cue0])
+    st = make_state(p_env, cue0, True, p_env.x_room_start, p_env.row_room_up)
+    st = st.replace(agent_x=jnp.int32(p_env.x_pre_end - 2),
+                    agent_y=jnp.int32(p_env.my), agent_dir=jnp.int32(C.DIR_EAST))
+    obs = D._flat({k: v[None] for k, v in build_obs(st, p_env).items()})[0]
+    N = H.shape[0]
+    obs_b = jnp.broadcast_to(jnp.asarray(obs), (1, N, obs.shape[-1]))
+    nh, _, _ = net.apply(params, jnp.asarray(H, jnp.float32),
+                         (obs_b, jnp.zeros((1, N), bool)))
+    dh = np.asarray(nh) - H
+    qu, qv = (dh @ e1).reshape(gridn, gridn), (dh @ e2).reshape(gridn, gridn)
+
+    land = {c: (float(pr["mu"][c] @ e1), float(pr["mu"][c] @ e2)) for c in trained}
+    return dict(bg=bg_img, extent=(us[0], us[-1], vs[0], vs[-1]), UU=UU, VV=VV,
+                qu=qu, qv=qv, e1=e1, e2=e2, axlab=axlab, land=land, lims=lims)
+
+
+def draw_belief_field(axp, field, trained, quiver_step=2):
+    """Render heatmap + normalized flow arrows + class-mean landmarks."""
+    axp.imshow(field["bg"], origin="lower", extent=field["extent"],
+               aspect="auto", zorder=1, interpolation="bilinear")
+    s = quiver_step
+    UU, VV = field["UU"][::s, ::s], field["VV"][::s, ::s]
+    qu, qv = field["qu"][::s, ::s], field["qv"][::s, ::s]
+    mag = np.hypot(qu, qv) + 1e-9
+    axp.quiver(UU, VV, qu / mag, qv / mag, np.log10(mag),
+               cmap="Greys", alpha=0.65, width=0.004, scale=28,
+               headwidth=3.5, zorder=2)
+    for c in trained:
+        axp.scatter(*field["land"][c], s=230, c=CUE_COL[c], alpha=0.95,
+                    edgecolor="k", lw=0.8, zorder=5)
+        axp.annotate(CUE_NAMES[c], field["land"][c], fontsize=7, ha="center",
+                     va="center", color="white", fontweight="bold", zorder=6)
+    axp.set_xlim(field["lims"][0])
+    axp.set_ylim(field["lims"][1])
+
+
 def cue_probs(h, clf):
     """Multinomial P(cue = c) for hidden states h (N, D) -> (N, K)."""
     z = h @ clf.coef_.T + clf.intercept_
@@ -134,15 +211,26 @@ def cue_probs(h, clf):
 # ─────────────────────────────────────────────────────────────────────────────
 # interventions
 # ─────────────────────────────────────────────────────────────────────────────
-def forced_action(state, target_row):
-    """Scripted controller: drive to target branch row, then east into the branch."""
+_DX = jnp.asarray([v[0] for v in C.DIR_VEC], dtype=jnp.int32)
+_DY = jnp.asarray([v[1] for v in C.DIR_VEC], dtype=jnp.int32)
+
+
+def forced_action(state, target_row, p):
+    """Scripted controller: drive to target branch row, then east into the branch;
+    opens the mid-corridor marker door when it blocks the way."""
     y, dref = state.agent_y, state.agent_dir
     desired = jnp.where(y != target_row,
                         jnp.where(target_row < y, C.DIR_NORTH, C.DIR_SOUTH),
                         C.DIR_EAST)
     diff = (desired - dref) % 4
-    return jnp.where(diff == 0, C.A_FORWARD,
-                     jnp.where(diff == 3, C.A_LEFT, C.A_RIGHT)).astype(jnp.int32)
+    a = jnp.where(diff == 0, C.A_FORWARD,
+                  jnp.where(diff == 3, C.A_LEFT, C.A_RIGHT)).astype(jnp.int32)
+    # facing a closed marker door -> open it instead of walking into it
+    tx = state.agent_x + _DX[dref]
+    ty = state.agent_y + _DY[dref]
+    closed_ahead = (((tx == p.x_mark) & (ty == p.row_up) & ~state.mark_top_open)
+                    | ((tx == p.x_mark) & (ty == p.row_lo) & ~state.mark_bot_open))
+    return jnp.where((diff == 0) & closed_ahead, C.A_OPEN, a).astype(jnp.int32)
 
 
 def actor_head_fns(params):
@@ -185,20 +273,48 @@ def push_to_action(h, tgt, wmask, logits_fn, eta=0.25, iters=15):
     return jax.lax.fori_loop(0, iters, body, h)
 
 
-def rollout(cfg, net, params, cue, key, n, mode, *, wrong_row=None,
-            u=None, ptgt=None, T=None):
-    """Batched greedy rollout with intervention `mode`:
+def push_linear(h, tgt, wmask, logits_fn, alpha):
+    """Open-loop LINEAR steering: a single normalized-gradient step of fixed
+    size alpha along the actor-margin direction toward tgt (no stopping
+    criterion — the dose is alpha, however the actor responds)."""
+    def margin(hp):
+        lg = logits_fn(hp)
+        l_t = jnp.take_along_axis(lg, tgt[:, None], 1)[:, 0]
+        others = lg - 1e9 * jax.nn.one_hot(tgt, C.NUM_ACTIONS)
+        return l_t - jax.nn.logsumexp(others, axis=-1)
 
-    none:      plain greedy rollout.
+    g = jax.grad(lambda hh: (margin(hh) * wmask).sum())(h)
+    g = g / (jnp.linalg.norm(g, axis=-1, keepdims=True) + 1e-8)
+    return h + (wmask.astype(jnp.float32) * alpha)[:, None] * g
+
+
+def rollout(cfg, net, params, cue, key, n, mode, *, wrong_row=None,
+            u=None, ptgt=None, T=None, sample=False, alpha=None,
+            u_field=None, ptgt_field=None):
+    """Batched rollout with intervention `mode`:
+
+    none:      plain policy rollout.
     force:     action replacement at the fork (older variant, kept for reference).
+    force_thru: action replacement from the fork THROUGH the wrong-branch marker
+               door (the scripted navigator opens it); released one step past
+               the marker column. The hidden state is never touched — any belief
+               change is driven by the experienced observation sequence.
     force_act: ACTIVATION-space behavior steering — at the fork, the hidden is
                minimally perturbed (push_to_action) until the actor itself picks
                the controller's wrong-direction action; perturbed hidden is
                carried forward. Stops at branch entry.
+    force_lin: LINEAR behavior steering — at the fork, h += alpha * unit-grad of
+               the actor margin toward the wrong-direction action (open-loop
+               dose alpha, one step per fork timestep); carried forward.
     swap:      TRANSIENT memory swap — clamp h along `u` to `ptgt` only while
                (x > x_room_end) AND the direction decision is still open
                (taken_branch == NONE); released at branch entry.
-    Returns end-of-episode success/branch/door/hidden + full traces.
+    swap_field: same window, but the clamp axis/target are POSITION-LOCAL:
+               u_field (W, D) and ptgt_field (W,) indexed by agent_x
+               (field-aware steering; axes from per-column class means).
+    sample=True draws actions from the softmax policy instead of argmax.
+    Returns end-of-episode success/branch/door/finished/hidden + full traces
+    (finished = episode ended at a door, i.e. terminated with no timeout).
     """
     p = D._env_params(cfg, cue)
     T = T or cfg["max_steps"]
@@ -209,28 +325,50 @@ def rollout(cfg, net, params, cue, key, n, mode, *, wrong_row=None,
     hidden = P.ScannedRNN.initialize_carry(n, cfg["gru_hidden"])
     uj = jnp.zeros((cfg["gru_hidden"],), jnp.float32) if u is None else jnp.asarray(u, jnp.float32)
     pt = jnp.float32(0.0 if ptgt is None else ptgt)
+    UF = None if u_field is None else jnp.asarray(u_field, jnp.float32)
+    PF = None if ptgt_field is None else jnp.asarray(ptgt_field, jnp.float32)
     wrow = jnp.int32(0 if wrong_row is None else wrong_row)
+    alf = jnp.float32(0.0 if alpha is None else alpha)
     logits_fn = actor_head_fns(params)
 
     def body(carry, _):
-        state, obs, hidden, last_done, dacc, succ, tb, sd, hend, key = carry
+        state, obs, hidden, last_done, dacc, succ, tb, sd, fin, hend, key = carry
         alive = ~dacc
         undecided = state.taken_branch == C.BRANCH_NONE
         if mode == "swap":
             win = (state.agent_x > p.x_room_end) & undecided & alive
             hidden = hidden + (win.astype(jnp.float32) * (pt - hidden @ uj))[:, None] * uj[None, :]
-        elif mode in ("force", "force_act"):
+        elif mode == "swap_field":
+            win = (state.agent_x > p.x_room_end) & undecided & alive
+            ux = UF[state.agent_x]                                   # (n, D)
+            px = PF[state.agent_x]                                   # (n,)
+            hidden = hidden + (win.astype(jnp.float32)
+                               * (px - (hidden * ux).sum(-1)))[:, None] * ux
+        elif mode in ("force", "force_act", "force_lin"):
             win = (state.agent_x == x_fork) & undecided & alive
+        elif mode == "force_thru":
+            past_mark = (state.taken_branch != C.BRANCH_NONE) & (state.agent_x > p.x_mark)
+            win = (state.agent_x >= x_fork) & ~past_mark & alive
         else:
             win = jnp.zeros_like(alive)
         new_hidden, logits, _ = net.apply(params, hidden, (obs[None], last_done[None]))
         if mode == "force_act":
-            tgt = forced_action(state, wrow)
+            tgt = forced_action(state, wrow, p)
             new_hidden = push_to_action(new_hidden, tgt, win, logits_fn)
-            a = jnp.argmax(logits_fn(new_hidden), axis=-1).astype(jnp.int32)
+            pol_logits = logits_fn(new_hidden)
+        elif mode == "force_lin":
+            tgt = forced_action(state, wrow, p)
+            new_hidden = push_linear(new_hidden, tgt, win, logits_fn, alf)
+            pol_logits = logits_fn(new_hidden)
         else:
-            a_pol = jnp.argmax(logits[0], axis=-1).astype(jnp.int32)
-            a = jnp.where(win, forced_action(state, wrow), a_pol) if mode == "force" else a_pol
+            pol_logits = logits[0]
+        if sample:
+            key, ka = jax.random.split(key)
+            a = jax.random.categorical(ka, pol_logits, axis=-1).astype(jnp.int32)
+        else:
+            a = jnp.argmax(pol_logits, axis=-1).astype(jnp.int32)
+        if mode in ("force", "force_thru"):
+            a = jnp.where(win, forced_action(state, wrow, p), a)
         key, sk = jax.random.split(key)
         sks = jax.random.split(sk, n)
         ns, r, dn, info = jax.vmap(lambda k, s, ai: jstep(k, s, ai, p))(sks, state, a)
@@ -239,30 +377,33 @@ def rollout(cfg, net, params, cue, key, n, mode, *, wrong_row=None,
         succ = jnp.where(newly, info["reached_target"].astype(jnp.float32), succ)
         tb = jnp.where(newly, ns.taken_branch, tb)
         sd = jnp.where(newly, ns.selected_door, sd)
+        fin = jnp.where(newly, info["is_terminal"], fin)   # door reached, not timeout
         hend = jnp.where(newly[:, None], new_hidden, hend)
         mm = jax.vmap(lambda s: build_obs(s, p)["minimap"])(state)
         out = (state.agent_x, state.agent_y, state.agent_dir, mm, new_hidden,
-               win, dn, info["reached_target"])
-        return (ns, nobs, new_hidden, dn, dacc | dn, succ, tb, sd, hend, key), out
+               win, dn, info["reached_target"],
+               state.mark_top_open, state.mark_bot_open)
+        return (ns, nobs, new_hidden, dn, dacc | dn, succ, tb, sd, fin, hend, key), out
 
     carry = (state, obs, hidden, jnp.zeros((n,), bool), jnp.zeros((n,), bool),
              jnp.zeros((n,)), jnp.zeros((n,), jnp.int32), jnp.zeros((n,), jnp.int32),
-             hidden, key)
+             jnp.zeros((n,), bool), hidden, key)
     carry, outs = jax.lax.scan(body, carry, None, length=T)
-    (_, _, _, _, dacc, succ, tb, sd, hend, _) = carry
-    return (p, tuple(np.asarray(v) for v in (succ, tb, sd, np.asarray(dacc), hend)),
+    (_, _, _, _, dacc, succ, tb, sd, fin, hend, _) = carry
+    return (p, tuple(np.asarray(v) for v in (succ, tb, sd, np.asarray(dacc), fin, hend)),
             tuple(np.asarray(v) for v in outs))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # quantitative tables
 # ─────────────────────────────────────────────────────────────────────────────
-def quant(run_dir, n=96):
+def quant(run_dir, n=96, sample=False):
     cfg, net, params, pr = load_all(run_dir)
     trained = pr["trained"]
     clf = pr["clf"]
     key = jax.random.PRNGKey(0)
-    print(f"== {cfg['cue']} model — trained cues: {[CUE_NAMES[c] for c in trained]}")
+    print(f"== {cfg['cue']} model — trained cues: {[CUE_NAMES[c] for c in trained]}  "
+          f"policy={'softmax (sampled)' if sample else 'greedy'}")
 
     # ---- Experiment A: behavior steering via ACTIVATIONS ----
     print("\n-- A. BEHAVIOR-steer via ACTIVATIONS: minimal hidden perturbation until the")
@@ -273,11 +414,12 @@ def quant(run_dir, n=96):
         cue = CUE_NAMES[c]
         key, k = jax.random.split(key)
         # baseline first (for reference P(true cue))
-        p_env, (succ0, tb0, sd0, dacc0, h0), _ = rollout(cfg, net, params, cue, k, n, "none")
+        p_env, (succ0, tb0, sd0, dacc0, fin0, h0), _ = rollout(cfg, net, params, cue, k, n, "none",
+                                                               sample=sample)
         wrong_row = int(p_env.row_lo) if not IS_DOWN[c] else int(p_env.row_up)
         key, k = jax.random.split(key)
-        p_env, (succ, tb, sd, dacc, hend), _ = rollout(cfg, net, params, cue, k, n, "force_act",
-                                                       wrong_row=wrong_row)
+        p_env, (succ, tb, sd, dacc, fin, hend), _ = rollout(cfg, net, params, cue, k, n, "force_act",
+                                                            wrong_row=wrong_row, sample=sample)
         wrongb = C.BRANCH_DOWN if not IS_DOWN[c] else C.BRANCH_UP
         target_sd = C.SEL_BLUE if IS_BLUE[c] else C.SEL_GREEN
         ptrue = cue_probs(hend, clf)[:, list(trained).index(c)].mean()
@@ -299,8 +441,8 @@ def quant(run_dir, n=96):
             u = u / np.linalg.norm(u)
             ptgt = float(pr["mu"][t] @ u)
             key, k = jax.random.split(key)
-            p_env, (succ, tb, sd, dacc, hend), _ = rollout(
-                cfg, net, params, CUE_NAMES[s], k, n, "swap", u=u, ptgt=ptgt)
+            p_env, (succ, tb, sd, dacc, fin, hend), _ = rollout(
+                cfg, net, params, CUE_NAMES[s], k, n, "swap", u=u, ptgt=ptgt, sample=sample)
             b_t = C.BRANCH_DOWN if IS_DOWN[t] else C.BRANCH_UP
             d_t = C.SEL_BLUE if IS_BLUE[t] else C.SEL_GREEN
             bok = (tb == b_t); dok = (sd == d_t)
@@ -310,86 +452,202 @@ def quant(run_dir, n=96):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# linear-steering dose-response (alpha sweep)
+# ─────────────────────────────────────────────────────────────────────────────
+def alpha_sweep(run_dirs, out, n=96, alphas=None, sample=True, T=None):
+    """Dose-response of LINEAR behavior steering (mode force_lin): at the fork,
+    h += alpha * unit-grad(actor margin toward the wrong-direction action).
+
+    Per model / trained cue / alpha: probe P(true cue), read out at the LAST
+    step BEFORE any door tile enters the agent's egocentric view (belief before
+    the door-decision corridor), the wrong-branch rate (dashed), and the
+    fraction of episodes that end at a door with no timeout (dotted). Rollouts
+    run to the env's real horizon (max_steps) so timeout is the env's own.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+
+    plt.rcParams.update({"font.family": "sans-serif", "font.size": 9,
+                         "axes.spines.top": False, "axes.spines.right": False,
+                         "figure.facecolor": "white"})
+    alphas = [0.0, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0] if alphas is None else list(alphas)
+    fig_, axs = plt.subplots(1, len(run_dirs), figsize=(4.8 * len(run_dirs), 3.9),
+                             squeeze=False, sharey=True)
+    key = jax.random.PRNGKey(5)
+    for j, rdir in enumerate(run_dirs):
+        cfg, net, params, pr = load_all(rdir)
+        trained, clf = pr["trained"], pr["clf"]
+        ax = axs[0, j]
+        for c in trained:
+            cue = CUE_NAMES[c]
+            p_env = D._env_params(cfg, cue)
+            wrong_row = int(p_env.row_lo) if not IS_DOWN[c] else int(p_env.row_up)
+            wrongb = C.BRANCH_DOWN if not IS_DOWN[c] else C.BRANCH_UP
+            p_true, flip, fins = [], [], []
+            for alpha in alphas:
+                key, k = jax.random.split(key)
+                _, (succ, tb, sd, dacc, fin, hend), outs = rollout(
+                    cfg, net, params, cue, k, n, "force_lin", wrong_row=wrong_row,
+                    alpha=float(alpha), sample=sample, T=T)
+                xs, ys, ds, mms, hs, win, dnn, reach, mtop, mbot = outs
+                # last step before any door tile is visible in the minimap
+                door_vis = np.isin(mms, [C.DOOR_GREEN, C.DOOR_BLUE]).any(axis=(2, 3))
+                done_before = np.zeros(door_vis.shape, bool)
+                done_before[1:] = np.cumsum(dnn[:-1], axis=0) > 0
+                tgrid = np.arange(door_vis.shape[0])[:, None]
+                firstvis = np.where(door_vis & ~done_before, tgrid, door_vis.shape[0]).min(0)
+                lastalive = np.where(~done_before, tgrid, -1).max(0)
+                idx = np.where(firstvis < door_vis.shape[0], firstvis - 1, lastalive)
+                idx = np.clip(idx, 0, door_vis.shape[0] - 1)
+                h_pre = hs[idx, np.arange(hs.shape[1])]
+                p_true.append(float(cue_probs(h_pre, clf)[:, list(trained).index(c)].mean()))
+                flip.append(float((tb == wrongb).mean()))
+                fins.append(float(fin.mean()))
+                print(f"[alpha] {cfg['cue']:4s} {cue:11s} alpha={alpha:<5g} "
+                      f"P(true cue)pre-door={p_true[-1]:.3f}  wrong-branch={flip[-1]:.2f}  "
+                      f"finished={fins[-1]:.2f}", flush=True)
+            ax.plot(alphas, p_true, "-o", color=CUE_COL[c], lw=2, ms=4,
+                    label=f"P({cue})")
+            ax.plot(alphas, flip, "--s", color=CUE_COL[c], lw=1.1, ms=3, alpha=0.5)
+            ax.plot(alphas, fins, ":^", color=CUE_COL[c], lw=1.1, ms=3, alpha=0.7)
+        ax.axhline(1 / len(trained), ls=":", c="#999", lw=0.8)
+        ax.set_xscale("symlog", linthresh=0.5)
+        ax.set_xticks(alphas)
+        ax.get_xaxis().set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:g}"))
+        ax.set_xticks([], minor=True)
+        ax.set_ylim(-0.05, 1.05)
+        ax.set_xlabel("alpha (linear hidden push at fork)")
+        if j == 0:
+            ax.set_ylabel("P(true cue) — before doors visible")
+        handles, labels = ax.get_legend_handles_labels()
+        handles.append(Line2D([], [], color="#555", ls="--", marker="s", ms=3))
+        labels.append("wrong-branch rate")
+        handles.append(Line2D([], [], color="#555", ls=":", marker="^", ms=3))
+        labels.append("finished (no timeout)")
+        ax.legend(handles, labels, fontsize=7, framealpha=0.9)
+        ax.set_title(f"{cfg['cue']} model", fontsize=11, fontweight="bold")
+    fig_.suptitle("Linear behavior steering, dose-response (softmax policy): "
+                  "belief probe read out before the doors are visible",
+                  fontsize=12, fontweight="bold")
+    fig_.tight_layout(rect=[0, 0, 1, 0.93])
+    outp = pathlib.Path(out)
+    outp.parent.mkdir(parents=True, exist_ok=True)
+    fig_.savefig(outp, dpi=150)
+    print(f"[alpha] wrote {outp}", flush=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # videos
 # ─────────────────────────────────────────────────────────────────────────────
-def video(run_dir, out, fps=4, hold=10):
+def evidence_spec(cue_set):
+    """Curated episode list per model for the marker-door env results:
+    baseline / action-forced through the WRONG corridor (evidence-driven belief
+    revision) / transient memory swaps that causally drive corridor+marker+door."""
+    gu, bu, gd, bd = 0, 1, 2, 3
+    if cue_set == "2cue":
+        return [
+            dict(mode="none", cue="green_up", label="BASELINE"),
+            dict(mode="force_thru", cue="green_up",
+                 label="FORCED down the WRONG corridor -> belief collapses to blue_down"),
+            dict(mode="force_thru", cue="blue_down",
+                 label="FORCED up the WRONG corridor -> behaves as green_up"),
+        ]
+    if cue_set == "3cue":
+        return [
+            dict(mode="none", cue="green_up", label="BASELINE"),
+            dict(mode="force_thru", cue="green_up",
+                 label="FORCED down the WRONG corridor -> belief collapses to blue_down"),
+            dict(mode="force_thru", cue="green_down",
+                 label="FORCED up the WRONG corridor -> direction-only update, door still green"),
+            dict(mode="swap", src=gu, tgt=gd,
+                 label="MEMORY swapped green_up -> green_down (transient, pre-decision)"),
+        ]
+    return [
+        dict(mode="none", cue="green_up", label="BASELINE"),
+        dict(mode="force_thru", cue="green_up",
+             label="FORCED down the WRONG corridor -> direction revised, color kept, door green"),
+        dict(mode="swap", src=gu, tgt=bd,
+             label="MEMORY swapped green_up -> blue_down (transient) -> full causal chain"),
+        dict(mode="swap", src=gu, tgt=bu,
+             label="MEMORY swapped green_up -> blue_up (color only) -> same corridor, blue door"),
+    ]
+
+
+def video(run_dir, out, fps=4, hold=10, curated=False):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import imageio.v2 as imageio
-    from viz_rollout_dream import TILE_RGB, CUE_MARK  # noqa
+    from tile_textures import render_grid, agent_triangle, OPEN_TEX_ID
 
     plt.rcParams.update({"font.family": "sans-serif", "font.size": 10,
                          "axes.spines.top": False, "axes.spines.right": False,
                          "figure.facecolor": "white"})
     PURPLE = "#8e44ad"
-    DIR_ARROW = {0: (0.35, 0), 1: (0, 0.35), 2: (-0.35, 0), 3: (0, -0.35)}
 
     cfg, net, params, pr = load_all(run_dir)
     trained = pr["trained"]
     clf = pr["clf"]
-    ax1, ax2, axlab, land, lims = belief_plane(pr)
+    field = belief_field(cfg, net, params, pr)      # heatmap + flow, computed once
+    e1, e2, axlab = field["e1"], field["e2"], field["axlab"]
 
     def panels(fig, ep, t):
-        (p, s0, xs, ys, ds, mms, hs, win, dn, reach, label) = ep
+        (p, s0, xs, ys, ds, mms, hs, win, dn, reach, mtop, mbot, label) = ep
         gs = fig.add_gridspec(2, 3, width_ratios=[1.55, 1.55, 1.0],
                               height_ratios=[1, 1.12], hspace=0.3, wspace=0.25)
-        # maze
+        # maze (privileged high-level view: marker doors drawn closed/open)
         axm = fig.add_subplot(gs[0, :2])
-        terr = np.asarray(p.base_terrain); full = terr.copy()
+        full = np.asarray(p.base_terrain).copy()
         ct = int(np.asarray(s0.cue_type))
         full[int(s0.cue_y), int(s0.cue_x)] = C.CUE_TILE[ct]
         dgt = bool(np.asarray(s0.door_green_top))
         full[p.row_door_top, p.x_doorcol] = C.DOOR_GREEN if dgt else C.DOOR_BLUE
         full[p.row_door_bot, p.x_doorcol] = C.DOOR_BLUE if dgt else C.DOOR_GREEN
-        axm.imshow(TILE_RGB[full], interpolation="nearest")
-        for r in range(full.shape[0]):
-            for cc in range(full.shape[1]):
-                if full[r, cc] in CUE_MARK:
-                    axm.text(cc, r, CUE_MARK[full[r, cc]], ha="center", va="center",
-                             color="white", fontsize=8, fontweight="bold")
-        axm.plot(xs[:t + 1], ys[:t + 1], "-", color="#f28e2b", lw=2, alpha=0.7, zorder=4)
+        full[p.row_up, p.x_mark] = OPEN_TEX_ID[C.MARK_A] if mtop[t] else C.MARK_A
+        full[p.row_lo, p.x_mark] = OPEN_TEX_ID[C.MARK_B] if mbot[t] else C.MARK_B
+        Hh, Ww = full.shape
+        axm.imshow(render_grid(full), extent=(-0.5, Ww - 0.5, Hh - 0.5, -0.5),
+                   interpolation="nearest")
+        axm.plot(xs[:t + 1], ys[:t + 1], "-", color="#f28e2b", lw=2, alpha=0.75, zorder=4)
         wm = win[:t + 1].astype(bool)
         if wm.any():
             axm.scatter(xs[:t + 1][wm], ys[:t + 1][wm], s=42, c=PURPLE, marker="D",
                         edgecolor="k", lw=0.3, zorder=5)
-        axm.scatter([xs[t]], [ys[t]], s=110, c=(PURPLE if win[t] else "#d1495b"),
-                    edgecolor="k", zorder=6)
-        dx, dy = DIR_ARROW[int(ds[t])]
-        axm.annotate("", xy=(xs[t] + 2 * dx, ys[t] + 2 * dy), xytext=(xs[t], ys[t]),
-                     arrowprops=dict(arrowstyle="-|>", color="k", lw=1.6), zorder=7)
+        if win[t]:
+            axm.scatter([xs[t]], [ys[t]], s=300, facecolor="none",
+                        edgecolor=PURPLE, lw=2.2, zorder=5)
+        axm.add_patch(plt.Polygon(agent_triangle(xs[t], ys[t], int(ds[t])),
+                                  color="#dd2222", ec="k", lw=0.6, zorder=6))
         axm.set_xticks([]); axm.set_yticks([])
         axm.set_title("high-level view", fontsize=11, fontweight="bold")
-        # agent view
+        # agent view (exactly the observation: an opened marker shows floor)
         axv = fig.add_subplot(gs[0, 2])
         mm = mms[t]
-        axv.imshow(TILE_RGB[mm], interpolation="nearest")
-        for r in range(mm.shape[0]):
-            for cc in range(mm.shape[1]):
-                if mm[r, cc] in CUE_MARK:
-                    axv.text(cc, r, CUE_MARK[mm[r, cc]], ha="center", va="center",
-                             color="white", fontsize=13, fontweight="bold")
-        mcell = mm.shape[0] // 2
-        axv.scatter([mcell], [mcell], s=200, c="#d1495b", edgecolor="k", zorder=6)
+        Vv = mm.shape[0]
+        axv.imshow(render_grid(mm), extent=(-0.5, Vv - 0.5, Vv - 0.5, -0.5),
+                   interpolation="nearest")
+        mcell = Vv // 2
+        axv.add_patch(plt.Polygon(agent_triangle(mcell, mcell, int(ds[t])),
+                                  color="#dd2222", ec="k", lw=0.6, zorder=6))
         axv.set_xticks([]); axv.set_yticks([])
         axv.set_title("agent view", fontsize=11, fontweight="bold")
-        # belief plane (trained cues only)
+        # belief plane: probe decision regions + GRU flow field + trajectory
         axp = fig.add_subplot(gs[1, 2])
-        for c in trained:
-            axp.scatter(*land[c], s=280, c=CUE_COL[c], alpha=0.3, edgecolor=CUE_COL[c], zorder=2)
-            axp.annotate(CUE_NAMES[c], land[c], fontsize=7.5, ha="center", color="#333", zorder=3)
-        ps1, ps2 = hs[:t + 1] @ ax1, hs[:t + 1] @ ax2
-        axp.plot(ps1, ps2, "-", color="#d1495b", lw=1.5, alpha=0.6, zorder=4)
+        draw_belief_field(axp, field, trained)
+        ps1, ps2 = hs[:t + 1] @ e1, hs[:t + 1] @ e2
+        axp.plot(ps1, ps2, "-", color="#d1495b", lw=1.6, alpha=0.75, zorder=4)
         if wm.any():
-            axp.scatter(ps1[wm], ps2[wm], s=28, c=PURPLE, marker="D", zorder=5, alpha=0.8)
-        axp.scatter([ps1[-1]], [ps2[-1]], s=100, c=(PURPLE if win[t] else "#d1495b"),
-                    edgecolor="k", zorder=6)
+            axp.scatter(ps1[wm], ps2[wm], s=28, c=PURPLE, marker="D", zorder=5, alpha=0.85)
+        axp.scatter([ps1[-1]], [ps2[-1]], s=110, c=(PURPLE if win[t] else "#d1495b"),
+                    edgecolor="k", zorder=7)
         if win[t]:
-            axp.text(0.03, 0.95, "INTERVENTION", transform=axp.transAxes, fontsize=8.5,
+            axp.text(0.03, 0.97, "INTERVENTION", transform=axp.transAxes, fontsize=8.5,
                      color=PURPLE, fontweight="bold", va="top")
-        axp.set_xlim(lims[0]); axp.set_ylim(lims[1])
         axp.set_xlabel(axlab[0], fontsize=8.5); axp.set_ylabel(axlab[1], fontsize=8.5)
-        axp.set_title("belief plane (trained cues)", fontsize=11, fontweight="bold")
+        axp.set_title("belief plane: probe regions + GRU flow", fontsize=10.5,
+                      fontweight="bold")
         # cue-probability timeline
         axt = fig.add_subplot(gs[1, :2])
         probs = cue_probs(hs, clf)          # (T, K)
@@ -412,33 +670,43 @@ def video(run_dir, out, fps=4, hold=10):
     writer = imageio.get_writer(out, fps=fps, codec="libx264", quality=8, macro_block_size=1)
     key = jax.random.PRNGKey(21)
 
-    src = trained[0]
-    tgt = trained[-1]
-    cue = CUE_NAMES[src]
-    episodes = []
-    # baseline (same key for all three episodes -> identical env episode)
+    if curated:
+        spec = evidence_spec(cfg["cue"])
+    else:   # legacy default: baseline / activation-steered / diagonal swap
+        src, tgt = trained[0], trained[-1]
+        spec = [
+            dict(mode="none", cue=CUE_NAMES[src], label="BASELINE"),
+            dict(mode="force_act", cue=CUE_NAMES[src],
+                 label="BEHAVIOR steered via activations (wrong direction)"),
+            dict(mode="swap", src=src, tgt=tgt,
+                 label=f"MEMORY swapped -> {CUE_NAMES[tgt]} (transient, pre-decision)"),
+        ]
+
+    # same key for every episode -> identical env layout across conditions
     key, k = jax.random.split(key)
-    p, _, tr = rollout(cfg, net, params, cue, k, 1, "none", T=110)
-    episodes.append((p, k, tr, f"{cfg['cue']} · {cue} · BASELINE"))
-    # behavior steered via activations (wrong direction)
-    wrong_row = int(p.row_lo) if not IS_DOWN[src] else int(p.row_up)
-    p2, _, tr2 = rollout(cfg, net, params, cue, k, 1, "force_act", wrong_row=wrong_row, T=110)
-    episodes.append((p2, k, tr2,
-                     f"{cfg['cue']} · {cue} · BEHAVIOR steered via activations (wrong direction)"))
-    # transient belief swap
-    u = pr["mu"][tgt] - pr["mu"][src]; u = u / np.linalg.norm(u)
-    ptv = float(pr["mu"][tgt] @ u)
-    p3, _, tr3 = rollout(cfg, net, params, cue, k, 1, "swap", u=u, ptgt=ptv, T=110)
-    episodes.append((p3, k, tr3,
-                     f"{cfg['cue']} · {cue} · MEMORY swapped -> {CUE_NAMES[tgt]} (transient, pre-decision)"))
+    episodes = []
+    for e in spec:
+        cue = e.get("cue") or CUE_NAMES[e["src"]]
+        kw = dict(T=110)
+        if e["mode"] in ("force", "force_act", "force_thru", "force_lin"):
+            ci = CUE_NAMES.index(cue)
+            pe = D._env_params(cfg, cue)
+            kw["wrong_row"] = int(pe.row_lo) if not IS_DOWN[ci] else int(pe.row_up)
+        elif e["mode"] == "swap":
+            u = pr["mu"][e["tgt"]] - pr["mu"][e["src"]]
+            u = u / np.linalg.norm(u)
+            kw.update(u=u, ptgt=float(pr["mu"][e["tgt"]] @ u))
+        p, _, tr = rollout(cfg, net, params, cue, k, 1, e["mode"], **kw)
+        episodes.append((p, k, tr, f"{cfg['cue']} · {cue} · {e['label']}"))
 
     for pE, kE, trE, label in episodes:
-        xs, ys, ds, mms, hs, win, dn, reach = (np.asarray(v)[:, 0] for v in trE)
+        xs, ys, ds, mms, hs, win, dn, reach, mtop, mbot = (np.asarray(v)[:, 0] for v in trE)
         s0 = jax.vmap(lambda kk: jreset(kk, pE))(jax.random.split(kE, 1))
         s0 = jax.tree_util.tree_map(lambda x: x[0], s0)
         nd = int(np.argmax(dn)) + 1 if dn.any() else len(xs)
         ok = bool(reach[nd - 1]) if dn.any() else False
-        ep = (pE, s0, xs, ys, ds, mms, hs, win.astype(bool), dn, reach, label)
+        ep = (pE, s0, xs, ys, ds, mms, hs, win.astype(bool), dn, reach,
+              mtop.astype(bool), mbot.astype(bool), label)
         for t in list(range(nd)) + [nd - 1] * hold:
             fig = plt.figure(figsize=(13.2, 7.2))
             panels(fig, ep, t)
@@ -464,7 +732,7 @@ def fig(run_dir, out):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from viz_rollout_dream import TILE_RGB, CUE_MARK  # noqa
+    from tile_textures import render_grid, agent_triangle, OPEN_TEX_ID
 
     plt.rcParams.update({"font.family": "sans-serif", "font.size": 9,
                          "axes.spines.top": False, "axes.spines.right": False,
@@ -472,7 +740,8 @@ def fig(run_dir, out):
     PURPLE = "#8e44ad"
     cfg, net, params, pr = load_all(run_dir)
     trained = pr["trained"]; clf = pr["clf"]
-    ax1, ax2, axlab, land, _lims = belief_plane(pr)
+    field = belief_field(cfg, net, params, pr)
+    e1, e2, axlab = field["e1"], field["e2"], field["axlab"]
 
     src, tgt = trained[0], trained[-1]
     cue = CUE_NAMES[src]
@@ -499,23 +768,25 @@ def fig(run_dir, out):
     full0[p.row_door_top, p.x_doorcol] = C.DOOR_GREEN if dgt else C.DOOR_BLUE
     full0[p.row_door_bot, p.x_doorcol] = C.DOOR_BLUE if dgt else C.DOOR_GREEN
     for col, (tr, label, lc) in enumerate(eps):
-        xs, ys, ds, mms, hs, win, dn, reach = [np.asarray(v)[:, 0] for v in tr]
+        xs, ys, ds, mms, hs, win, dn, reach, mtop, mbot = [np.asarray(v)[:, 0] for v in tr]
         nd = int(np.argmax(dn)) + 1 if dn.any() else len(xs)
         ok = bool(reach[nd - 1]) if dn.any() else False
-        # row 0: trajectory
+        # row 0: trajectory (marker doors drawn in their END-of-episode state)
         axm = axs[0, col]
-        axm.imshow(TILE_RGB[full0], interpolation="nearest")
-        for r in range(full0.shape[0]):
-            for cc in range(full0.shape[1]):
-                if full0[r, cc] in CUE_MARK:
-                    axm.text(cc, r, CUE_MARK[full0[r, cc]], ha="center", va="center",
-                             color="white", fontsize=7, fontweight="bold")
+        full = full0.copy()
+        tl = nd - 1
+        full[p.row_up, p.x_mark] = OPEN_TEX_ID[C.MARK_A] if mtop[tl] else C.MARK_A
+        full[p.row_lo, p.x_mark] = OPEN_TEX_ID[C.MARK_B] if mbot[tl] else C.MARK_B
+        Hh, Ww = full.shape
+        axm.imshow(render_grid(full), extent=(-0.5, Ww - 0.5, Hh - 0.5, -0.5),
+                   interpolation="nearest")
         axm.plot(xs[:nd], ys[:nd], "-", color="#f28e2b", lw=1.8, alpha=0.85, zorder=4)
         wm = win[:nd].astype(bool)
         if wm.any():
             axm.scatter(xs[:nd][wm], ys[:nd][wm], s=34, c=PURPLE, marker="D",
                         edgecolor="k", lw=0.3, zorder=5)
-        axm.scatter([xs[nd - 1]], [ys[nd - 1]], s=90, c="#d1495b", edgecolor="k", zorder=6)
+        axm.add_patch(plt.Polygon(agent_triangle(xs[nd - 1], ys[nd - 1], int(ds[nd - 1])),
+                                  color="#dd2222", ec="k", lw=0.5, zorder=6))
         axm.set_xticks([]); axm.set_yticks([])
         axm.set_title(f"{label}\n-> {'color-correct door' if ok else 'other door'}",
                       fontsize=9.5, fontweight="bold",
@@ -534,21 +805,19 @@ def fig(run_dir, out):
         if col == 0:
             axt.set_ylabel("P(cue)", fontsize=8)
             axt.legend(fontsize=6.5, loc="center right")
-        # row 2: plane path (span later)
+        # row 2: plane path over the probe decision regions + GRU flow
         axp = axs[2, col]
-        for c in trained:
-            axp.scatter(*land[c], s=240, c=CUE_COL[c], alpha=0.3, edgecolor=CUE_COL[c], zorder=2)
-            axp.annotate(CUE_NAMES[c], land[c], fontsize=7, ha="center", color="#333", zorder=3)
-        p1, p2 = hs[:nd] @ ax1, hs[:nd] @ ax2
-        axp.plot(p1, p2, "-", color=lc, lw=1.6, alpha=0.85, zorder=4)
+        draw_belief_field(axp, field, trained)
+        p1, p2 = hs[:nd] @ e1, hs[:nd] @ e2
+        axp.plot(p1, p2, "-", color=lc, lw=1.6, alpha=0.9, zorder=4)
         if wm.any():
             axp.scatter(p1[wm], p2[wm], s=24, c=PURPLE, marker="D", zorder=5, alpha=0.85)
         axp.scatter([p1[0]], [p2[0]], marker="s", s=40, c="#999", zorder=6)
-        axp.scatter([p1[-1]], [p2[-1]], s=80, c=lc, edgecolor="k", zorder=6)
+        axp.scatter([p1[-1]], [p2[-1]], s=80, c=lc, edgecolor="k", zorder=7)
         axp.set_xlabel(axlab[0], fontsize=8)
         if col == 0:
             axp.set_ylabel(axlab[1], fontsize=8)
-        axp.set_title("belief-plane path", fontsize=9)
+        axp.set_title("belief-plane path (probe regions + GRU flow)", fontsize=9)
     fig_.suptitle(f"{cfg['cue']} model · cue {cue} · same episode under the three conditions "
                   "(purple = intervention active)", fontsize=13, fontweight="bold")
     fig_.tight_layout(rect=[0, 0, 1, 0.96])
@@ -556,17 +825,74 @@ def fig(run_dir, out):
     print(f"[fig] wrote {out}", flush=True)
 
 
+def plane(run_dirs, out):
+    """Standalone belief-plane figure: probe decision regions + GRU flow field
+    + one baseline trajectory per trained cue, one panel per model."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    plt.rcParams.update({"font.family": "sans-serif", "font.size": 9,
+                         "axes.spines.top": False, "axes.spines.right": False,
+                         "figure.facecolor": "white"})
+    fig_, axs = plt.subplots(1, len(run_dirs), figsize=(5.4 * len(run_dirs), 4.6),
+                             squeeze=False)
+    key = jax.random.PRNGKey(4)
+    for j, rdir in enumerate(run_dirs):
+        cfg, net, params, pr = load_all(rdir)
+        trained = pr["trained"]
+        field = belief_field(cfg, net, params, pr, gridn=31)
+        ax = axs[0, j]
+        draw_belief_field(ax, field, trained, quiver_step=2)
+        for c in trained:      # one baseline trajectory per trained cue
+            key, k = jax.random.split(key)
+            _, _, tr = rollout(cfg, net, params, CUE_NAMES[c], k, 1, "none", T=110)
+            hs, dn = np.asarray(tr[4])[:, 0], np.asarray(tr[6])[:, 0]
+            nd = int(np.argmax(dn)) + 1 if dn.any() else len(hs)
+            p1, p2 = hs[:nd] @ field["e1"], hs[:nd] @ field["e2"]
+            ax.plot(p1, p2, "-", color=CUE_COL[c], lw=1.4, alpha=0.9, zorder=4)
+            ax.scatter([p1[0]], [p2[0]], marker="s", s=26, c="#777", zorder=6)
+        ax.set_xlabel(field["axlab"][0], fontsize=9)
+        ax.set_ylabel(field["axlab"][1], fontsize=9)
+        ax.set_title(f"{cfg['cue']} model", fontsize=12, fontweight="bold")
+    fig_.suptitle("Belief plane: cue-probe decision regions (tint), one-step GRU flow "
+                  "(arrows, grey = magnitude), class means, baseline trajectories",
+                  fontsize=12, fontweight="bold")
+    fig_.tight_layout(rect=[0, 0, 1, 0.93])
+    outp = pathlib.Path(out)
+    outp.parent.mkdir(parents=True, exist_ok=True)
+    fig_.savefig(outp, dpi=150)
+    print(f"[plane] wrote {outp}", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["quant", "video", "fig"])
-    ap.add_argument("--run-dir", required=True)
+    ap.add_argument("cmd", choices=["quant", "video", "video2", "fig", "alpha", "plane"])
+    ap.add_argument("--run-dir", default=None)
+    ap.add_argument("--run-dirs", nargs="+", default=None,
+                    help="alpha: one panel per run dir")
     ap.add_argument("--n", type=int, default=96)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--policy", choices=["greedy", "sample"], default="greedy",
+                    help="greedy = argmax(logits); sample = softmax (stochastic) policy")
+    ap.add_argument("--alphas", type=float, nargs="+", default=None)
     a = ap.parse_args()
+    sample = a.policy == "sample"
+    if a.cmd in ("alpha", "plane"):
+        rds = a.run_dirs or ([a.run_dir] if a.run_dir else None)
+        assert rds, f"{a.cmd} needs --run-dirs (or --run-dir)"
+        if a.cmd == "alpha":
+            alpha_sweep(rds, a.out or "steer_alpha.png", n=a.n, alphas=a.alphas, sample=sample)
+        else:
+            plane(rds, a.out or "belief_plane.png")
+        return
+    assert a.run_dir, f"{a.cmd} needs --run-dir"
     if a.cmd == "quant":
-        quant(a.run_dir, a.n)
+        quant(a.run_dir, a.n, sample=sample)
     elif a.cmd == "fig":
         fig(a.run_dir, a.out or "steer2_fig.png")
+    elif a.cmd == "video2":
+        video(a.run_dir, a.out or "steer2_evidence.mp4", curated=True)
     else:
         video(a.run_dir, a.out or "steer2.mp4")
 

@@ -1,9 +1,16 @@
 """Pure-JAX MemoryEnv dynamics: reset + step (branchless, jit/vmap-friendly).
 
 Mirrors `_MemoryMiniGridEnv.step` in cogniland.memory_env.env at the MDP level
-(movement, wall/cue blocking, branch entry + branch_bonus, door termination,
-PBRS shaping, truncation). Interventions (forced_branch / suppress_*) default OFF
-in MiniGrid and are not modelled here (training never uses them).
+(movement, wall/cue/marker blocking, marker-door opening + branch reward, door
+termination, PBRS shaping, truncation). Interventions (forced_branch /
+suppress_*) default OFF in MiniGrid and are not modelled here (training never
+uses them).
+
+Marker doors (2026-07): each branch corridor is blocked mid-way by a neutral
+marker door (MARK_A top / MARK_B bottom — branch-identity evidence, no colour
+semantics). A_OPEN with the door directly ahead opens it (it stays open). The
+branch reward is paid at the OPEN event, not at branch entry: branch_bonus for
+the direction-correct marker, wrong_branch_penalty for the wrong one.
 """
 from __future__ import annotations
 
@@ -31,6 +38,8 @@ def make_state(params: EnvParams, cue_type, door_green_top, cue_x, cue_y) -> Env
         cue_y=jnp.int32(cue_y),
         taken_branch=jnp.int32(C.BRANCH_NONE),
         selected_door=jnp.int32(C.DOOR_NONE),
+        mark_top_open=jnp.bool_(False),
+        mark_bot_open=jnp.bool_(False),
         step_count=jnp.int32(0),
         prev_phi=jnp.float32(min(params.x_precue_start, params.x_doorcol)),
         terminated=jnp.bool_(False),
@@ -59,27 +68,43 @@ def step(rng, state: EnvState, action, params: EnvParams):
     turn_l = action == C.A_LEFT
     turn_r = action == C.A_RIGHT
     fwd = action == C.A_FORWARD
+    opn = action == C.A_OPEN
     new_dir = (d + turn_r.astype(jnp.int32) - turn_l.astype(jnp.int32)) % 4
 
     tx = state.agent_x + _DX[d]
     ty = state.agent_y + _DY[d]
     tile = params.base_terrain[ty, tx]
-    blocked = (tile == C.WALL) | ((tx == state.cue_x) & (ty == state.cue_y))
+    # marker doors: the cell ahead is a CLOSED marker door -> blocks forward
+    ahead_mark_top = (tx == params.x_mark) & (ty == params.row_up)
+    ahead_mark_bot = (tx == params.x_mark) & (ty == params.row_lo)
+    closed_ahead = ((ahead_mark_top & ~state.mark_top_open)
+                    | (ahead_mark_bot & ~state.mark_bot_open))
+    blocked = ((tile == C.WALL) | ((tx == state.cue_x) & (ty == state.cue_y))
+               | closed_ahead)
     can_move = fwd & jnp.logical_not(blocked)
     nx = jnp.where(can_move, tx, state.agent_x)
     ny = jnp.where(can_move, ty, state.agent_y)
 
-    # ── branch entry + branch_bonus ──────────────────────────────────────
+    # ── marker-door opening + branch reward (paid at the OPEN event) ─────
+    # Reward only the FIRST marker opened in the episode (the commitment),
+    # else the reconnect corridor allows farming the correct-marker bonus
+    # after passing through the wrong branch.
+    open_top = opn & ahead_mark_top & ~state.mark_top_open
+    open_bot = opn & ahead_mark_bot & ~state.mark_bot_open
+    first_open = ~state.mark_top_open & ~state.mark_bot_open
+    new_mark_top = state.mark_top_open | open_top
+    new_mark_bot = state.mark_bot_open | open_bot
+    correct_is_down = _CUE_IS_DOWN[state.cue_type]
+    opened_correct = ((open_top & ~correct_is_down) | (open_bot & correct_is_down)) & first_open
+    opened_wrong = ((open_top | open_bot) & first_open) & ~opened_correct
+
+    # ── branch entry (recorded for analysis; no reward here any more) ────
     in_branch = (nx >= params.x_branch_start) & (nx <= params.x_branch_end)
     on_up = ny == params.row_up
     on_lo = ny == params.row_lo
     newly = (state.taken_branch == C.BRANCH_NONE) & in_branch & (on_up | on_lo)
     branch_val = jnp.where(on_up, C.BRANCH_UP, C.BRANCH_DOWN)
     new_taken = jnp.where(newly, branch_val, state.taken_branch)
-    correct_is_down = _CUE_IS_DOWN[state.cue_type]
-    correct_val = jnp.where(correct_is_down, C.BRANCH_DOWN, C.BRANCH_UP)
-    entered_correct = newly & (branch_val == correct_val)
-    entered_wrong = newly & (branch_val != correct_val)   # shape-wrong branch
 
     # ── door termination ─────────────────────────────────────────────────
     on_top = (nx == params.x_doorcol) & (ny == params.row_door_top)
@@ -93,11 +118,11 @@ def step(rng, state: EnvState, action, params: EnvParams):
     success = on_door & (sel_green == target_green)
     wrong = on_door & jnp.logical_not(success)
 
-    # ── reward (step_penalty + branch_bonus + door + PBRS shaping) ───────
+    # ── reward (step_penalty + marker-open branch reward + door + PBRS) ──
     phi = jnp.minimum(nx, params.x_doorcol).astype(jnp.float32)
     reward = (jnp.float32(params.step_penalty)
-              + jnp.where(entered_correct, params.branch_bonus, 0.0)
-              + jnp.where(entered_wrong, params.wrong_branch_penalty, 0.0)
+              + jnp.where(opened_correct, params.branch_bonus, 0.0)
+              + jnp.where(opened_wrong, params.wrong_branch_penalty, 0.0)
               + jnp.where(success, params.success_reward, 0.0)
               + jnp.where(wrong, params.wrong_door_reward, 0.0)
               + params.shaping_coef * (phi - state.prev_phi))
@@ -112,6 +137,7 @@ def step(rng, state: EnvState, action, params: EnvParams):
         cue_type=state.cue_type, door_green_top=state.door_green_top,
         cue_x=state.cue_x, cue_y=state.cue_y,
         taken_branch=new_taken, selected_door=sel_door,
+        mark_top_open=new_mark_top, mark_bot_open=new_mark_bot,
         step_count=step_count, prev_phi=phi,
         terminated=terminated, done=done,
     )

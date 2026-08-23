@@ -21,6 +21,8 @@ class EnvState:
     cue_y: jax.Array          # () int32  cue cell row
     taken_branch: jax.Array   # () int32  BRANCH_NONE/UP/DOWN
     selected_door: jax.Array  # () int32  DOOR_NONE/SEL_GREEN/SEL_BLUE
+    mark_top_open: jax.Array  # () bool  top-corridor marker door opened
+    mark_bot_open: jax.Array  # () bool  bottom-corridor marker door opened
     step_count: jax.Array     # () int32
     prev_phi: jax.Array       # () float32  (PBRS potential at last step)
     terminated: jax.Array     # () bool  (stepped on a door)
@@ -48,6 +50,7 @@ class EnvParams:
     x_pre_end: int = struct.field(pytree_node=False, default=14)
     x_branch_start: int = struct.field(pytree_node=False, default=15)
     x_branch_end: int = struct.field(pytree_node=False, default=18)
+    x_mark: int = struct.field(pytree_node=False, default=17)
     x_post_start: int = struct.field(pytree_node=False, default=19)
     x_post_end: int = struct.field(pytree_node=False, default=23)
     x_doorcol: int = struct.field(pytree_node=False, default=24)
@@ -89,6 +92,7 @@ class EnvParams:
             x_precue_start=g["x_precue_start"], x_room_start=g["x_room_start"],
             x_room_end=g["x_room_end"], x_pre_end=g["x_pre_end"],
             x_branch_start=g["x_branch_start"], x_branch_end=g["x_branch_end"],
+            x_mark=g["x_mark"],
             x_post_start=g["x_post_start"], x_post_end=g["x_post_end"],
             x_doorcol=g["x_doorcol"], view_size=view_size, max_steps=max_steps,
             step_penalty=step_penalty, branch_bonus=branch_bonus,

@@ -1,3 +1,5 @@
+import pathlib
+
 import torch
 
 import tools
@@ -7,6 +9,7 @@ class OnlineTrainer:
     def __init__(self, config, replay_buffer, logger, logdir, train_envs, eval_envs):
         self.replay_buffer = replay_buffer
         self.logger = logger
+        self.logdir = logdir
         self.train_envs = train_envs
         self.eval_envs = eval_envs
         self.steps = int(config.steps)
@@ -22,7 +25,19 @@ class OnlineTrainer:
         self._should_pretrain = tools.Once()
         self._should_log = tools.Every(config.update_log_every)
         self._should_eval = tools.Every(self.eval_every)
+        # Periodic mid-run checkpoint so a job killed by the SLURM wall (or any
+        # other crash) still leaves an evaluable `latest.pt` -- train.py only
+        # writes one at the very end of `begin()` otherwise. Defaults to the
+        # eval cadence; override with `trainer.checkpoint_every=<env steps>`.
+        self._should_ckpt = tools.Every(int(config.get("checkpoint_every", self.eval_every)))
         self._action_repeat = config.action_repeat
+
+    def save_checkpoint(self, agent):
+        items_to_save = {
+            "agent_state_dict": agent.state_dict(),
+            "optims_state_dict": tools.recursively_collect_optim_state_dict(agent),
+        }
+        torch.save(items_to_save, pathlib.Path(self.logdir) / "latest.pt")
 
     def eval(self, agent, train_step):
         """Run evaluation episodes.
@@ -124,6 +139,9 @@ class OnlineTrainer:
             # Evaluation
             if self._should_eval(step) and self.eval_episode_num > 0 and self.eval_envs is not None:
                 self.eval(agent, step)
+            # Periodic checkpoint (safety net for SLURM wall-clock kills).
+            if self._should_ckpt(step):
+                self.save_checkpoint(agent)
             # Save metrics
             if done.any():
                 for i, d in enumerate(done):

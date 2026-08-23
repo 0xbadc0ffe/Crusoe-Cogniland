@@ -63,6 +63,7 @@ class BridgeTunnelEnv(gym.Env):
         fork_wall: bool = False,           # split-decision gate: wall+passage, then top/bottom doors
         passage_half: int = 1,             # fork_wall: passage is 2*passage_half+1 cells
         wall_margin: int = 1,              # fork_wall: wall is this many cells from the right edge
+        mem_gap: int = 0,                  # fork_wall: pure-grass memory corridor width before the wall
         shaping_target: str = "correct_door",  # fork_wall PBRS seed: "correct_door" | "opening"
         commit: bool | None = None,        # override commitment mechanics (None ⇒ variant=="btc")
         seed: int = 0,
@@ -74,6 +75,9 @@ class BridgeTunnelEnv(gym.Env):
         commit_cost: float = 0.05,         # btc: one-time cost on the committing build/mine
         illegal_penalty: float = 0.02,     # btc: using the locked opposite tool
         gamma: float = 0.99,
+        shaping_gamma: float | None = None,   # PBRS discount for shaping; None=use gamma. Set 1.0 for pure-progress (non-farmable) shaping.
+        wrong_door_penalty: float = 0.0,      # fork_wall: penalty for reaching the WRONG door (breaks the constant-door shortcut).
+        balanced_neutral: bool = False,       # fork_wall: on BALANCED maps, either door pays 0 (no bonus/penalty) so a constant-door policy cannot exploit balanced.
     ) -> None:
         super().__init__()
         if variant not in VARIANTS:
@@ -101,6 +105,7 @@ class BridgeTunnelEnv(gym.Env):
         self.fork_wall = bool(fork_wall)
         self.passage_half = int(passage_half)
         self.wall_margin = int(wall_margin)
+        self.mem_gap = int(mem_gap)
         if shaping_target not in ("correct_door", "opening"):
             raise ValueError(f"shaping_target must be 'correct_door' or 'opening', got {shaping_target!r}")
         self.shaping_target = shaping_target
@@ -111,6 +116,13 @@ class BridgeTunnelEnv(gym.Env):
         self.commit_cost = float(commit_cost)
         self.illegal_penalty = float(illegal_penalty)
         self.gamma = float(gamma)
+        # shaping discount: None -> gamma (potential-based, but farmable at high ctg
+        # because sitting still yields ctg*(1-gamma)*coef > 0); 1.0 -> pure progress
+        # (ctg_prev - ctg_curr), so standing still earns nothing and only net
+        # movement toward the goal is rewarded (kills the spawn-farming optimum).
+        self.shaping_gamma = self.gamma if shaping_gamma is None else float(shaping_gamma)
+        self.wrong_door_penalty = float(wrong_door_penalty)
+        self.balanced_neutral = bool(balanced_neutral)
         self._seed = int(seed)
         self._fixed_record = map_record
         self._rng = np.random.default_rng(self._seed)
@@ -162,7 +174,7 @@ class BridgeTunnelEnv(gym.Env):
                 category=cat, water_frac=self.water_frac, rock_frac=self.rock_frac,
                 tree_frac=self.tree_frac, goal_half=self.goal_half,
                 fork_wall=self.fork_wall, passage_half=self.passage_half,
-                wall_margin=self.wall_margin)
+                wall_margin=self.wall_margin, mem_gap=self.mem_gap)
         self._terrain = self._record.terrain.copy()
         tgt = self._record.target
         rec = self._record
@@ -218,10 +230,19 @@ class BridgeTunnelEnv(gym.Env):
                     # fork_wall maps: only the door matching the map's belief
                     # (category) pays the reach bonus / counts as success; the
                     # decoy door still ends the episode, just with no bonus.
-                    success = (self._correct_cells is None
-                              or (nr, nc) in self._correct_cells)
-                    if success:
-                        reward += self.reach_bonus
+                    _cat = self._record.category if self._record else None
+                    if self.balanced_neutral and _cat == "balanced":
+                        # balanced: either door is a valid endpoint (success for
+                        # the metric) but pays nothing -- removes the free-lunch
+                        # majority that lets a constant-door policy win 2/3.
+                        success = True
+                    else:
+                        success = (self._correct_cells is None
+                                  or (nr, nc) in self._correct_cells)
+                        if success:
+                            reward += self.reach_bonus
+                        else:
+                            reward -= self.wrong_door_penalty
             else:
                 blocked = True
         elif action == A_BUILD:
@@ -233,7 +254,7 @@ class BridgeTunnelEnv(gym.Env):
 
         if self.shaping_coef != 0.0 and self._ctg is not None:
             ctg_curr = self._ctg_at(self._commit, self._pos)
-            reward += self.shaping_coef * (ctg_prev - self.gamma * ctg_curr)
+            reward += self.shaping_coef * (ctg_prev - self.shaping_gamma * ctg_curr)
 
         self._step_count += 1
         self._episode_return += reward

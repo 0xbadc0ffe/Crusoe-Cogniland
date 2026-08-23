@@ -19,7 +19,9 @@ CUE_BLUE_DOWN = 5
 DOOR_GREEN = 6
 DOOR_BLUE = 7
 OOB = 8            # out-of-bounds padding for the egocentric crop
-NUM_TILES = 9
+MARK_A = 9         # neutral marker door, TOP branch corridor (closed)
+MARK_B = 10        # neutral marker door, BOTTOM branch corridor (closed)
+NUM_TILES = 11
 
 # cue_type index -> cue tile id (CUE_TYPES order: green_up, blue_up, green_down, blue_down)
 CUE_TILE = (CUE_GREEN_UP, CUE_BLUE_UP, CUE_GREEN_DOWN, CUE_BLUE_DOWN)
@@ -33,15 +35,16 @@ CUE_TILE = (CUE_GREEN_UP, CUE_BLUE_UP, CUE_GREEN_DOWN, CUE_BLUE_DOWN)
 COLOR_NONE, COLOR_GREEN, COLOR_BLUE = 0, 1, 2
 SHAPE_NONE, SHAPE_UP, SHAPE_DOWN = 0, 1, 2
 N_COLOR, N_SHAPE = 3, 3
-#              EMPTY WALL cGU cBU cGD cBD  dG dB OOB
-TILE_COLOR = (   0,   0,   1,  2,  1,  2,   1, 2,  0)
-TILE_SHAPE = (   0,   0,   1,  1,  2,  2,   0, 0,  0)
+#              EMPTY WALL cGU cBU cGD cBD  dG dB OOB mA mB
+TILE_COLOR = (   0,   0,   1,  2,  1,  2,   1, 2,  0,  0,  0)
+TILE_SHAPE = (   0,   0,   1,  1,  2,  2,   0, 0,  0,  0,  0)
 
-# ── actions (subset of MiniGrid's Discrete(7); 3..6 are no-ops in MemoryEnv) ─
+# ── actions (subset of MiniGrid's Discrete(7); OPEN maps to MiniGrid toggle=5) ─
 A_LEFT = 0         # turn counter-clockwise
 A_RIGHT = 1        # turn clockwise
 A_FORWARD = 2      # step one cell in the facing direction
-NUM_ACTIONS = 3
+A_OPEN = 3         # open the marker door directly ahead (no-op elsewhere)
+NUM_ACTIONS = 4
 
 # ── facing (MiniGrid convention) ─────────────────────────────────────────
 #   0 = EAST (+x), 1 = SOUTH (+y), 2 = WEST (-x), 3 = NORTH (-y)
@@ -68,8 +71,9 @@ SEL_BLUE = 2
 
 __all__ = [
     "EMPTY", "WALL", "CUE_GREEN_UP", "CUE_BLUE_UP", "CUE_GREEN_DOWN",
-    "CUE_BLUE_DOWN", "DOOR_GREEN", "DOOR_BLUE", "OOB", "NUM_TILES", "CUE_TILE",
-    "A_LEFT", "A_RIGHT", "A_FORWARD", "NUM_ACTIONS",
+    "CUE_BLUE_DOWN", "DOOR_GREEN", "DOOR_BLUE", "OOB", "MARK_A", "MARK_B",
+    "NUM_TILES", "CUE_TILE",
+    "A_LEFT", "A_RIGHT", "A_FORWARD", "A_OPEN", "NUM_ACTIONS",
     "DIR_EAST", "DIR_SOUTH", "DIR_WEST", "DIR_NORTH", "DIR_VEC",
     "CUE_TYPES", "CUE_IS_DOWN", "CUE_IS_BLUE",
     "TILE_COLOR", "TILE_SHAPE", "N_COLOR", "N_SHAPE",

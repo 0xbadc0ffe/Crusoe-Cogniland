@@ -65,6 +65,7 @@ def generate_bridge_tunnel_map(
     fork_wall: bool = False,      # split-decision variant, see _build_natural
     passage_half: int = 1,        # fork_wall only: passage is 2*passage_half+1 cells
     wall_margin: int = 1,         # fork_wall only: wall is this many cells from the right edge
+    mem_gap: int = 0,             # fork_wall only: grass memory corridor width before the wall
 ) -> MapRecord:
     """Build one natural map.
 
@@ -84,7 +85,8 @@ def generate_bridge_tunnel_map(
             f"orientation must be 'natural' (stripe orientations retired), got {orientation!r}")
     H, W = int(size), int(width) if width is not None else int(size)
     return _build_natural(H, W, seed, water_frac, rock_frac, tree_frac, goal_half=goal_half,
-                          fork_wall=fork_wall, passage_half=passage_half, wall_margin=wall_margin)
+                          fork_wall=fork_wall, passage_half=passage_half, wall_margin=wall_margin,
+                          mem_gap=mem_gap)
 
 
 # ───────────────────────── natural (open) terrain ─────────────────────────
@@ -138,7 +140,8 @@ def _massif_field(rr, cc, cr, cc0, sigma, n_lobes, rng):
 
 
 def _build_natural(H, W, seed, water_frac, rock_frac, tree_frac=0.06, edge_band=10,
-                   goal_half=None, fork_wall=False, passage_half=1, wall_margin=1):
+                   goal_half=None, fork_wall=False, passage_half=1, wall_margin=1,
+                   mem_gap=0):
     """Open procedural terrain. Domain-warped fractal heightmap + overlaid lakes
     (round), mountains, and ridges; thresholded so ~``water_frac`` of cells are
     WATER (low), ~``rock_frac`` are ROCK (high), the rest GRASS. A few small
@@ -341,6 +344,17 @@ def _build_natural(H, W, seed, water_frac, rock_frac, tree_frac=0.06, edge_band=
     while patches and not _reachable(terrain):
         terrain[patches.pop()] = GRASS
 
+    # MEMORY CORRIDOR (fork_wall only): clear a pure-grass band of ``mem_gap``
+    # columns immediately before the wall. The category-revealing water/rock
+    # terrain is confined to the LEFT of it, so once the agent has walked past
+    # the evidence the crop (view_size wide) shows only grass -- it must hold
+    # the belief in memory across the corridor to pick the correct door, rather
+    # than reading the evidence and the doors in the same frame. Grass-only, so
+    # it only improves reachability (applied after the tree guard).
+    if fork_wall and int(mem_gap) > 0 and fork_wall_col is not None:
+        lo = max(int(edge_band), int(fork_wall_col) - int(mem_gap))
+        terrain[:, lo:int(fork_wall_col)] = GRASS
+
     return MapRecord(terrain, spawn, target, int(seed), "natural", goal_cells,
                      top_goal_cells=top_goal_cells, bottom_goal_cells=bottom_goal_cells,
                      correct_target=correct_target, passage_cells=passage_cells,
@@ -421,7 +435,8 @@ def generate_commit_map(size: int = 32, width: int | None = 64, seed: int = 0,
                         category: str = "balanced", tree_frac: float = 0.03,
                         goal_half: int | None = 1, require_cross: bool = False,
                         max_resample: int = 400, fork_wall: bool = False,
-                        passage_half: int = 1, wall_margin: int = 1) -> MapRecord:
+                        passage_half: int = 1, wall_margin: int = 1,
+                        mem_gap: int = 0) -> MapRecord:
     """One ``category`` map (btc variant), winnable under its intended commitment
     (lakes→build, rocky→mine, balanced→either). Deterministic; resamples with a
     prime seed offset if a guard fails. ``record.seed`` keeps the requested seed.
@@ -436,7 +451,7 @@ def generate_commit_map(size: int = 32, width: int | None = 64, seed: int = 0,
     for _ in range(max_resample):
         base = _build_natural(int(size), W, s, wf, rf, tree_frac, goal_half=goal_half,
                               fork_wall=fork_wall, passage_half=passage_half,
-                              wall_margin=wall_margin)
+                              wall_margin=wall_margin, mem_gap=mem_gap)
         terr, spawn = base.terrain, base.spawn
         if fork_wall:
             target_cells = frozenset(

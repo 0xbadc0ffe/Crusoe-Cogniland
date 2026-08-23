@@ -20,9 +20,13 @@ _CUE_TILE = jnp.asarray(C.CUE_TILE, dtype=jnp.int8)
 
 
 def _full_grid(state: EnvState, params: EnvParams) -> jax.Array:
-    """Base terrain with the cue + the two coloured doors overlaid."""
+    """Base terrain with the cue, marker doors and the two coloured doors overlaid."""
     g = params.base_terrain
     g = g.at[state.cue_y, state.cue_x].set(_CUE_TILE[state.cue_type])
+    mt = jnp.where(state.mark_top_open, C.EMPTY, C.MARK_A).astype(jnp.int8)
+    mb = jnp.where(state.mark_bot_open, C.EMPTY, C.MARK_B).astype(jnp.int8)
+    g = g.at[params.row_up, params.x_mark].set(mt)
+    g = g.at[params.row_lo, params.x_mark].set(mb)
     top = jnp.where(state.door_green_top, C.DOOR_GREEN, C.DOOR_BLUE).astype(jnp.int8)
     bot = jnp.where(state.door_green_top, C.DOOR_BLUE, C.DOOR_GREEN).astype(jnp.int8)
     g = g.at[params.row_door_top, params.x_doorcol].set(top)

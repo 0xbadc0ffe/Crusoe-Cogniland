@@ -27,6 +27,7 @@ Quick smoke:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -55,7 +56,7 @@ class VecBridgeTunnelEnv:
     """Synchronous vector env around N BridgeTunnelEnv instances, auto-resetting
     and reporting per-episode stats on the done step."""
 
-    def __init__(self, num_envs: int, **env_kwargs):
+    def __init__(self, num_envs: int, maps_path: str | None = None, **env_kwargs):
         base_seed = env_kwargs.pop("seed", 0)
         self.envs = [BridgeTunnelEnv(seed=base_seed + i, **env_kwargs) for i in range(num_envs)]
         self.num_envs = num_envs
@@ -63,9 +64,22 @@ class VecBridgeTunnelEnv:
         self.single_action_space = self.envs[0].action_space
         self.ep_returns = np.zeros(num_envs, dtype=np.float32)
         self.ep_lengths = np.zeros(num_envs, dtype=np.int32)
+        # FIXED-MAP MODE: draw each episode's map from a shared pre-generated
+        # pool so every model trains on the SAME dataset (see map_pool.py).
+        self._pool = None
+        if maps_path:
+            from cogniland.bridge_tunnel.map_pool import MapPool
+            self._pool = MapPool(maps_path)
+            self._pool_rngs = [np.random.default_rng(1000 + base_seed + i) for i in range(num_envs)]
+            print(f"[VecEnv] fixed-map pool: {len(self._pool)} maps from {maps_path}")
+
+    def _reset_env(self, i: int):
+        if self._pool is not None:
+            self.envs[i]._fixed_record = self._pool.sample(self._pool_rngs[i])
+        return self.envs[i].reset()[0]
 
     def reset(self):
-        obses = [e.reset()[0] for e in self.envs]
+        obses = [self._reset_env(i) for i in range(self.num_envs)]
         self.ep_returns[:] = 0.0
         self.ep_lengths[:] = 0
         return self._stack(obses)
@@ -82,12 +96,15 @@ class VecBridgeTunnelEnv:
                     "return": float(self.ep_returns[i]),
                     "length": int(self.ep_lengths[i]),
                     "reached_target": bool(info["reached_target"]),
+                    # fork-wall: reached EITHER door (terminated, no timeout)
+                    "reached_any": bool(info.get("reached_any_target",
+                                                 info["reached_target"])),
                     "commit": int(info.get("commit", 0)),        # btc: 0 none/1 build/2 mine
                     "category": info.get("category", None),
                 }
                 self.ep_returns[i] = 0.0
                 self.ep_lengths[i] = 0
-                o, _ = env.reset()
+                o = self._reset_env(i)
             next_obs.append(o)
             rewards.append(r)
             dones.append(done)
@@ -139,6 +156,14 @@ def main():
                              "rocky→top, balanced→either) pays the reach bonus / counts as success")
     parser.add_argument("--passage-half", type=int, default=1,
                         help="fork-wall: passage is 2*passage-half+1 cells")
+    parser.add_argument("--mem-gap", type=int, default=0,
+                        help="fork_wall: pure-grass memory corridor width before the wall")
+    parser.add_argument("--shaping-gamma", type=float, default=None,
+                        help="PBRS shaping discount; 1.0 = pure-progress (non-farmable) shaping")
+    parser.add_argument("--wrong-door-penalty", type=float, default=0.0,
+                        help="fork_wall: penalty for reaching the wrong door (breaks the constant-door shortcut)")
+    parser.add_argument("--balanced-neutral", action="store_true",
+                        help="fork_wall: balanced maps pay 0 at either door (kills the majority-door shortcut)")
     parser.add_argument("--wall-margin", type=int, default=1,
                         help="fork-wall: wall is this many cells from the right edge")
     parser.add_argument("--shaping-target", choices=("correct_door", "opening"), default="correct_door",
@@ -202,6 +227,9 @@ def main():
     parser.add_argument("--obs-encoding", choices=("embed", "onehot"), default="embed",
                         help="onehot = categorical one-hot minimap (matches the DreamerV3 "
                              "categorical encoder for a fair comparison); embed = learned tile embedding")
+    parser.add_argument("--maps-path", type=str, default=None,
+                        help="fixed-map dataset pickle (list of MapRecord); "
+                             "all episodes drawn from it. Overrides procedural gen.")
     parser.add_argument("--config", type=Path, default=None)
     args, _ = parser.parse_known_args()
     if args.config is not None:
@@ -238,7 +266,7 @@ def main():
         tree_frac=args.tree_frac,
         goal_half=(args.goal_half if args.goal_half >= 0 else None),
         fork_wall=args.fork_wall, passage_half=args.passage_half, wall_margin=args.wall_margin,
-        shaping_target=args.shaping_target,
+        mem_gap=args.mem_gap, shaping_gamma=args.shaping_gamma, wrong_door_penalty=args.wrong_door_penalty, balanced_neutral=args.balanced_neutral, shaping_target=args.shaping_target,
     )
     if args.variant == "btc":
         env_kw.update(categories=tuple(args.categories),
@@ -247,7 +275,7 @@ def main():
             env_kw.update(commit=False)
     else:
         env_kw.update(water_frac=args.water_frac, rock_frac=args.rock_frac)
-    vec = VecBridgeTunnelEnv(args.num_envs, **env_kw)
+    vec = VecBridgeTunnelEnv(args.num_envs, maps_path=getattr(args, "maps_path", None), **env_kw)
     use_belief = args.variant == "btc" and args.belief_coef > 0
     policy = PPOGRUPolicy(
         vec.single_observation_space, num_actions=vec.single_action_space.n,
@@ -301,6 +329,7 @@ def main():
 
         initial_hidden = next_hidden.clone()
         ep_returns, ep_lengths, ep_reached = [], [], []
+        ep_reach_any = []                         # terminated at a door (no timeout)
         ep_commit, ep_cat_reached = [], {}        # btc: commit choice + per-category success
 
         for step in range(args.num_steps):
@@ -327,6 +356,7 @@ def main():
                     ep_returns.append(ep["return"])
                     ep_lengths.append(ep["length"])
                     ep_reached.append(float(ep["reached_target"]))
+                    ep_reach_any.append(float(ep["reached_any"]))
                     if args.variant == "btc":
                         ep_commit.append(ep["commit"])
                         ep_cat_reached.setdefault(ep["category"], []).append(
@@ -408,6 +438,11 @@ def main():
                 "return/rolling100": float(np.mean(ep_returns[-100:])),
                 "success/mean": float(np.mean(ep_reached)),
                 "success/rolling100": float(np.mean(ep_reached[-100:])),
+                # fork-wall split: terminated (either door, no timeout) and
+                # correct-door rate AMONG terminated episodes
+                "success/terminated": float(np.mean(ep_reach_any)),
+                "success/door_given_terminated": (
+                    float(np.sum(ep_reached) / max(np.sum(ep_reach_any), 1e-9))),
                 "rollout/episode_length": float(np.mean(ep_lengths)),
                 "return/min_over_steps": float(np.mean([min_steps / max(L, 1) for L in ep_lengths])),
             })
@@ -420,6 +455,8 @@ def main():
                     if cat is not None:
                         log[f"success/{cat}"] = float(np.mean(vals))
         wandb.log(log, step=global_step)
+        with open(args.checkpoint_dir / "metrics.jsonl", "a") as fh:
+            fh.write(json.dumps({"step": global_step, **log}) + "\n")
 
         if iteration % 5 == 0 or iteration == 1:
             print(f"iter={iteration:4d}/{num_iterations} step={global_step:>9d} sps={sps:.0f} "

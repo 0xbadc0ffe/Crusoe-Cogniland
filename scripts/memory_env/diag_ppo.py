@@ -30,7 +30,7 @@ ALL_CUES = D.ALL_CUES
 IS_DOWN = D.IS_DOWN
 
 
-def eval_cue(cue, cfg, net, params, n, key):
+def eval_cue(cue, cfg, net, params, n, key, sample=False):
     p = D._env_params(cfg, cue)
     A, ms = C.NUM_ACTIONS, cfg["max_steps"]
     keys = jax.random.split(key, n)
@@ -43,7 +43,11 @@ def eval_cue(cue, cfg, net, params, n, key):
     def body(carry, _):
         state, obs, hidden, last_done, dacc, succ, tb, key = carry
         hidden, logits, _ = net.apply(params, hidden, (obs[None], last_done[None]))
-        a = jnp.argmax(logits[0], axis=-1)
+        if sample:
+            key, ka = jax.random.split(key)
+            a = jax.random.categorical(ka, logits[0], axis=-1)
+        else:
+            a = jnp.argmax(logits[0], axis=-1)
         key, sk = jax.random.split(key)
         sks = jax.random.split(sk, n)
         ns, r, d, info = jax.vmap(lambda k, s, ai: jstep(k, s, ai, p))(sks, state, a)
@@ -63,6 +67,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-dir", required=True, help="outputs/ppo_runs/ppo_<cue>_<tag>")
     ap.add_argument("--n", type=int, default=96)
+    ap.add_argument("--policy", choices=["greedy", "sample"], default="greedy",
+                    help="greedy = argmax(logits); sample = softmax (stochastic) policy")
     a = ap.parse_args()
     rd = pathlib.Path(a.run_dir)
     cfg = json.loads((rd / "config.json").read_text())
@@ -73,11 +79,12 @@ def main():
                            token_dim=cfg["token_dim"], embed_hidden=cfg["embed_hidden"],
                            gru_hidden=cfg["gru_hidden"])
     trained = set(D.TRAIN_CUES[cfg["cue"]])
-    print(f"== PPO {cfg['cue']} model  ({ckpt.name})  trained on: {sorted(trained)}", flush=True)
+    print(f"== PPO {cfg['cue']} model  ({ckpt.name})  trained on: {sorted(trained)}  "
+          f"policy={a.policy}", flush=True)
     key = jax.random.PRNGKey(0)
     for cue in ALL_CUES:
         key, k = jax.random.split(key)
-        s, b, dd = eval_cue(cue, cfg, net, params, a.n, k)
+        s, b, dd = eval_cue(cue, cfg, net, params, a.n, k, sample=(a.policy == "sample"))
         tag = "train  " if cue in trained else "heldout"
         print(f"   {cue:11s} [{tag}] success={s:.2f} branch_correct={b:.2f} reached_end={dd:.2f}",
               flush=True)
