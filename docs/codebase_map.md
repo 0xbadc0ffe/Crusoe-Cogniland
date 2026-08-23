@@ -43,6 +43,10 @@ paper/ docs/            write-ups
 | change env rules | `src/cogniland/bridge_tunnel/env.py` (+ keep `jax/` parity; run tests) |
 | build an activation dataset | `scripts/mechinterp/build_activation_dataset.py` |
 | released agents registry | `configs/bridge_tunnel/REGISTRY.md` |
+| steer PPO hidden state (belief vs behavior) | `scripts/bridge_tunnel/eval_bridge_tunnel_commit_ppo_steered.py --checkpoint …` (needs the aux-belief agent; `_deep.py` = pre-GRU edit point) |
+| steer the fork_wall agent (belief → door choice) | `scripts/bridge_tunnel/eval_bridge_tunnel_forkwall_steered.py --checkpoint …` (no-commit fork_wall agent) |
+| add a steering method / intervention logic | `src/cogniland/bridge_tunnel/steering.py` (GradientClamp, LinearSteer, make_bt_steerer — shared by all steered evals; tests in `tests/test_steering.py`) |
+| decode a dataset frame/traj | `python activation_datasets/<name>/decode_dataset.py --row N` (no repo needed) |
 
 See `CLAUDE.md` for the task definition, evaluation convention (TRUE door
 metric, not `return>0`), and the per-agent training lore (constant-door basin,

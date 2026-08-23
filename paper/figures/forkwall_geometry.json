@@ -1,0 +1,197 @@
+{
+  "1": [
+    {
+      "probe_bacc": 0.206875,
+      "silhouette": -0.022344851316260142,
+      "success": 0.0,
+      "top_frac": 0.0,
+      "iteration": 0
+    },
+    {
+      "probe_bacc": 0.21625,
+      "silhouette": -0.014907299991576582,
+      "success": 0.0,
+      "top_frac": 0.0,
+      "iteration": 1
+    },
+    {
+      "probe_bacc": 0.33999999999999997,
+      "silhouette": -0.026188027548896736,
+      "success": 0.0,
+      "top_frac": 0.0,
+      "iteration": 2
+    },
+    {
+      "probe_bacc": 0.346875,
+      "silhouette": -0.014305631985648505,
+      "success": 0.0,
+      "top_frac": 0.0,
+      "iteration": 4
+    },
+    {
+      "probe_bacc": 0.30437499999999995,
+      "silhouette": -0.011529475954654967,
+      "success": 0.027777777777777776,
+      "top_frac": 0.027777777777777776,
+      "iteration": 6
+    },
+    {
+      "probe_bacc": 0.4475,
+      "silhouette": -0.035821446944371775,
+      "success": 0.25,
+      "top_frac": 0.3055555555555556,
+      "iteration": 14
+    },
+    {
+      "probe_bacc": 0.2625,
+      "silhouette": -0.019073339659548667,
+      "success": 0.6388888888888888,
+      "top_frac": 0.8888888888888888,
+      "iteration": 42
+    },
+    {
+      "probe_bacc": 0.6125,
+      "silhouette": 0.10156110582336728,
+      "success": 0.6666666666666666,
+      "top_frac": 0.9166666666666666,
+      "iteration": 187
+    },
+    {
+      "probe_bacc": 0.45687500000000003,
+      "silhouette": -0.030977174452223935,
+      "success": 0.9444444444444444,
+      "top_frac": 0.6111111111111112,
+      "iteration": 1000000000
+    }
+  ],
+  "2": [
+    {
+      "probe_bacc": 0.120625,
+      "silhouette": -0.025438362505124126,
+      "success": 0.0,
+      "top_frac": 0.0,
+      "iteration": 0
+    },
+    {
+      "probe_bacc": 0.215,
+      "silhouette": -0.03120391435534132,
+      "success": 0.0,
+      "top_frac": 0.0,
+      "iteration": 1
+    },
+    {
+      "probe_bacc": 0.25375000000000003,
+      "silhouette": -0.061552641416204285,
+      "success": 0.0,
+      "top_frac": 0.0,
+      "iteration": 2
+    },
+    {
+      "probe_bacc": 0.31375000000000003,
+      "silhouette": -0.02706330343178397,
+      "success": 0.027777777777777776,
+      "top_frac": 0.0,
+      "iteration": 4
+    },
+    {
+      "probe_bacc": 0.3775,
+      "silhouette": -0.030504457362267666,
+      "success": 0.041666666666666664,
+      "top_frac": 0.0,
+      "iteration": 6
+    },
+    {
+      "probe_bacc": 0.339375,
+      "silhouette": -0.04609198996589125,
+      "success": 0.013888888888888888,
+      "top_frac": 0.027777777777777776,
+      "iteration": 14
+    },
+    {
+      "probe_bacc": 0.2975,
+      "silhouette": -0.017388058440724413,
+      "success": 0.5,
+      "top_frac": 0.5972222222222222,
+      "iteration": 42
+    },
+    {
+      "probe_bacc": 0.520625,
+      "silhouette": 0.042938243148411444,
+      "success": 0.6666666666666666,
+      "top_frac": 1.0,
+      "iteration": 187
+    },
+    {
+      "probe_bacc": 0.45625000000000004,
+      "silhouette": 0.009399895376875307,
+      "success": 1.0,
+      "top_frac": 0.4444444444444444,
+      "iteration": 1000000000
+    }
+  ],
+  "3": [
+    {
+      "probe_bacc": 0.28875,
+      "silhouette": -0.027560006696246114,
+      "success": 0.0,
+      "top_frac": 0.0,
+      "iteration": 0
+    },
+    {
+      "probe_bacc": 0.15812500000000002,
+      "silhouette": -0.0191800210898554,
+      "success": 0.0,
+      "top_frac": 0.0,
+      "iteration": 1
+    },
+    {
+      "probe_bacc": 0.209375,
+      "silhouette": -0.01976636483749163,
+      "success": 0.0,
+      "top_frac": 0.0,
+      "iteration": 2
+    },
+    {
+      "probe_bacc": 0.255,
+      "silhouette": -0.010912527245501498,
+      "success": 0.0,
+      "top_frac": 0.0,
+      "iteration": 4
+    },
+    {
+      "probe_bacc": 0.215,
+      "silhouette": -0.023578710670121437,
+      "success": 0.0,
+      "top_frac": 0.0,
+      "iteration": 6
+    },
+    {
+      "probe_bacc": 0.353125,
+      "silhouette": -0.05336013506204845,
+      "success": 0.1388888888888889,
+      "top_frac": 0.041666666666666664,
+      "iteration": 14
+    },
+    {
+      "probe_bacc": 0.21000000000000002,
+      "silhouette": -0.016096684457132224,
+      "success": 0.5833333333333334,
+      "top_frac": 0.0,
+      "iteration": 42
+    },
+    {
+      "probe_bacc": 0.495,
+      "silhouette": 0.017487253523463798,
+      "success": 0.6666666666666666,
+      "top_frac": 0.0,
+      "iteration": 187
+    },
+    {
+      "probe_bacc": 0.515625,
+      "silhouette": 0.01586991383397203,
+      "success": 0.9583333333333334,
+      "top_frac": 0.5833333333333334,
+      "iteration": 1000000000
+    }
+  ]
+}

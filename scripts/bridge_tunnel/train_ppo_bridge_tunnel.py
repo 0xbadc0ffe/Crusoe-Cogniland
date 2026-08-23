@@ -221,6 +221,11 @@ def main():
     parser.add_argument("--wandb-project", default="bridge_tunnel")
     parser.add_argument("--wandb-mode", default="online",
                         choices=("online", "offline", "disabled"))
+    parser.add_argument("--save-log-spaced", type=int, default=0,
+                        help="save ~N log-spaced checkpoints (plus iter0, the untrained "
+                             "init) instead of the fixed --save-every-iters cadence. "
+                             "Learning-dynamics analyses need dense coverage of the first "
+                             "few dozen updates, which a fixed interval never provides")
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--checkpoint-dir", type=Path, default=Path("outputs/ppo_checkpoints"))
     parser.add_argument("--save-every-iters", type=int, default=300)
@@ -318,6 +323,24 @@ def main():
     global_step = 0
     start_time = time.time()
     print(f"num_iterations={num_iterations}  batch_size={batch_size}")
+
+    # Optional LOG-SPACED checkpointing. Learning-dynamics analyses (fixed-point
+    # / integration-timescale evolution) need dense coverage of the first few
+    # dozen updates, where a fixed --save-every-iters interval gives none. When
+    # --save-log-spaced N > 0 we save ~N checkpoints spread logarithmically over
+    # training, always including iteration 1, and additionally dump iter0 (the
+    # untrained init) before the loop so "0 gradient steps" is analysable.
+    save_iters: set[int] = set()
+    if args.save_log_spaced > 0:
+        save_iters = {int(round(v)) for v in np.geomspace(
+            1, num_iterations, num=args.save_log_spaced)}
+        save_iters = {i for i in save_iters if 1 <= i <= num_iterations}
+        init = args.checkpoint_dir / "iter0.pt"
+        torch.save({"policy": policy.state_dict(), "iteration": 0,
+                    "global_step": 0, "args": vars(args)}, init)
+        print(f"saved {init} (untrained init)")
+        print(f"log-spaced checkpoints ({len(save_iters)}): "
+              f"{sorted(save_iters)[:12]}{' ...' if len(save_iters) > 12 else ''}")
 
     for iteration in range(1, num_iterations + 1):
         frac = 1.0 - (iteration - 1.0) / num_iterations
@@ -468,7 +491,8 @@ def main():
                   f"kl={log['train/approx_kl']:.4f} "
                   f"belief_acc={log.get('belief/acc', float('nan')):.2f}")
 
-        if iteration % args.save_every_iters == 0:
+        if iteration in save_iters or (not save_iters
+                                       and iteration % args.save_every_iters == 0):
             ckpt = args.checkpoint_dir / f"iter{iteration}.pt"
             torch.save({"policy": policy.state_dict(), "iteration": iteration,
                         "global_step": global_step, "args": vars(args)}, ckpt)
