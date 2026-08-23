@@ -1,0 +1,107 @@
+{
+ "ppo": {
+  "agent": "ppo",
+  "mode": "sampled",
+  "episodes": 900,
+  "success": 0.9855555555555555,
+  "wrong_door": 0.006666666666666667,
+  "timeout": 0.0077777777777777776,
+  "mean_length": 106.9011111111111,
+  "mean_return": 3.078655555555557,
+  "wall_s": 142.5,
+  "per_category": {
+   "balanced": {
+    "n": 303,
+    "success": 0.9933993399339934,
+    "wrong_door": 0.0,
+    "timeout": 0.006600660066006601,
+    "mean_length": 109.96699669966996
+   },
+   "lakes": {
+    "n": 288,
+    "success": 0.9791666666666666,
+    "wrong_door": 0.010416666666666666,
+    "timeout": 0.010416666666666666,
+    "mean_length": 102.65972222222223
+   },
+   "rocky": {
+    "n": 309,
+    "success": 0.9838187702265372,
+    "wrong_door": 0.009708737864077669,
+    "timeout": 0.006472491909385114,
+    "mean_length": 107.84789644012945
+   }
+  },
+  "decisive_success": 0.981574539363484
+ },
+ "storm": {
+  "agent": "storm",
+  "mode": "sampled",
+  "episodes": 900,
+  "success": 0.9877777777777778,
+  "wrong_door": 0.012222222222222223,
+  "timeout": 0.0,
+  "mean_length": 125.14111111111112,
+  "mean_return": 2.908322222222223,
+  "wall_s": 201.9,
+  "per_category": {
+   "balanced": {
+    "n": 303,
+    "success": 1.0,
+    "wrong_door": 0.0,
+    "timeout": 0.0,
+    "mean_length": 128.1947194719472
+   },
+   "lakes": {
+    "n": 288,
+    "success": 0.9756944444444444,
+    "wrong_door": 0.024305555555555556,
+    "timeout": 0.0,
+    "mean_length": 123.15972222222223
+   },
+   "rocky": {
+    "n": 309,
+    "success": 0.9870550161812298,
+    "wrong_door": 0.012944983818770227,
+    "timeout": 0.0,
+    "mean_length": 123.99352750809061
+   }
+  },
+  "decisive_success": 0.981574539363484
+ },
+ "dreamer": {
+  "agent": "dreamer",
+  "mode": "deterministic",
+  "episodes": 900,
+  "success": 0.9811111111111112,
+  "wrong_door": 0.015555555555555555,
+  "timeout": 0.0033333333333333335,
+  "mean_length": 85.52333333333333,
+  "mean_return": 3.281033333333334,
+  "wall_s": 318.2,
+  "per_category": {
+   "balanced": {
+    "n": 303,
+    "success": 0.9900990099009901,
+    "wrong_door": 0.0,
+    "timeout": 0.009900990099009901,
+    "mean_length": 91.28052805280528
+   },
+   "lakes": {
+    "n": 288,
+    "success": 0.9722222222222222,
+    "wrong_door": 0.027777777777777776,
+    "timeout": 0.0,
+    "mean_length": 79.91666666666667
+   },
+   "rocky": {
+    "n": 309,
+    "success": 0.9805825242718447,
+    "wrong_door": 0.019417475728155338,
+    "timeout": 0.0,
+    "mean_length": 85.10355987055016
+   }
+  },
+  "decisive_success": 0.9765494137353434
+ }
+}

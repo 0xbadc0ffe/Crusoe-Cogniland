@@ -1,0 +1,852 @@
+<title>Fork Wall</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,300;0,400;0,600;0,700;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+/* ── tokens ──────────────────────────────────────────────────────────
+   Palette is lifted from the environment's own tile colours (tiles.py):
+   grass #6EAD56, water #3D71B8, rock #6E6E6E, door #FADC3C, dirt #86684A.
+   Neutrals carry a slight grass-green bias so they read as chosen.
+   Agent hues match the plotted figures exactly.                        */
+:root{
+  --paper:#f7f8f4; --surface:#ffffff; --sunken:#eef1e9;
+  --ink:#16201a; --ink-2:#3c4740; --muted:#6d7a70;
+  --rule:#dde2d6; --rule-strong:#c3ccba;
+  --ppo:#b45c07; --dreamer:#2159cf; --storm:#15803d;
+  --door:#c99a12; --water:#3d71b8; --grass:#4f8f3c;
+  --flag:#b3261e;
+  --shadow:0 1px 2px rgba(22,32,26,.06), 0 8px 24px -12px rgba(22,32,26,.18);
+  --measure:68ch;
+  --f-display:"Spectral",Georgia,"Times New Roman",serif;
+  --f-ui:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+}
+:root:not([data-theme="light"]){ @media (prefers-color-scheme:dark){
+  --paper:#11150f; --surface:#171c15; --sunken:#1e241c;
+  --ink:#e7ece2; --ink-2:#c2cbba; --muted:#8d9a89;
+  --rule:#2a322a; --rule-strong:#3c463b;
+  --ppo:#f0a952; --dreamer:#7aa8f5; --storm:#6cc98a;
+  --door:#e5c04a; --water:#79a4e0; --grass:#7cbb63;
+  --flag:#f08a80;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+}}
+:root[data-theme="dark"]{
+  --paper:#11150f; --surface:#171c15; --sunken:#1e241c;
+  --ink:#e7ece2; --ink-2:#c2cbba; --muted:#8d9a89;
+  --rule:#2a322a; --rule-strong:#3c463b;
+  --ppo:#f0a952; --dreamer:#7aa8f5; --storm:#6cc98a;
+  --door:#e5c04a; --water:#79a4e0; --grass:#7cbb63;
+  --flag:#f08a80;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+}
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:var(--f-display); font-size:17px; line-height:1.62;
+  font-weight:400;
+}
+::selection{background:color-mix(in srgb,var(--door) 40%,transparent)}
+
+/* ── page frame: prose column + full-bleed plates ─────────────────── */
+.wrap{
+  display:grid; grid-template-columns:1fr min(var(--measure),92vw) 1fr;
+  column-gap:0; padding:0 20px 96px;
+}
+.wrap > *{grid-column:2}
+.plate{grid-column:1/-1; justify-self:center; width:min(1180px,96vw)}
+.plate-wide{grid-column:1/-1; justify-self:center; width:min(1420px,97vw)}
+
+/* ── masthead ─────────────────────────────────────────────────────── */
+header.mast{grid-column:1/-1; justify-self:center; width:min(1180px,96vw); padding:64px 0 26px}
+.kicker{
+  font-family:var(--f-ui); font-size:11.5px; font-weight:600; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--muted); margin:0 0 18px;
+}
+h1{
+  font-family:var(--f-display); font-weight:700; font-size:clamp(34px,5.6vw,60px);
+  line-height:1.04; letter-spacing:-.02em; margin:0 0 14px; text-wrap:balance;
+}
+h1 .sub{display:block; font-weight:300; font-style:italic; color:var(--ink-2);
+  font-size:clamp(19px,2.7vw,29px); line-height:1.24; margin-top:12px; letter-spacing:-.01em}
+.byline{
+  font-family:var(--f-ui); font-size:13.5px; color:var(--muted);
+  display:flex; flex-wrap:wrap; gap:8px 20px; padding-top:16px;
+  border-top:1px solid var(--rule); margin-top:26px;
+}
+.byline b{color:var(--ink-2); font-weight:500}
+
+/* ── abstract ─────────────────────────────────────────────────────── */
+.abstract{
+  background:var(--sunken); border:1px solid var(--rule); border-radius:3px;
+  padding:24px 28px; margin:26px 0 8px;
+}
+.abstract p{margin:0; font-size:16.5px; line-height:1.68}
+.abstract .lbl{
+  font-family:var(--f-ui); font-size:11px; font-weight:600; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--muted); display:block; margin-bottom:10px;
+}
+
+/* ── headline results strip ───────────────────────────────────────── */
+.strip{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:1px;
+  background:var(--rule); border:1px solid var(--rule); margin:22px 0 6px; border-radius:3px; overflow:hidden}
+.strip div{background:var(--surface); padding:16px 18px}
+.strip .n{font-family:var(--f-mono); font-size:26px; font-weight:500; letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums; display:block}
+.strip .k{font-family:var(--f-ui); font-size:11.5px; color:var(--muted); letter-spacing:.05em;
+  text-transform:uppercase; margin-top:3px; display:block}
+.strip .ppo .n{color:var(--ppo)} .strip .dreamer .n{color:var(--dreamer)}
+.strip .storm .n{color:var(--storm)}
+
+/* ── typography ───────────────────────────────────────────────────── */
+h2{
+  font-size:26px; font-weight:600; letter-spacing:-.012em; line-height:1.2;
+  margin:58px 0 4px; padding-top:22px; border-top:2px solid var(--ink);
+  text-wrap:balance;
+}
+h2 .num{font-family:var(--f-mono); font-size:15px; font-weight:500; color:var(--muted);
+  display:block; margin-bottom:8px; letter-spacing:.02em}
+h3{font-size:19px; font-weight:600; margin:36px 0 2px; letter-spacing:-.005em; text-wrap:balance}
+h3 .num{font-family:var(--f-mono); font-size:13px; color:var(--muted); margin-right:9px; font-weight:400}
+h4{font-family:var(--f-ui); font-size:13px; font-weight:600; letter-spacing:.07em;
+  text-transform:uppercase; color:var(--muted); margin:28px 0 -2px}
+p{margin:14px 0}
+a{color:var(--water); text-decoration-thickness:1px; text-underline-offset:2px}
+a:focus-visible,button:focus-visible,summary:focus-visible{
+  outline:2px solid var(--water); outline-offset:2px; border-radius:2px}
+strong{font-weight:600}
+code,.mono{font-family:var(--f-mono); font-size:.87em; font-variant-ligatures:none}
+p code,li code,td code{background:var(--sunken); padding:.1em .34em; border-radius:2px;
+  border:1px solid var(--rule)}
+ul,ol{padding-left:1.25em; margin:14px 0}
+li{margin:7px 0}
+.lede{font-size:18.5px; color:var(--ink-2)}
+.small{font-size:14.5px; color:var(--muted)}
+
+/* ── figures ──────────────────────────────────────────────────────── */
+figure{margin:34px 0; display:flex; flex-direction:column; gap:11px}
+figure img{width:100%; height:auto; display:block; border:1px solid var(--rule);
+  border-radius:3px; background:var(--surface)}
+figcaption{font-family:var(--f-ui); font-size:13.5px; line-height:1.55; color:var(--ink-2);
+  max-width:104ch}
+figcaption b{font-weight:600; color:var(--ink)}
+figcaption .tag{font-family:var(--f-mono); font-size:12px; color:var(--muted);
+  letter-spacing:.02em; margin-right:7px}
+
+/* ── tables ───────────────────────────────────────────────────────── */
+.tw{overflow-x:auto; margin:26px 0; border:1px solid var(--rule); border-radius:3px;
+  background:var(--surface)}
+table{border-collapse:collapse; width:100%; font-family:var(--f-ui); font-size:14px}
+caption{caption-side:top; text-align:left; font-family:var(--f-ui); font-size:13.5px;
+  color:var(--ink-2); padding:14px 16px 12px; border-bottom:1px solid var(--rule)}
+caption b{color:var(--ink); font-weight:600}
+th,td{padding:9px 16px; text-align:left; border-bottom:1px solid var(--rule);
+  vertical-align:baseline}
+thead th{font-size:11.5px; font-weight:600; letter-spacing:.07em; text-transform:uppercase;
+  color:var(--muted); background:var(--sunken); white-space:nowrap}
+tbody tr:last-child td{border-bottom:none}
+td.num,th.num{text-align:right; font-family:var(--f-mono); font-variant-numeric:tabular-nums;
+  white-space:nowrap}
+tbody tr.hl{background:color-mix(in srgb,var(--door) 9%,transparent)}
+td .ci{color:var(--muted); font-size:12px}
+.agent-ppo{color:var(--ppo); font-weight:600}
+.agent-dreamer{color:var(--dreamer); font-weight:600}
+.agent-storm{color:var(--storm); font-weight:600}
+
+/* ── callouts ─────────────────────────────────────────────────────── */
+.note{border-left:3px solid var(--rule-strong); padding:2px 0 2px 18px; margin:24px 0;
+  color:var(--ink-2)}
+.note.warn{border-left-color:var(--flag)}
+.note.key{border-left-color:var(--door)}
+.note .h{font-family:var(--f-ui); font-size:12px; font-weight:600; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--muted); display:block; margin-bottom:5px}
+.note.warn .h{color:var(--flag)}
+
+/* ── equation ─────────────────────────────────────────────────────── */
+.eq{background:var(--surface); border:1px solid var(--rule); border-radius:3px;
+  padding:22px 24px; margin:24px 0; overflow-x:auto}
+.eq .line{font-family:var(--f-display); font-size:19px; line-height:2.0; white-space:nowrap}
+.eq .term{padding:2px 7px; border-radius:3px}
+.eq .t-slack{background:color-mix(in srgb,var(--flag) 15%,transparent)}
+.eq .t-shape{background:color-mix(in srgb,var(--water) 17%,transparent)}
+.eq .t-bonus{background:color-mix(in srgb,var(--grass) 22%,transparent)}
+.eq .where{font-family:var(--f-ui); font-size:13.5px; color:var(--muted); margin-top:14px;
+  line-height:1.6; white-space:normal}
+.eq sub{font-size:.72em}
+
+/* ── video gallery ────────────────────────────────────────────────── */
+.gal{margin:30px 0}
+.tabs{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px}
+.tabs button{
+  font-family:var(--f-ui); font-size:13px; font-weight:500; padding:7px 15px;
+  background:var(--surface); color:var(--ink-2); border:1px solid var(--rule);
+  border-radius:999px; cursor:pointer; transition:background .12s,border-color .12s;
+}
+.tabs button:hover{border-color:var(--rule-strong)}
+.tabs button[aria-selected="true"]{background:var(--ink); color:var(--paper); border-color:var(--ink)}
+.vgrid{display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:20px}
+.vcard{background:var(--surface); border:1px solid var(--rule); border-radius:3px;
+  overflow:hidden; display:flex; flex-direction:column}
+.vcard video{width:100%; display:block; background:#0d100c}
+.vmeta{font-family:var(--f-ui); font-size:12.5px; padding:10px 13px; display:flex;
+  justify-content:space-between; gap:12px; border-top:1px solid var(--rule); color:var(--muted)}
+.vmeta b{color:var(--ink); font-weight:600}
+.ok{color:var(--storm); font-weight:600}
+.vhide{display:none}
+
+/* ── misc ─────────────────────────────────────────────────────────── */
+details{border:1px solid var(--rule); border-radius:3px; padding:12px 16px; margin:20px 0;
+  background:var(--surface)}
+summary{font-family:var(--f-ui); font-size:14px; font-weight:600; cursor:pointer; color:var(--ink-2)}
+details[open] summary{margin-bottom:10px}
+pre{background:var(--sunken); border:1px solid var(--rule); border-radius:3px;
+  padding:14px 16px; overflow-x:auto; font-family:var(--f-mono); font-size:12.8px;
+  line-height:1.62; margin:16px 0}
+hr{border:none; border-top:1px solid var(--rule); margin:44px 0}
+footer{grid-column:1/-1; justify-self:center; width:min(1180px,96vw); margin-top:70px;
+  padding-top:22px; border-top:2px solid var(--ink); font-family:var(--f-ui);
+  font-size:13px; color:var(--muted); line-height:1.7}
+@media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+@media (max-width:640px){
+  body{font-size:16px} .wrap{padding:0 16px 64px}
+  h2{font-size:22px} .strip .n{font-size:22px}
+}
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <p class="kicker">Cogniland · bridge_tunnel · technical report</p>
+  <h1>Fork Wall
+    <span class="sub">A minimal POMDP where the only difficulty is remembering — and three agents
+      that solve it: recurrent PPO, DreamerV3, and STORM</span></h1>
+  <div class="byline">
+    <span><b>Task</b> bridge_tunnel · fork_wall (BT rules)</span>
+    <span><b>Agents</b> PPO+GRU · DreamerV3 (RSSM) · STORM (Transformer)</span>
+    <span><b>Data</b> forkwall6k, 4 800 train / 1 200 held-out maps</span>
+    <span><b>Evaluation</b> 900 held-out episodes per agent, identical harness</span>
+  </div>
+</header>
+
+<div class="abstract">
+  <span class="lbl">Abstract</span>
+  <p><b>fork_wall</b> is a 32×64 grid-world POMDP built so that memory is the <em>only</em>
+  hard part. Terrain statistics at the start of an episode identify one of three map
+  categories; the category is then hidden behind an information-free corridor; at the far
+  wall the agent picks one of two doors, and only the door matching the remembered category
+  pays. Navigation is easy, the reward is dense, and a memoryless policy is capped at
+  <b>⅔</b> success. We train three agents — recurrent PPO, DreamerV3 with an RSSM world
+  model, and STORM with a Transformer world model — on a <em>byte-identical</em> environment,
+  reward and fixed map dataset, and evaluate all three through one harness on 900 held-out
+  episodes. All three clear the memoryless ceiling and land within 0.7 percentage points of
+  each other: <b>98.6 %</b> (PPO), <b>98.1 %</b> (Dreamer), <b>98.8 %</b> (STORM); no pairwise
+  difference is significant (p&nbsp;&gt;&nbsp;0.25). What separates them is not final score but
+  <em>what each needed in order to escape the constant-door optimum</em>: PPO needed an
+  annealed high-entropy schedule, and both world-model agents needed a training window at
+  least as long as the ~75-step evidence→door dependency. We report the full sweeps, the
+  training telemetry, and a metric pitfall that inflates success by 6–13 points if unnoticed.</p>
+</div>
+
+<div class="strip">
+  <div class="ppo"><span class="n">98.6%</span><span class="k">PPO + GRU</span></div>
+  <div class="dreamer"><span class="n">98.1%</span><span class="k">DreamerV3 25M</span></div>
+  <div class="storm"><span class="n">98.8%</span><span class="k">STORM</span></div>
+  <div><span class="n">66.7%</span><span class="k">memoryless ceiling</span></div>
+</div>
+<p class="small">Held-out success on <code>forkwall6k/test.pkl</code>, 900 episodes per agent,
+TRUE door metric, each agent in its native action mode. Wilson 95 % intervals in Table 3.</p>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<h2><span class="num">1</span>Why this task exists</h2>
+
+<p class="lede">Most benchmarks that require memory also require something else — exploration,
+credit assignment over sparse reward, visual abstraction, long-horizon control. When an agent
+fails, the failure is hard to attribute. fork_wall was built to remove every confound except
+one.</p>
+
+<p>The design constraints were: (i) the information the agent must retain is a <em>single
+categorical variable</em>, visible early and never again; (ii) the delay between seeing it and
+needing it is long enough to defeat a short context window, but short enough that episodes stay
+cheap (~95 steps for a good policy); (iii) navigation is dense-rewarded and easy, so a failure
+is a memory failure, not a control failure; and (iv) there is a precisely known score for a
+memoryless policy, so "did it actually remember?" has a numerical answer rather than a
+qualitative one.</p>
+
+<p>That last property is what makes the task useful as an interpretability substrate. A policy
+that ignores the hidden category still collects <b>⅔</b> of the reward (Section&nbsp;2.5), so the
+gap between 67 % and 99 % is entirely attributable to a belief that was formed, retained across
+the corridor, and read out at the fork. Everything above the ceiling is memory.</p>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<h2><span class="num">2</span>The environment</h2>
+
+<h3><span class="num">2.1</span>Task structure</h3>
+
+<p>Each episode places the agent at the centre of the left edge of a 32×64 tile map. The map is
+drawn from one of three categories that differ only in the <em>statistics of the terrain</em>:
+<b>lakes</b> maps are water-heavy, <b>rocky</b> maps are rock-heavy, and <b>balanced</b> maps have
+both in equal measure. The category is never stated; it must be inferred from what the agent
+walks past.</p>
+
+<figure class="plate">
+  <img src="{{FIG:fig_task_categories.png}}" alt="Three example maps, one per category, with rewarded and decoy doors outlined">
+  <figcaption><span class="tag">Figure 1</span><b>The three map categories.</b> Water (blue) and
+  rock (grey) coverage identify the category. The rewarded door is outlined in green, the decoy in
+  red; the white dot is the spawn. <em>rocky</em> → top door, <em>lakes</em> → bottom door,
+  <em>balanced</em> → either door is accepted. Trees (dark green) are impassable and only clutter
+  the route; sand and dirt are cosmetic fringes that behave like grass.</figcaption>
+</figure>
+
+<p>An episode has four phases. The agent crosses open terrain where the category is visible; it
+then enters a <b>16-column corridor of pure grass</b> that has been scrubbed of all
+category-carrying terrain; it passes through a 3-cell gap in a wall of trees; and it arrives in a
+narrow strip containing two single-cell doors, one at the top and one at the bottom. Reaching
+either door ends the episode; only the matching one pays the bonus.</p>
+
+<figure class="plate">
+  <img src="{{FIG:fig_task_anatomy.png}}" alt="One map annotated with the four phases of an episode, plus a zoomed view of the fork">
+  <figcaption><span class="tag">Figure 2</span><b>Anatomy of an episode.</b> The shaded band is
+  the memory corridor: 16 columns containing no information about the category. By the time the
+  agent can see the doors, the evidence is roughly 75 steps behind it. The zoom (b) shows the
+  passage — the only way through the tree wall — and the two doors.</figcaption>
+</figure>
+
+<h3><span class="num">2.2</span>Observation and action space</h3>
+
+<p>The agent never sees the map. It receives a <b>21×21 egocentric crop</b> of tile ids —
+symbolic, not pixels — one-hot encoded over the 9 tile types, concatenated with 5 scalars: a
+one-hot heading (4) and elapsed time as a fraction of the step limit (1). Cells outside the map
+are filled with a dedicated out-of-bounds id. The flattened observation is
+<code>21·21·9 + 5 = 3 974</code> floats. Actions are <code>Discrete(6)</code>: four moves plus
+build-raft and mine-harness, which are inert in this task's rule set (they exist in the parent
+environment family and are kept so the action space matches).</p>
+
+<figure class="plate">
+  <img src="{{FIG:fig_observation.png}}" alt="Privileged world state, the 21x21 egocentric crop the agent sees, and the five scalar inputs">
+  <figcaption><span class="tag">Figure 3</span><b>What the agent actually sees.</b> (a) the world
+  state, shown for the reader only; the white box is the agent's field of view. (b) the
+  observation: a 21×21 crop, here 27 % out-of-bounds padding because the agent is near the top
+  edge. (c) the five scalars. Nothing in the observation names the category — it is a statistical
+  property of terrain the agent has already walked past.</figcaption>
+</figure>
+
+<h3><span class="num">2.3</span>Reward</h3>
+
+<p>The reward is dense and has three terms. A constant slack penalty per step creates time
+pressure; a potential-based shaping term pulls the agent along the shortest path <em>to the
+correct door</em>; and a bonus fires when the correct door is entered. The wrong door terminates
+the episode with no bonus — it is not punished, it simply ends the run.</p>
+
+<div class="eq">
+  <div class="line">
+    r<sub>t</sub> =
+    <span class="term t-slack">−0.01</span>
+    <span style="color:var(--muted)">+</span>
+    <span class="term t-shape">0.015 · ( Φ(s<sub>t−1</sub>) − Φ(s<sub>t</sub>) )</span>
+    <span style="color:var(--muted)">+</span>
+    <span class="term t-bonus">3.0 · 1[ correct door ]</span>
+  </div>
+  <div class="where"><b>Φ(s)</b> is the exact minimum number of actions from cell <i>s</i> to the
+  rewarded door, computed by breadth-first search on the true map at reset. Because the shaping
+  discount is 1.0, the shaping term telescopes: over a full episode it contributes exactly
+  Φ(start) − Φ(end), so it cannot be farmed by looping, and it leaves the optimal policy
+  unchanged (Ng et al., 1999). The bonus is paid only at the door that matches the map category;
+  the decoy door pays nothing.</div>
+</div>
+
+<figure class="plate">
+  <img src="{{FIG:fig_reward.png}}" alt="Cumulative and per-step reward decomposition along one real PPO episode">
+  <figcaption><span class="tag">Figure 4</span><b>Reward along a real episode</b> (the released
+  PPO agent, 93 steps, return +3.36). Slack accumulates to −0.93 while shaping plus the bonus
+  contribute +4.29. (b) the per-step view: shaping pays roughly +0.005 per step of progress, and
+  the +3 bonus is the spike at the end.</figcaption>
+</figure>
+
+<div class="note warn">
+  <span class="h">Metric pitfall</span>
+  Dense shaping makes <code>episode return &gt; 0</code> a <em>biased</em> success test. A fast
+  wrong-door episode (~80 steps) collects more shaping than slack and finishes with a positive
+  return, so the naive proxy scores it as a success. Measured against the true door state, the
+  proxy overstates success by <b>6–13 points</b> depending on the agent. Every number in this
+  report uses the <b>TRUE door metric</b>: an episode succeeds iff the agent's final cell is in
+  the map's rewarded-door set.
+</div>
+
+<h3><span class="num">2.4</span>Dataset</h3>
+
+<p>All three agents train on one frozen dataset, <code>forkwall6k</code>: 6 000 procedurally
+generated maps, class-balanced across the three categories, split 4 800 train / 1 200 held-out by
+a fixed seed. Freezing the maps removes an otherwise invisible confound — with per-seed
+procedural generation, each agent would see a different map stream, and sample-efficiency
+comparisons would partly measure luck.</p>
+
+<figure class="plate">
+  <img src="{{FIG:fig_dataset.png}}" alt="Dataset composition and per-category water and rock coverage distributions">
+  <figcaption><span class="tag">Figure 5</span><b>The dataset is balanced and the categories are
+  statistically separable.</b> Water coverage runs 2.6 % (rocky) → 8.8 % (balanced) → 14.4 %
+  (lakes) and rock coverage mirrors it, but the distributions overlap: a single glance at one
+  lake is not decisive, so the agent has to integrate terrain over the approach.</figcaption>
+</figure>
+
+<h3><span class="num">2.5</span>The number to beat</h3>
+
+<p>Consider a policy that navigates perfectly but ignores the category — it always heads for,
+say, the top door. On <em>rocky</em> maps (⅓ of the data) it is correct. On <em>balanced</em>
+maps (⅓) either door is accepted, so it is correct. On <em>lakes</em> maps (⅓) it is wrong.
+Its expected success is exactly <b>⅔ ≈ 66.7 %</b>.</p>
+
+<p>This is the constant-door optimum, and it is a genuine attractor: it earns two-thirds of the
+reward for none of the memory. Every agent in this report gets stuck in it at some point during
+training (Section&nbsp;6). Because balanced maps are free, the sharper statistic is
+<b>decisive-door success</b> — accuracy restricted to lakes and rocky maps, where a constant-door
+policy scores 50 %.</p>
+
+<div class="tw">
+  <table>
+    <caption><b>Table 1.</b> Environment configuration. These values are identical for all three
+      agents; each pipeline's wrapper is a byte-for-byte copy of the same keyword set.</caption>
+    <thead><tr><th>Parameter</th><th>Value</th><th>Parameter</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>map size</td><td class="mono">32 × 64</td><td>slack penalty</td><td class="mono">−0.01 / step</td></tr>
+      <tr><td>categories</td><td class="mono">balanced, lakes, rocky</td><td>shaping coefficient</td><td class="mono">0.015</td></tr>
+      <tr><td>memory corridor</td><td class="mono">mem_gap = 16 cols</td><td>shaping discount</td><td class="mono">1.0 (telescoping)</td></tr>
+      <tr><td>wall passage</td><td class="mono">3 cells (passage_half 1)</td><td>door bonus</td><td class="mono">+3.0 (correct only)</td></tr>
+      <tr><td>doors</td><td class="mono">2 × 1 cell (goal_half 0)</td><td>wrong-door penalty</td><td class="mono">0.0</td></tr>
+      <tr><td>view</td><td class="mono">21 × 21 egocentric</td><td>discount γ</td><td class="mono">0.99</td></tr>
+      <tr><td>observation dim</td><td class="mono">3 974 (one-hot + 5)</td><td>episode limit</td><td class="mono">800 steps</td></tr>
+      <tr><td>actions</td><td class="mono">Discrete(6)</td><td>tree coverage</td><td class="mono">0.03</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<h2><span class="num">3</span>Watch the agents play</h2>
+
+<p>Six held-out maps, two per category — the <em>same</em> maps for all three agents, so the
+routes are directly comparable. The trail fades behind the agent; the HUD shows the running
+return and which door pays. All eighteen episodes below are successes; the differences are in
+style, not outcome.</p>
+
+<div class="gal plate">
+  <div class="tabs" role="tablist" aria-label="Choose agent">
+    <button role="tab" aria-selected="true" data-agent="ppo">PPO + GRU</button>
+    <button role="tab" aria-selected="false" data-agent="dreamer">DreamerV3</button>
+    <button role="tab" aria-selected="false" data-agent="storm">STORM</button>
+  </div>
+
+  <div class="vgrid" data-panel="ppo">
+    <div class="vcard"><video src="{{VID:ppo_map0_rocky.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 0</b> · rocky → top</span><span class="ok">✓ 98 steps · R +3.28</span></div></div>
+    <div class="vcard"><video src="{{VID:ppo_map5_lakes.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 5</b> · lakes → bottom</span><span class="ok">✓ 80 steps · R +3.34</span></div></div>
+    <div class="vcard"><video src="{{VID:ppo_map7_balanced.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 7</b> · balanced → either</span><span class="ok">✓ 90 steps · R +3.33</span></div></div>
+    <div class="vcard"><video src="{{VID:ppo_map1_rocky.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 1</b> · rocky → top</span><span class="ok">✓ 93 steps · R +3.23</span></div></div>
+    <div class="vcard"><video src="{{VID:ppo_map10_lakes.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 10</b> · lakes → bottom</span><span class="ok">✓ 89 steps · R +3.33</span></div></div>
+    <div class="vcard"><video src="{{VID:ppo_map9_balanced.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 9</b> · balanced → either</span><span class="ok">✓ 102 steps · R +3.25</span></div></div>
+  </div>
+
+  <div class="vgrid vhide" data-panel="dreamer">
+    <div class="vcard"><video src="{{VID:dreamer_map0_rocky.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 0</b> · rocky → top</span><span class="ok">✓ 84 steps · R +3.42</span></div></div>
+    <div class="vcard"><video src="{{VID:dreamer_map5_lakes.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 5</b> · lakes → bottom</span><span class="ok">✓ 76 steps · R +3.38</span></div></div>
+    <div class="vcard"><video src="{{VID:dreamer_map7_balanced.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 7</b> · balanced → either</span><span class="ok">✓ 82 steps · R +3.41</span></div></div>
+    <div class="vcard"><video src="{{VID:dreamer_map1_rocky.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 1</b> · rocky → top</span><span class="ok">✓ 77 steps · R +3.38</span></div></div>
+    <div class="vcard"><video src="{{VID:dreamer_map10_lakes.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 10</b> · lakes → bottom</span><span class="ok">✓ 82 steps · R +3.40</span></div></div>
+    <div class="vcard"><video src="{{VID:dreamer_map9_balanced.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 9</b> · balanced → either</span><span class="ok">✓ 85 steps · R +3.42</span></div></div>
+  </div>
+
+  <div class="vgrid vhide" data-panel="storm">
+    <div class="vcard"><video src="{{VID:storm_map0_rocky.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 0</b> · rocky → top</span><span class="ok">✓ 132 steps · R +2.94</span></div></div>
+    <div class="vcard"><video src="{{VID:storm_map5_lakes.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 5</b> · lakes → bottom</span><span class="ok">✓ 126 steps · R +2.88</span></div></div>
+    <div class="vcard"><video src="{{VID:storm_map7_balanced.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 7</b> · balanced → either</span><span class="ok">✓ 118 steps · R +3.05</span></div></div>
+    <div class="vcard"><video src="{{VID:storm_map1_rocky.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 1</b> · rocky → top</span><span class="ok">✓ 96 steps · R +3.19</span></div></div>
+    <div class="vcard"><video src="{{VID:storm_map10_lakes.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 10</b> · lakes → bottom</span><span class="ok">✓ 108 steps · R +3.13</span></div></div>
+    <div class="vcard"><video src="{{VID:storm_map9_balanced.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 9</b> · balanced → either</span><span class="ok">✓ 134 steps · R +2.94</span></div></div>
+  </div>
+</div>
+
+<figure class="plate-wide">
+  <img src="{{FIG:fig_trajectories.png}}" alt="Trajectories of all three agents on three identical held-out maps">
+  <figcaption><span class="tag">Figure 6</span><b>The same three maps, three agents.</b> Colour
+  runs dark→bright with time. Dreamer (deterministic) takes the tightest routes (76–85 steps);
+  PPO is close behind; STORM, which acts by sampling from its policy, wanders measurably more
+  (96–134 steps) and pays for it in return, but reaches the correct door just as reliably.
+  Note that all three commit to the correct <em>vertical</em> half of the map well before the
+  doors are visible — the decision is made from memory, not from sight.</figcaption>
+</figure>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<h2><span class="num">4</span>The three agents</h2>
+
+<p>The agents span the two dominant families in modern model-based / model-free RL, and within
+the model-based family, the two dominant sequence backbones.</p>
+
+<h3><span class="num">4.1</span>PPO + GRU <span class="agent-ppo">— model-free</span></h3>
+<p>A convolutional encoder over the one-hot minimap feeds a 128-unit GRU; actor and critic are
+linear heads on the recurrent state. Memory is whatever the GRU carries forward. An auxiliary
+head predicts the map category from the hidden state — it is a probe used to <em>measure</em>
+whether the belief exists, and in the released configuration it also shapes the representation
+(<code>belief_coef 0.3</code>). Trained with standard clipped PPO on 32 parallel environments.</p>
+
+<h3><span class="num">4.2</span>DreamerV3 <span class="agent-dreamer">— RSSM world model</span></h3>
+<p>An RSSM learns latent dynamics from a replay buffer: a deterministic GRU path of width 3 072
+plus 32×24 discrete stochastic latents. The actor and critic are trained almost entirely inside
+imagined rollouts (horizon 15) rather than on real experience. Memory here is the recurrent
+latent state, and — crucially — the gradient that teaches the model to <em>retain</em> the
+category can only travel as far back as the training sequence is long.</p>
+
+<h3><span class="num">4.3</span>STORM <span class="agent-storm">— Transformer world model</span></h3>
+<p>Same imagination-based actor-critic, but the dynamics core is a 2-layer, 512-dimensional
+causal Transformer over (latent, action) tokens instead of a recurrent cell. During training the
+whole replay sequence is processed in parallel under a causal mask; at acting time a rolling
+window of the most recent tokens is re-encoded each step. The policy reads
+<code>concat(z<sub>t</sub>, h<sub>t</sub>)</code> — the current observation's latent plus the
+attention summary of the past.</p>
+
+<div class="note key">
+  <span class="h">Implementation note</span>
+  The STORM implementation we started from called its Transformer on one-token sequences and fed
+  the actor only <code>z<sub>t</sub></code> — a function of the current observation alone. That
+  agent is <em>memoryless by construction</em>: it scored 100 % on a reactive control task and
+  exactly 0 % here, across 6M frames. Restoring the original paper's scheme (parallel causal
+  training, <code>concat(z, h)</code> features, history-conditioned reward and continuation
+  heads, context-primed imagination) is what makes the STORM column of this report exist.
+</div>
+
+<div class="tw">
+  <table>
+    <caption><b>Table 2.</b> Agent configurations as trained. Every row above the rule is a
+      property of the algorithm; below the rule are the settings that mattered for this task
+      (Section&nbsp;6).</caption>
+    <thead><tr><th></th><th class="agent-ppo">PPO + GRU</th><th class="agent-dreamer">DreamerV3</th><th class="agent-storm">STORM</th></tr></thead>
+    <tbody>
+      <tr><td>family</td><td>model-free, on-policy</td><td>model-based, imagination</td><td>model-based, imagination</td></tr>
+      <tr><td>memory mechanism</td><td>GRU (128)</td><td>RSSM: GRU 3 072 + 32×24 discrete</td><td>causal Transformer 2L·512·8H</td></tr>
+      <tr><td>trainable parameters</td><td class="num">2.02 M</td><td class="num">24.8 M</td><td class="num">15.2 M</td></tr>
+      <tr><td>policy input</td><td>GRU state</td><td>RSSM state (deter + stoch)</td><td>concat(z<sub>t</sub>, h<sub>t</sub>)</td></tr>
+      <tr><td>optimizer</td><td>Adam 3e−4</td><td>LaProp 4e−5, AGC 0.3</td><td>LaProp 1e−4, AGC 0.3</td></tr>
+      <tr><td>parallel envs</td><td class="num">32</td><td class="num">24</td><td class="num">32</td></tr>
+      <tr><td>imagination horizon</td><td>—</td><td class="num">15</td><td class="num">16 (context 16)</td></tr>
+      <tr><td>replay / rollout</td><td>128 steps × 32 envs</td><td>replay, train_ratio 64</td><td>replay, train_ratio 256</td></tr>
+      <tr class="hl"><td><b>training window</b></td><td>full episode (BPTT over rollout)</td><td><b>batch_length 64</b></td><td><b>batch_length 128</b></td></tr>
+      <tr class="hl"><td><b>acting-time context</b></td><td>GRU carry (unbounded)</td><td>RSSM carry (unbounded)</td><td><b>128 tokens (rolling)</b></td></tr>
+      <tr class="hl"><td><b>exploration</b></td><td><b>entropy 0.15 → 0 (annealed)</b></td><td>entropy 0.01</td><td><b>entropy 0.01</b></td></tr>
+      <tr><td>env frames trained</td><td class="num">4.0 M</td><td class="num">3.0 M</td><td class="num">6.0 M</td></tr>
+      <tr><td>throughput (1 × RTX 3090)</td><td class="num">2 440 fps</td><td class="num">134 fps</td><td class="num">168 fps</td></tr>
+      <tr><td>wall-clock (approx.)</td><td class="num">27 min</td><td class="num">6.2 h</td><td class="num">9.9 h</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<h2><span class="num">5</span>Protocol</h2>
+
+<p>Cross-agent comparisons are only as good as the things held fixed, so we state them
+explicitly.</p>
+
+<ul>
+  <li><b>Environment and reward are byte-identical.</b> Each pipeline wraps the same
+  <code>BridgeTunnelEnv</code> class with the same keyword set; the wrappers differ only in how
+  they batch and how they format observations for their trainer.</li>
+  <li><b>Data is identical.</b> All agents draw training episodes from
+  <code>forkwall6k/train.pkl</code> (4 800 maps) and are evaluated on
+  <code>forkwall6k/test.pkl</code> (1 200 maps), which is never touched during training.</li>
+  <li><b>Evaluation is one harness.</b> 900 episodes per agent, maps drawn with a shared seed,
+  the TRUE door metric, outcomes bucketed into correct / wrong-door / timeout.</li>
+  <li><b>Each agent acts in its native mode.</b> PPO and STORM sample from their policies;
+  Dreamer acts deterministically. This is how each was trained and how each is intended to run —
+  forcing a common mode would penalise agents for a mismatch that is not part of the method.
+  (STORM in particular degrades badly under greedy action selection: it deadlocks against
+  obstacles and times out on ~8 % of episodes.)</li>
+</ul>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<h2><span class="num">6</span>Results</h2>
+
+<div class="tw">
+  <table>
+    <caption><b>Table 3.</b> Held-out results, 900 episodes per agent, TRUE door metric. Wilson
+      95 % intervals. <b>Decisive-door</b> restricts to lakes + rocky maps, where a memoryless
+      policy scores 50 %.</caption>
+    <thead><tr>
+      <th>Agent</th><th>Mode</th><th class="num">Success</th><th class="num">95 % CI</th>
+      <th class="num">Decisive</th><th class="num">Wrong door</th><th class="num">Timeout</th>
+      <th class="num">Steps</th><th class="num">Return</th>
+    </tr></thead>
+    <tbody>
+      <tr><td class="agent-ppo">PPO + GRU</td><td>sampled</td><td class="num">98.56 %</td>
+        <td class="num ci">[97.5, 99.2]</td><td class="num">98.16 %</td><td class="num">0.67 %</td>
+        <td class="num">0.78 %</td><td class="num">106.9</td><td class="num">+3.08</td></tr>
+      <tr><td class="agent-dreamer">DreamerV3 25M</td><td>deterministic</td><td class="num">98.11 %</td>
+        <td class="num ci">[97.0, 98.8]</td><td class="num">97.65 %</td><td class="num">1.56 %</td>
+        <td class="num">0.33 %</td><td class="num">85.5</td><td class="num">+3.28</td></tr>
+      <tr class="hl"><td class="agent-storm">STORM</td><td>sampled</td><td class="num">98.78 %</td>
+        <td class="num ci">[97.8, 99.3]</td><td class="num">98.16 %</td><td class="num">1.22 %</td>
+        <td class="num">0.00 %</td><td class="num">125.1</td><td class="num">+2.91</td></tr>
+      <tr><td colspan="2" class="small">memoryless constant-door policy</td><td class="num">66.7 %</td>
+        <td class="num ci">—</td><td class="num">50.0 %</td><td class="num">33.3 %</td>
+        <td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p><b>No pairwise difference is statistically significant</b> (two-proportion z-tests:
+PPO vs Dreamer p = 0.46, PPO vs STORM p = 0.68, Dreamer vs STORM p = 0.25). The honest reading is
+that all three <em>solve</em> the task, and that a 900-episode evaluation cannot separate 98.1 %
+from 98.8 %. What the table does separate is <em>character</em>: Dreamer is the most efficient
+navigator (85 steps, highest return) but makes the most wrong-door errors; STORM never times out
+but takes 40 % longer routes because it samples; PPO sits between the two.</p>
+
+<figure class="plate-wide">
+  <img src="{{FIG:fig_compare.png}}" alt="Training curves for all three agents, final held-out success with confidence intervals, and error decomposition">
+  <figcaption><span class="tag">Figure 7</span><b>Three agents, one task.</b> (a) training-time
+  success against environment frames — note this is each trainer's own proxy metric, which is why
+  the curves sit above the honest numbers in (b); the PPO band spans three seeds. (b) the unified
+  held-out evaluation with Wilson intervals; the intervals overlap heavily. (c) how the remaining
+  ~1.5 % of episodes are spent: Dreamer's residual is mostly wrong doors, PPO's is split, STORM's
+  is entirely wrong doors and never a timeout.</figcaption>
+</figure>
+
+<h3><span class="num">6.1</span>Per-category breakdown</h3>
+
+<div class="tw">
+  <table>
+    <caption><b>Table 4.</b> Success by map category. <em>balanced</em> maps accept either door,
+      so they measure navigation alone; <em>lakes</em> and <em>rocky</em> measure memory.</caption>
+    <thead><tr><th>Agent</th><th class="num">balanced <span class="small">(navigation)</span></th>
+      <th class="num">lakes <span class="small">(memory)</span></th>
+      <th class="num">rocky <span class="small">(memory)</span></th></tr></thead>
+    <tbody>
+      <tr><td class="agent-ppo">PPO + GRU</td><td class="num">99.34 %</td><td class="num">97.92 %</td><td class="num">98.38 %</td></tr>
+      <tr><td class="agent-dreamer">DreamerV3</td><td class="num">99.01 %</td><td class="num">97.22 %</td><td class="num">98.06 %</td></tr>
+      <tr><td class="agent-storm">STORM</td><td class="num">100.00 %</td><td class="num">97.57 %</td><td class="num">98.71 %</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>The pattern is identical across agents and worth noting: <em>balanced</em> maps are essentially
+solved (99–100 %), and the residual error is concentrated on the two decisive categories. Since
+balanced maps are the ones where the door choice is free, this confirms that the remaining
+failures are memory failures — a slightly wrong belief at the fork — rather than navigation
+failures.</p>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<h2><span class="num">7</span>What each agent needed</h2>
+
+<p class="lede">This is the part of the study that carries information. Reaching ~98 % was, in
+every case, gated on exactly one hyperparameter — a different one for each agent — and the
+default value of that hyperparameter produced a confident constant-door policy instead.</p>
+
+<h3><span class="num">7.1</span>PPO: an exploration problem</h3>
+
+<p>With default entropy, plain-reward PPO reliably collapses to the constant-door optimum. The
+diagnosis is unambiguous and slightly surprising: <b>the belief is there and the policy ignores
+it</b>. The auxiliary probe reads the category out of the GRU state at ~88 % accuracy while the
+actor still walks to the same door every episode. Going top already earns ⅔ of the reward, and
+on-policy PPO stops sampling the alternative long before it discovers that the other door is
+sometimes worth +3.</p>
+
+<p>The fix is an exploration schedule, not a memory change: start at entropy 0.15 — high enough
+that both doors keep getting visited — and anneal to zero so the policy can sharpen once the
+contingency has been discovered.</p>
+
+<figure class="plate-wide">
+  <img src="{{FIG:fig_ppo_training.png}}" alt="PPO training curves across four exploration arms and three seeds">
+  <figcaption><span class="tag">Figure 8</span><b>PPO exploration sweep</b> — 4 arms × 3 seeds,
+  4M frames each; bands span seeds. (b) the ⅔ line is the thing to beat, and low-entropy arms sit
+  on it. (d) belief-probe accuracy climbs to ~0.85 in <em>every</em> arm, including the ones stuck
+  at the ceiling — memory is not the bottleneck, use of memory is. (f) per-seed outcomes: even the
+  released recipe escapes on only 2 of 3 seeds, so the basin is a seed lottery, not a solved
+  problem.</figcaption>
+</figure>
+
+<h3><span class="num">7.2</span>DreamerV3: a context-length problem</h3>
+
+<p>Dreamer's failure mode looked identical from the outside — a policy parked at ⅔ — but the
+cause is different. R2-Dreamer's replay sampler draws independent chunks and does not carry RSSM
+state across them, so the effective training context is <em>exactly</em> <code>batch_length</code>.
+At the default 64, the gradient from the door reward simply never reaches the timesteps where the
+category was visible ~75 steps earlier. The model cannot learn to retain what it is never asked
+to connect.</p>
+
+<p>Doubling <code>batch_length</code> to 128 fixes it. In the 2×2 sweep over capacity and context,
+the only configuration that fails is the one with both the smaller model <em>and</em> the short
+window; every configuration with a long enough window clears the ceiling.</p>
+
+<figure class="plate-wide">
+  <img src="{{FIG:fig_dreamer_training.png}}" alt="DreamerV3 sweep over model size and batch length">
+  <figcaption><span class="tag">Figure 9</span><b>Dreamer capacity × context sweep.</b> (a) 12M
+  with <code>batch_length 64</code> (pale blue) never leaves the ⅔ band across the whole run,
+  while the other three converge to ~1.0 on the trainer's eval metric. (d) the dynamics KL tells
+  the same story from inside the model: the failing run's prior stays furthest from its posterior.
+  (f) actor entropy — the successful runs commit, the failing run stays diffuse.</figcaption>
+</figure>
+
+<h3><span class="num">7.3</span>STORM: a window problem, twice</h3>
+
+<p>STORM needed the same lever as Dreamer and then a second one that has no Dreamer analogue.
+The first is <code>batch_length</code> 64 → 128, for exactly the reason above: a causal
+Transformer attends only within its training window. The second is the <em>acting-time</em>
+context: at deployment STORM re-encodes a rolling window of recent tokens, and that window is a
+separate hyperparameter from the training window. With a 32-token window the agent was
+structurally blind to evidence 75 steps back even though its weights knew what to do with it —
+widening the window to 128 lifted held-out success by ~7 points with no retraining at all.</p>
+
+<p>The third finding is about entropy, and it runs opposite to PPO. At entropy 0.03 STORM
+entrenched the constant-door habit (one category pinned at 0 % for the whole run); at 0.01 it
+bound both doors within the first 300 k frames. Model-based agents learn the contingency inside
+imagination, where the wrong door can be tried at no cost, so they need far less real exploration
+than PPO — and too much sampling noise actively prevents the policy from sharpening.</p>
+
+<figure class="plate-wide">
+  <img src="{{FIG:fig_storm_training.png}}" alt="STORM training curves for the winning configuration">
+  <figcaption><span class="tag">Figure 10</span><b>STORM, winning recipe</b>
+  (entropy 0.01, <code>batch_length</code> 128, context 128). Curves are from a faithful re-run of
+  the released configuration — the original run's telemetry was lost in a repository cleanup, and
+  the checkpoint we evaluate comes from that original run. Unlike the entropy-0.03 arms, this
+  configuration never spends time at the ⅔ ceiling.</figcaption>
+</figure>
+
+<div class="note">
+  <span class="h">Metastability</span>
+  Door-binding in STORM is not a one-way transition. Across a run, held-out success oscillates
+  between ~0.99 and dips as low as 0.72, recovering over 2–3 checkpoints; individual seeds differ
+  in when (and whether) they bind. We therefore archive checkpoints every 50 k gradient steps and
+  select on held-out data — the released checkpoint is the best of that archive, and reporting the
+  final checkpoint instead would have understated the method by about a point.
+</div>
+
+<h3><span class="num">7.4</span>The pattern</h3>
+
+<p>Three agents, three different single points of failure, one shared symptom:</p>
+
+<div class="tw">
+  <table>
+    <caption><b>Table 5.</b> Each agent's gating hyperparameter — the one change that separates a
+      constant-door policy from a solution.</caption>
+    <thead><tr><th>Agent</th><th>Default behaviour</th><th>Gating change</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td class="agent-ppo">PPO</td><td>constant door, belief present but unused</td>
+        <td>entropy 0.15 → 0, annealed</td>
+        <td>on-policy exploration dies before the contingency is found</td></tr>
+      <tr><td class="agent-dreamer">Dreamer</td><td>constant door</td>
+        <td><code>batch_length</code> 64 → 128</td>
+        <td>no replay-state carry, so gradients never span the 75-step delay</td></tr>
+      <tr><td class="agent-storm">STORM</td><td>0 % (memoryless implementation) → constant door</td>
+        <td>restore history features; <code>batch_length</code> 128; acting context 128; entropy 0.01</td>
+        <td>attention only sees its window — at train <em>and</em> at act time</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<h2><span class="num">8</span>Limitations</h2>
+
+<ul>
+  <li><b>Single seed per released agent.</b> Table 3 compares one checkpoint per method. The
+  seed-to-seed variance visible in Figure 8(f) is larger than the between-agent differences, so
+  the ranking in Table 3 should not be read as a ranking of methods.</li>
+  <li><b>Checkpoint selection differs.</b> STORM's checkpoint was selected on held-out data from
+  an archive; PPO's and Dreamer's are end-of-training. This favours STORM by roughly a point.</li>
+  <li><b>Action modes differ</b> (Section 5). Defensible, but it means the comparison is
+  "each method at its best" rather than a controlled ablation.</li>
+  <li><b>Compute is not matched.</b> PPO reaches its result in 27 minutes; the world-model agents
+  take 6–10 hours for comparable accuracy. On this task, the model-based machinery buys nothing
+  in final performance — the interesting claim is only that it can be made to work at all on a
+  memory task of this shape.</li>
+  <li><b>One task.</b> Every conclusion here is about fork_wall.</li>
+</ul>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<h2><span class="num">9</span>Reproducing this</h2>
+
+<p>Everything below runs from the repository root. The three pipelines use three separate
+environments and never import each other; they share only the environment package and the map
+dataset.</p>
+
+<pre># 0 · the shared dataset (deterministic)
+python scripts/bridge_tunnel/make_forkwall_dataset.py
+
+# 1 · PPO + GRU                                       (conda env: crusoe)
+python scripts/bridge_tunnel/train_ppo_bridge_tunnel.py \
+    --config configs/bridge_tunnel/btc_ppo_forkwall_plain_solved.yaml \
+    --maps-path data/bridge_tunnel/forkwall6k/train.pkl --total-timesteps 4000000
+
+# 2 · DreamerV3                                       (conda env: r2dreamer)
+BT_MAPS=$PWD/data/bridge_tunnel/forkwall6k/train.pkl \
+python r2dreamer_model/train.py env=bridge_tunnel_forkwall \
+    model=size25M model.rep_loss=dreamer batch_length=64 \
+    model.act_entropy=0.01 env.train_ratio=64 env.steps=3e6
+
+# 3 · STORM                                           (venv: STORM_model/.venv)
+cd STORM_model &amp;&amp; python -m scripts.train \
+    --env-config   configs/envs/bridge_tunnel_storm2_run6.yaml \
+    --agent-config configs/agents/sweep/stormH_ent001_bl128.yaml --offline
+
+# 4 · the unified evaluation used for Table 3 (per agent)
+python scripts/figures/paper_eval_all.py --agent {ppo|dreamer|storm} --episodes 900</pre>
+
+<details>
+  <summary>Where the artifacts live</summary>
+  <ul class="small">
+    <li><code>final_models/</code> — the three checkpoints, their as-trained configs, and a
+    README per agent with the exact command that produced it.</li>
+    <li><code>final_models/ENVIRONMENT.md</code> — the shared-environment proof;
+    <code>ARCHITECTURES.md</code> — the three architectures in detail.</li>
+    <li><code>scripts/figures/paper_*.py</code> — every figure, video and number in this report:
+    <code>paper_env_figs.py</code>, <code>paper_rollouts.py</code>,
+    <code>paper_training_data.py</code>, <code>paper_training_figs.py</code>,
+    <code>paper_eval_all.py</code>, <code>build_paper.py</code>.</li>
+    <li><code>STORM_model/scripts/true_eval_w.py</code> — the TRUE-metric evaluator
+    (<code>--sampled --env-context 128</code>).</li>
+    <li><code>data/bridge_tunnel/forkwall6k/</code> — the frozen dataset.</li>
+  </ul>
+</details>
+
+<footer>
+  <p><b>Fork Wall</b> · bridge_tunnel technical report · generated from repository state at
+  commit time. Figures and videos are produced by the scripts listed above; every number in
+  Tables 3–4 comes from <code>paper/figures/forkwall_paper/eval_all.json</code>, written by a
+  single evaluation harness run once per agent.</p>
+  <p>Potential-based shaping follows Ng, Harada &amp; Russell (1999). DreamerV3: Hafner et al.
+  (2023). STORM: Zhang et al. (2023), NeurIPS.</p>
+</footer>
+
+</div>
+
+<script>
+(function () {
+  var tabs = document.querySelectorAll('.tabs button');
+  var panels = document.querySelectorAll('[data-panel]');
+  tabs.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var want = btn.dataset.agent;
+      tabs.forEach(function (b) {
+        b.setAttribute('aria-selected', String(b === btn));
+      });
+      panels.forEach(function (p) {
+        var on = p.dataset.panel === want;
+        p.classList.toggle('vhide', !on);
+        if (!on) p.querySelectorAll('video').forEach(function (v) { v.pause(); });
+      });
+    });
+  });
+})();
+</script>

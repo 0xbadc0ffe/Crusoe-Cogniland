@@ -1,0 +1,633 @@
+% !TEX program = pdflatex
+% Overleaf-compatible. Self-contained: only stock packages.
+% FULL DRAFT with the three-environment experiments.
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage[round,authoryear]{natbib}
+\usepackage[colorlinks=true, allcolors=blue!55!black]{hyperref}
+\usepackage[section]{placeins}   % flush pending floats at each \section
+
+% relax float placement so figures sit near their text instead of piling up
+\renewcommand{\topfraction}{0.92}
+\renewcommand{\bottomfraction}{0.85}
+\renewcommand{\textfraction}{0.06}
+\renewcommand{\floatpagefraction}{0.72}
+\setcounter{topnumber}{3}
+\setcounter{bottomnumber}{2}
+\setcounter{totalnumber}{4}
+
+\captionsetup{font=small, labelfont=bf}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\figdir}{figures/belief_manifolds}
+\newcommand{\claim}[2]{\smallskip\noindent\textbf{Claim #1.}\ \emph{#2}\smallskip}
+
+\title{\textbf{Beliefs as Steerable Attractors:}\\[2pt]
+\large The Geometry and Causal Structure of Evidence Integration\\
+in Model-Free Reinforcement-Learning Agents}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-2.2em}
+
+% =====================================================================
+\begin{abstract}\noindent
+Recurrent reinforcement-learning (RL) agents acting under partial observation
+must maintain a \emph{belief} about the unobserved state of their environment.
+It is by now routine to \emph{decode} such beliefs from an agent's hidden state,
+but decodability alone says little about what the belief \emph{is} --- a static
+register that stores a value, or a dynamical process --- or whether it
+\emph{causes} the agent's behavior. We study belief in model-free RL agents as a
+dynamical, causal object across three partially observed decision tasks that
+differ only in the \emph{structure of the evidence} they present: a categorical
+cue, a stream of accumulating left/right evidence, and noisy naturalistic
+terrain. We find, using one analysis pipeline, that (i) the agent's belief
+occupies a low-dimensional manifold in recurrent-state space whose geometry is
+dictated by the task's evidence model --- a set of discrete attractors for
+categorical evidence, and a one-dimensional line attractor for evidence
+accumulation (net evidence linearly decodable at $R^2=1.00$); (ii) this belief
+is an integrating attractor, not a register: it forms gradually, persists across
+gaps in observation with no external cue, and revises in a lawful direction when
+evidence is forced off-policy; and (iii) behavior is a graded, monotone function
+of position on the belief manifold --- clamping the hidden state at points along
+the manifold traces a smooth psychometric curve that gives \emph{full} control of
+the agent's choice --- yet the \emph{same} intervention is behaviorally inert in a
+control task where the belief is represented and even persistently implantable
+but not decision-relevant. This double dissociation shows that causal
+load-bearing is a property of the task's decision structure, not of
+representational quality. Along the way we show that the choice of belief metric
+matters: a categorical (Hellinger) embedding is faithful for unordered latents
+but folds an ordered scalar latent into a misleading horseshoe, which a
+magnitude-respecting metric repairs. Our accumulation task instantiates, in a
+reward-trained agent with full observability and exact causal control, the
+line-attractor-and-perturbation paradigm long studied in decision neuroscience.
+\end{abstract}
+
+% =====================================================================
+\section{Introduction}
+
+An agent acting under partial observation cannot see the state that determines
+the consequences of its actions. To act well it must maintain a \emph{belief}: a
+summary of its history sufficient for choosing actions \citep{kaelbling1998planning}.
+In deep RL this belief is not designed but learned --- typically it lives,
+implicitly, in the hidden state of a recurrent policy \citep{lambrechts2022recurrent,
+mikulik2020meta}. A growing body of interpretability work shows that such beliefs
+can be \emph{read out}: linear probes recover the latent variables an agent should
+track, and recent work even recovers the predicted \emph{geometry} of the optimal
+belief in sequence models \citep{shai2024transformers, li2023othello}. Decoding a
+variable, however, leaves the scientifically central questions untouched. It does
+not tell us what \emph{kind} of object the belief is --- a value latched into a
+register, or a process unfolding in the agent's dynamics --- and, notoriously, it
+does not tell us whether the decoded variable actually \emph{causes} the agent's
+behavior or is merely correlated with it \citep{ravichander2021probing}.
+
+We take these two questions --- \emph{what form?} and \emph{does it cause?} --- as
+the subject of the paper, and study them in model-free RL agents, where belief is
+a by-product of reward maximization rather than an explicitly trained objective.
+Our stance is that a belief is best understood as a \emph{dynamical, causal}
+object, and that the way to characterize it is to (i) look at the \emph{geometry}
+traced out by the agent's recurrent states, (ii) analyze the \emph{dynamics} that
+move states through that geometry, and (iii) \emph{intervene} on those states and
+measure the effect on behavior. This viewpoint is standard in the
+systems-neuroscience study of decision circuits, where trained recurrent networks
+and neural populations alike are reverse-engineered into low-dimensional dynamical
+pictures --- fixed points, line attractors, and their perturbations
+\citep{mante2013context, sussillo2013opening, wong2006recurrent}. We bring it to
+bear on model-free RL agents, where we can do what neuroscience cannot: observe
+the belief with ground truth and steer it with surgical precision.
+
+The key design choice is to hold the analysis fixed while varying the
+\emph{structure of the evidence} a task provides (Figure~\ref{fig:tasks}). In a
+\emph{categorical-cue T-maze}, a single symbolic cue seen early must be carried to
+a decision made later --- the belief is a discrete class. In an \emph{accumulation
+T-maze} --- the perceptual decision-making paradigm of \citet{brunton2013rats} and
+\citet{pinto2018towers}, rendered as navigation --- a stream of left/right
+evidence must be integrated and the majority side chosen; the belief is a
+\emph{scalar} accumulator. In a \emph{naturalistic navigation} task, the belief
+(which terrain regime the agent is in) must be inferred from noisy, distributed
+observations. Because the tasks differ only in evidence structure, differences in
+the recovered belief object attach to that structure, and commonalities attest to
+the method's generality.
+
+\paragraph{Contributions.} We make three claims about belief in model-free RL
+agents, each supported by the same pair of tools across all three tasks.
+
+\claim{1 (Geometry follows evidence structure)}{The belief occupies a
+low-dimensional manifold in recurrent-state space whose geometry is dictated by
+the task's evidence model: discrete attractor points for categorical evidence and
+a one-dimensional line attractor for scalar accumulation. One task-agnostic
+construction recovers the correct object in each case.}
+
+\claim{2 (Belief is an integrating attractor, not a register)}{The belief forms
+gradually as evidence arrives, persists across an observation gap with no external
+cue to sustain it, and revises in a lawful direction when fresh evidence is forced
+off-policy; the recurrent dynamics show marginally stable slow manifolds
+consistent with integration rather than a latched value.}
+
+\claim{3 (Behavior is a graded causal function of manifold position, and this is
+task-contingent)}{Clamping the hidden state at fractional positions along the
+belief manifold produces a smooth psychometric curve over choice with full control
+at the endpoints. Yet in a control task where the same latent is represented ---
+and can even be persistently implanted --- but is not decision-relevant, the
+identical intervention is behaviorally inert: a double dissociation showing that
+causal load-bearing is a property of the task's decision structure, not of
+decodability.}
+
+\paragraph{Why it matters.} For interpretability, Claim~3 upgrades ``we can decode
+$X$'' to ``$X$ is a causal, continuously manipulable variable,'' and gives a
+graded test --- the manifold-clamp psychometric --- for whether a probed feature is
+load-bearing, sharper than an all-or-nothing patch. For the science of learned
+agents, viewing belief as attractor dynamics explains why memory persists across
+observation gaps and predicts how it fails. And because our accumulation task
+reproduces, in a reward-trained agent, the line-attractor mechanism and
+perturbation logic foundational in decision neuroscience \citep{mante2013context,
+hanks2015distinct}, it offers an in-silico model organism where those experiments
+can be run with full observability and exact causal control.
+
+% =====================================================================
+\section{Related work}
+
+\paragraph{Belief representations in RL and sequence models.} That recurrent POMDP
+agents encode belief-like sufficient statistics is established theoretically and
+empirically \citep{kaelbling1998planning, lambrechts2022recurrent}, and meta-RL
+agents can approximate Bayes-optimal updates \citep{mikulik2020meta}. Recent
+interpretability decodes such latents and even recovers the \emph{geometry} of the
+optimal belief predicted by computational mechanics in transformers
+\citep{shai2024transformers}, echoing emergent world-state representations in
+game-playing models \citep{li2023othello}. We depart in two ways: we study
+\emph{model-free} agents where belief is incidental to reward, and we go past
+decoding to \emph{causal, graded} intervention and to \emph{dynamical}
+characterization.
+
+\paragraph{Dynamics of decision-making in trained RNNs and brains.} A long
+tradition reverse-engineers recurrent computation into low-dimensional dynamics
+--- fixed points and line attractors underlying integration and choice
+\citep{sussillo2013opening, mante2013context, wong2006recurrent}, with evidence
+accumulation as the canonical case \citep{gold2007neural, brunton2013rats}. Causal
+perturbations of the accumulator in cortex sharpened this picture
+\citep{hanks2015distinct}, and belief-state accounts connect it to reward learning
+\citep{starkweather2017dopamine}. Our accumulation environment is a deliberate RL
+analogue of the accumulating-towers task \citep{pinto2018towers}; our contribution
+is to show the same dynamical object arising in a \emph{model-free, reward-trained}
+agent and to steer it along its manifold.
+
+\paragraph{Activation-level interpretation and steering.} Causal mediation via
+activation patching and representation-level steering vectors are common tools for
+locating and manipulating features \citep{meng2022locating, turner2023activation,
+zou2023representation}, and probing studies caution that decodability need not
+imply causal use \citep{ravichander2021probing}. Rather than restate that caution,
+we operationalize its resolution: a manifold-clamp psychometric that measures
+\emph{how much} of the behavior a belief controls, and a matched-representation
+control task that isolates \emph{when} a represented belief is load-bearing.
+
+% =====================================================================
+\section{Setup and definitions}
+\label{sec:setup}
+
+\paragraph{Partially observed decision tasks.} Each task is a POMDP in which a
+hidden latent $z$ --- the categorical cue, the sign/magnitude of accumulated
+evidence, or the terrain regime --- determines which terminal choice is rewarded.
+The agent receives egocentric symbolic observations $o_t$ and emits actions
+$a_t$; a recurrent policy $\pi_\theta(a_t \mid h_t)$ carries a hidden state
+$h_t = f_\theta(h_{t-1}, o_t)$ (a GRU). All three tasks share an observation and
+action interface, so a single architecture and analysis pipeline apply unchanged.
+We train model-free recurrent agents with PPO \citep{schulman2017proximal} to high
+success and freeze them for analysis; the accumulation agent reaches $100\%$
+success (optimal-length trajectories), and the cue agents reach $100\%$.
+
+\paragraph{Belief.} Operationally, the belief at time $t$ is a distribution
+$b_t = g(h_t)$ over the task-relevant latent, where $g$ is a \emph{linear} read-out
+(a multinomial logistic probe) fit on held-out episodes from the frozen hidden
+states. Linearity keeps the belief an affine function of $h_t$, so geometry in
+belief space corresponds to geometry in hidden space and interventions can be
+expressed in either. We stress that $b_t$ is a \emph{measurement} of the agent's
+state, not a claim that the agent computes it explicitly; the causal experiments
+(\S\ref{sec:e3}) license statements about what the belief \emph{does}.
+
+% =====================================================================
+\section{Method}
+\label{sec:method}
+One triplet of tools, applied identically to every task.
+
+\paragraph{(1) Belief-space geometry.} From many frozen rollouts we collect hidden
+states $\{h_t\}$ and probe beliefs $\{b_t\}$. To visualize the shape of the set of
+beliefs we embed them with a divergence-preserving projection: map each belief
+through the Hellinger embedding $b \mapsto \sqrt{b}$ and take leading principal
+components (equivalently, information-geometric MDS on the Bhattacharyya
+divergence). Confident beliefs land at simplex vertices and ambiguous beliefs in
+the interior, so the number of distinguishable states and how the agent moves
+between them become directly visible and comparable across tasks. For
+\emph{ordered} latents we additionally use a magnitude-respecting embedding
+(\S\ref{sec:metric}).
+
+\paragraph{(2) Attractor analysis.} To ask whether the belief is a dynamical
+attractor we analyze the frozen recurrent map $h \mapsto f_\theta(h,o)$ under a
+fixed post-evidence observation, locating slow points by minimizing the update
+magnitude $\lVert f_\theta(h,o) - h\rVert^2$ and reading local stability from the
+Jacobian spectrum. Marginally stable directions (eigenvalues near the unit circle)
+signal integration/memory --- a continuum of near-fixed states along which evidence
+pushes the belief and where it rests.
+
+\paragraph{(3) Manifold-clamp steering.} To test causal load-bearing in a graded
+way we intervene on the hidden state. Given the belief manifold's local axis
+$\hat u(x)$ at task-phase $x$ (the direction between class-conditional means, made
+position-local because the code can rotate along a trajectory), we clamp the
+component of $h_t$ along $\hat u$ to a target $\rho_f$ interpolating between the
+endpoints at fraction $f\in[0,1]$:
+\[
+  h_t \;\leftarrow\; h_t + \big(\rho_f - \langle h_t, \hat u\rangle\big)\,\hat u,
+\]
+sustained through the decision phase. Sweeping $f$ and reading out the terminal
+choice yields a \emph{psychometric curve}: behavior as a function of implanted
+belief. A smooth, monotone curve with full endpoint control means the belief is
+continuously steerable and causally load-bearing; a flat curve means it is not.
+
+% =====================================================================
+\section{Tasks}
+\label{sec:tasks}
+
+\begin{figure}[tbp]
+  \centering
+  \begin{subfigure}{0.62\linewidth}
+    \includegraphics[width=\linewidth]{\figdir/env_towers_maps.png}
+    \caption{accumulation T-maze: a selection of maps}
+  \end{subfigure}\hfill
+  \begin{subfigure}{0.36\linewidth}
+    \includegraphics[width=\linewidth]{\figdir/env_towers_filmstrip.png}
+    \caption{egocentric evidence stream}
+  \end{subfigure}
+  \caption{\textbf{The accumulation T-maze (\code{towers}).} The agent runs east;
+  a tower on the top wall is left evidence, on the bottom wall right evidence.
+  After the evidence ends and leaves view, a T-junction requires choosing the
+  majority side (white ring). (b) The egocentric $5{\times}5$ view: towers enter
+  and leave as discrete evidence pulses while the running accumulator climbs. The
+  three environments share this observation/action interface.}
+  \label{fig:tasks}
+\end{figure}
+
+The three environments span the axis of evidence structure while sharing
+interface, architecture, and analysis.
+
+\paragraph{Categorical cue (\code{memory}; discrete belief).} A T-maze in which a
+single cue, visible only briefly near the start, specifies the rewarded
+branch/door; the belief is one of $K$ classes. We use $K\in\{2,3,4\}$ cue sets. A
+cue carries two attributes (a shape indicating the branch and a colour indicating
+the door); the $2$-cue set entangles them (two cues) while the $4$-cue set
+factorizes them (all shape$\times$colour combinations), which lets us test whether
+the agent's belief factorizes. The cue leaves view long before the choice, so the
+task exercises memory (persistence) most starkly.
+
+\paragraph{Evidence accumulation (\code{towers}; scalar belief).} The
+neuroscience-canonical case as navigation (Figure~\ref{fig:tasks}): a stream of
+left/right ``towers'' must be integrated and the \emph{majority} side chosen after
+the evidence leaves view. The belief is a scalar accumulator (net right$-$left).
+
+\paragraph{Naturalistic navigation (\code{bridge\_tunnel}; noisy belief).} A
+procedurally generated terrain-crossing task in which the belief --- the terrain
+regime (rocky / lakes / balanced) that dictates the correct strategy --- must be
+inferred from noisy, spatially distributed observations. It supplies the crucial
+\emph{control}: two variants represent the same belief but differ in whether it is
+decision-relevant. In \code{fork\_wall}, terrain determines which of two doors is
+correct (belief is load-bearing); in \code{commit}, the agent commits to a
+crossing strategy where the belief need not gate the choice.
+
+% =====================================================================
+\section{Experiment 1: belief geometry follows evidence structure}
+\label{sec:e1}
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=0.85\linewidth]{\figdir/geom_memory_vertices.png}\\[3pt]
+  \includegraphics[width=\linewidth]{\figdir/geom_towers_line.png}
+  \caption{\textbf{Belief geometry is dictated by evidence structure.}
+  \emph{Top:} the \code{memory} categorical belief embeds as \emph{discrete
+  vertices} of a probability simplex (here the $3$/$4$-cue sets); confident beliefs
+  are mutually equidistant and the number of occupied vertices equals the number
+  of cue classes. \emph{Bottom:} the \code{towers} scalar belief is a
+  \emph{one-dimensional line attractor}: net evidence is linearly decoded from the
+  GRU state at $R^2=1.00$ (C); post-evidence states form a single axis ordered by
+  net evidence (A, correlation $0.92$ with the leading PC); the belief forms along
+  this axis over time (B); and the belief read-out is the sharp step of a
+  near-perfect integrator (D).}
+  \label{fig:geometry}
+\end{figure}
+
+We construct the belief-space embedding (\S\ref{sec:method}) for each frozen agent
+(Figure~\ref{fig:geometry}). The geometries differ exactly as the evidence
+structure predicts, from one construction.
+
+\paragraph{Categorical $\Rightarrow$ discrete attractors.} For \code{memory}, the
+belief embeds as isolated vertices of a probability simplex, one per cue class:
+$K$ classes occupy $K$ vertices spanning $K{-}1$ dimensions (with a small
+residual). Confident beliefs are mutually equidistant, so the class \emph{identity}
+--- not a magnitude --- is what the geometry encodes.
+
+\paragraph{Scalar $\Rightarrow$ line attractor.} For \code{towers}, the belief is a
+one-dimensional line. Net accumulated evidence is decoded from the GRU state by a
+single linear map at $R^2=1.00$; post-evidence states arrange along one dominant
+axis ordered by net evidence (leading principal component correlation $0.92$); and
+early states start near the center and sweep outward as evidence arrives ---
+integration, not a latched value. The attractor analysis (\S\ref{sec:e2}) confirms
+the axis is a slow manifold.
+
+\paragraph{Naturalistic $\Rightarrow$ a graded, noisier manifold.} For
+\code{bridge\_tunnel}, the same construction yields a category belief that forms
+gradually from distributed terrain evidence, with the interior of the simplex
+genuinely occupied during inference (Figure~\ref{fig:bt_geometry}). The belief is
+weaker in a plain agent (held-out category decode $\approx0.48$) and sharpened by
+an auxiliary belief head ($\approx0.76$), but present in both.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=0.92\linewidth]{\figdir/geom_bt.png}
+  \caption{\textbf{Naturalistic belief (\code{bridge\_tunnel}).} The map-category
+  belief (rocky/lakes/balanced) inferred from noisy terrain, embedded with the same
+  Hellinger construction and evaluated on held-out maps; belief forms gradually
+  over the episode (right) rather than snapping to a vertex.}
+  \label{fig:bt_geometry}
+\end{figure}
+
+\subsection{The belief metric must match the latent's structure}
+\label{sec:metric}
+
+The Hellinger/Bhattacharyya embedding treats belief classes as \emph{unordered}.
+This is faithful for the categorical cue --- there is no magnitude to represent, and
+the equidistant simplex vertices are the honest picture. For the \emph{ordered}
+scalar of \code{towers}, however, it is actively misleading: the Hellinger distance
+\emph{saturates} at $\sqrt2$ as soon as two beliefs stop overlapping, so the
+maximally opposite beliefs (net $+4$ vs $-4$) sit at the same ceiling distance as
+moderately different ones, and a linear projection of this bounded, ordered metric
+folds into a \emph{horseshoe} in which the extremes curl together
+(Figure~\ref{fig:metric}A; projected distance $0.08$ for the opposite extremes
+versus $0.15$ for adjacent classes --- an inversion of the truth). A casual reader
+would misread the folded extremes as similar beliefs.
+
+Two remedies recover a faithful picture (Figure~\ref{fig:metric}B,C): a
+magnitude-respecting distribution metric (Wasserstein-1, the $L_1$ distance of CDFs
+on the ordered support), whose classical MDS lays the beliefs on a straight line
+with the extremes maximally far ($d(+4,-4)=7.76$ vs.\ $d(+4,+3)=0.90$, all variance
+on one axis); or simply the scalar read-out itself, $\mathbb{E}[\text{net}\mid b]$
+against belief confidence, which cannot fold. The methodological point generalizes:
+\emph{match the belief metric to the latent's structure --- categorical
+$\rightarrow$ Hellinger; ordinal/scalar $\rightarrow$ Wasserstein or the raw scalar
+axis.}
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\linewidth]{\figdir/metric_faithful.png}
+  \caption{\textbf{The metric encodes an assumption about the latent.} (A)
+  Hellinger$+$PCA of the ordered scalar belief folds into a horseshoe: the opposite
+  extremes $\pm4$ project close together (misleading). (B) Wasserstein$+$MDS lays
+  the same beliefs on a straight ordered line with the extremes maximally far. (C)
+  The scalar read-out $\mathbb{E}[\text{net}\mid b]$ vs.\ confidence is faithful by
+  construction.}
+  \label{fig:metric}
+\end{figure}
+
+% =====================================================================
+\section{Experiment 2: beliefs are integrating attractors, not registers}
+\label{sec:e2}
+
+\paragraph{Formation and persistence.} In all tasks the belief \emph{forms}
+gradually --- it moves along the manifold from ambiguity toward a
+vertex/endpoint as evidence arrives (Figure~\ref{fig:geometry}B for \code{towers};
+the cue tasks snap to a vertex once the cue is seen and the naturalistic task ramps
+over many steps). Crucially the belief then \emph{persists} across an observation
+gap with nothing sustaining it: in \code{towers} the accumulator is held stably
+through the run-out corridor after all towers leave view, and in \code{memory} the
+cue class is held from the cue room to the distant door. The attractor analysis of
+the frozen recurrent map finds no exact fixed points but hundreds of slow points
+with leading Jacobian eigenvalue magnitude $\approx 1.000$ --- approximately
+marginally stable slow manifolds (one per belief fiber), the dynamical signature of
+integration/memory rather than a latched register.
+
+\paragraph{Lawful revision under forced evidence.} We test integration causally by
+forcing the agent, off-policy, through evidence that contradicts its current
+belief and reading out the resulting belief (Figure~\ref{fig:mem_evidence}). In
+\code{memory}, forcing the $2$-cue agent down the wrong corridor \emph{collapses its
+belief to the opposite attractor} --- it comes to ``believe'' the other cue and its
+downstream door choice flips accordingly; the $4$-cue agent instead \emph{revises
+only the branch/direction factor} while preserving the colour factor, and the
+$3$-cue agent revises in the direction consistent with its training likelihoods.
+The belief is thus not a frozen record of the cue but a state that integrates new
+evidence.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=0.9\linewidth]{\figdir/mem_evidence.png}
+  \caption{\textbf{Beliefs integrate forced evidence (\code{memory}, $2$-cue).}
+  Forcing the agent through the wrong corridor drives its decoded belief from one
+  attractor to the other (aligned to the moment the marker is opened), and its
+  downstream choice follows --- the belief is updated by evidence, not merely stored.}
+  \label{fig:mem_evidence}
+\end{figure}
+
+% =====================================================================
+\section{Experiment 3: behavior is a graded causal function of manifold position}
+\label{sec:e3}
+
+The central experiment clamps the hidden state at fractions $f$ along the belief
+manifold at the decision phase and reads out the choice (\S\ref{sec:method}).
+
+\paragraph{\code{towers}: full graded control, evidence-independent.} Clamping the
+accumulator belief traces a clean psychometric (Figure~\ref{fig:psy_towers}B):
+$P(\text{right door})$ moves $0.00 \!\to\! 0.03\,(f{=}0.5) \!\to\! 0.97\,(f{=}0.62)
+\!\to\! 1.00$, with \emph{zero} timeouts --- full control at both endpoints. The
+transition is steep (the sharp sigmoid of a near-perfect integrator). Splitting by
+the map's true majority (Figure~\ref{fig:psy_towers}C), true-left and true-right
+maps follow the \emph{same} curve: the implanted belief \emph{overrides} the
+accumulated evidence, and the decision is a single path-independent function of the
+belief coordinate. The Hellinger belief arc (A) is shown for continuity with the
+other tasks; per \S\ref{sec:metric} it is the saturated image of the line attractor.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\linewidth]{\figdir/psy_towers.png}
+  \caption{\textbf{Manifold-clamp psychometric (\code{towers}).} (A) Hellinger
+  belief space (ordered arc). (B) Clamping the GRU belief along the manifold gives
+  full graded control of the door with no timeouts. (C) True-left and true-right
+  maps follow one curve: the clamp overrides the evidence (path-independent
+  boundary).}
+  \label{fig:psy_towers}
+\end{figure}
+
+\paragraph{\code{memory}: the psychometric respects the belief's factorization.}
+The same clamp along the cue-belief manifold (Figure~\ref{fig:psy_memory}) moves the
+probe belief smoothly and the behavior as a steep sigmoid. In the entangled $2$-cue
+agent the branch and door choices are \emph{yoked} --- both flip together at the same
+$f$, because a single cue code carries both attributes. In the factorized $4$-cue
+agent, clamping the shape/direction axis flips the branch smoothly while the door
+stays \emph{invariant} at $P=1.0$ across the entire edge, because the colour factor
+--- and thus the door --- is left untouched. The causal geometry of the intervention
+mirrors the representational geometry of the belief.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=0.95\linewidth]{\figdir/mem_psychometric.png}
+  \caption{\textbf{Manifold-clamp psychometric (\code{memory}).} Probe belief (grey)
+  moves smoothly with clamp position; behavior is a steep sigmoid. \emph{Left,}
+  $4$-cue: clamping the shape axis flips the branch (purple) while the door (green)
+  stays at $1.0$ --- the intervention respects the belief's factorization.
+  \emph{Right,} $2$-cue: branch and door are yoked and flip together.}
+  \label{fig:psy_memory}
+\end{figure}
+
+\paragraph{\code{bridge\_tunnel} \code{fork\_wall}: graded control in a noisy task.}
+The same clamp on the naturalistic category belief gives a graded, monotone
+psychometric over the door choice (Figure~\ref{fig:psy_bt}), with full control at
+$f{=}1$ in both sweep directions. Sweeping from lakes toward rocky the choice
+crosses $50/50$ at $f\approx0.62$; sweeping from rocky toward lakes it crosses at
+$f\approx0.38$ --- \emph{the same physical point} ($\approx\!62\%$ toward rocky),
+a single path-independent boundary. The transition is broader than in
+\code{towers}/\code{memory}, consistent with ambient terrain evidence partially
+contradicting the implant at intermediate doses. Belief is load-bearing here.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=0.95\linewidth]{\figdir/psy_bt_forkwall.png}
+  \caption{\textbf{Manifold-clamp psychometric (\code{bridge\_tunnel}
+  \code{fork\_wall}).} Door choice varies smoothly with clamp position and is fully
+  controlled at $f{=}1$ in both directions; the $50/50$ boundary is the same physical
+  point from either sweep ($\approx\!62\%$ toward rocky) --- path-independent.}
+  \label{fig:psy_bt}
+\end{figure}
+
+\paragraph{\code{bridge\_tunnel} \code{commit}: the belief is epiphenomenal ---
+a double dissociation.} In the \code{commit} variant the category belief is present
+and decodable (auxiliary agent held-out $\approx0.76$) and can even be
+\emph{persistently implanted}: a full belief swap during an early window survives
+long after release, the decoded belief staying on the wrong category for $100^{+}$
+steps against contradicting terrain (Figure~\ref{fig:psy_commit}). Yet the agent's
+behavior is \emph{unchanged} --- its commitment matrix and success rate are identical
+to baseline. The identical intervention that fully controls choice in
+\code{fork\_wall} is behaviorally inert in \code{commit}. Representational quality,
+decodability, and even persistence do not make a belief causal; the task's decision
+structure does.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=0.95\linewidth]{\figdir/psy_bt_commit.png}
+  \caption{\textbf{Persistent but epiphenomenal belief (\code{bridge\_tunnel}
+  \code{commit}).} A full belief swap (dotted) during the clamp window sticks after
+  release --- the decoded belief remains on the wrong category for $100^{+}$ steps ---
+  while a half-belief (dashed) re-corrects. Despite the persistent implant, the
+  agent's commitment behavior is unchanged from baseline (text): the belief is
+  represented but not decision-relevant.}
+  \label{fig:psy_commit}
+\end{figure}
+
+\paragraph{Summary of the causal picture.} Table~\ref{tab:summary} collects the
+three environments. The same manifold-clamp intervention gives three transfer
+functions on one axis --- steep-full, factorized, graded-full, and flat --- selected
+by the task's decision structure, not by how well the belief can be read out.
+
+\begin{table}[tbp]
+\centering\small
+\begin{tabular}{@{}lllll@{}}
+\toprule
+Environment & Latent & Belief geometry & Clamp $\rightarrow$ behavior & Belief causal? \\
+\midrule
+\code{memory} ($2$-cue)  & categorical (entangled)  & simplex vertices & steep; branch+door yoked & yes \\
+\code{memory} ($4$-cue)  & categorical (factorized) & simplex vertices & steep; branch flips, door fixed & yes (factored) \\
+\code{towers}            & scalar accumulator       & line attractor   & steep, full, evidence-overriding & yes \\
+\code{bridge} fork\_wall & category (noisy)         & graded simplex   & graded, full, path-independent & yes \\
+\code{bridge} commit     & category (noisy)         & graded simplex   & flat (implant persists, inert) & no \\
+\bottomrule
+\end{tabular}
+\caption{One intervention, four transfer functions, selected by decision
+structure. Decodability is high in all rows; causal load-bearing is not.}
+\label{tab:summary}
+\end{table}
+
+% =====================================================================
+\section{Discussion}
+
+Across three tasks that differ only in evidence structure, a model-free RL agent
+represents its task-relevant belief as a \emph{dynamical attractor manifold} whose
+geometry mirrors the task's evidence model, integrates evidence over time, persists
+without external support, and --- where the task makes it decision-relevant --- is a
+graded, continuously steerable cause of behavior. The manifold-clamp psychometric
+turns ``is this feature causal?'' into a quantitative dose--response curve, and the
+\code{commit} control shows why that matters: decodability, representational
+sharpness, and even implant persistence can all be present in a belief that does
+nothing. We also found that the \emph{metric} used to visualize belief is a modeling
+choice with teeth --- a categorical embedding folds an ordered latent into a
+misleading horseshoe --- and gave a simple rule for matching metric to latent.
+
+\paragraph{Scope and limitations.} The agents are small recurrent policies on
+gridworld-scale POMDPs, chosen for the ground truth and causal access they afford;
+claims about ``model-free RL agents'' should be read as claims about this regime,
+not about frontier-scale agents. The belief is a linear measurement of the hidden
+state; non-linear structure it misses is a caveat we probe but cannot fully exclude.
+``Integration'' and the neuroscience analogy are about consistency with the task's
+evidence statistics up to the training distribution, not optimal Bayesian inference.
+Finally, the manifold-clamp axis is estimated from class-conditional means; we make
+it position-local to handle rotation of the code along a trajectory, but a
+mis-estimated axis would under-state causal control (a conservative bias).
+
+% =====================================================================
+\begin{thebibliography}{99}\small
+\bibitem[Brunton et al.(2013)]{brunton2013rats} B.~Brunton, M.~Botvinick, and
+C.~Brody. Rats and humans can optimally accumulate evidence for decision-making.
+\emph{Science}, 2013.
+\bibitem[Gold \& Shadlen(2007)]{gold2007neural} J.~Gold and M.~Shadlen. The neural
+basis of decision making. \emph{Annual Review of Neuroscience}, 2007.
+\bibitem[Hanks et al.(2015)]{hanks2015distinct} T.~Hanks, C.~Kopec, B.~Brunton,
+C.~Duan, J.~Erlich, and C.~Brody. Distinct relationships of parietal and prefrontal
+cortices to evidence accumulation. \emph{Nature}, 2015.
+\bibitem[Kaelbling et al.(1998)]{kaelbling1998planning} L.~Kaelbling, M.~Littman,
+and A.~Cassandra. Planning and acting in partially observable stochastic domains.
+\emph{Artificial Intelligence}, 1998.
+\bibitem[Lambrechts et al.(2022)]{lambrechts2022recurrent} G.~Lambrechts,
+A.~Bolland, and D.~Ernst. Recurrent networks, hidden states and beliefs in
+partially observable environments. \emph{TMLR}, 2022.
+\bibitem[Li et al.(2023)]{li2023othello} K.~Li, A.~K. Hopkins, D.~Bau, F.~Vi\'egas,
+H.~Pfister, and M.~Wattenberg. Emergent world representations. \emph{ICLR}, 2023.
+\bibitem[Mante et al.(2013)]{mante2013context} V.~Mante, D.~Sussillo, K.~Shenoy,
+and W.~Newsome. Context-dependent computation by recurrent dynamics in prefrontal
+cortex. \emph{Nature}, 2013.
+\bibitem[Meng et al.(2022)]{meng2022locating} K.~Meng, D.~Bau, A.~Andonian, and
+Y.~Belinkov. Locating and editing factual associations in GPT. \emph{NeurIPS}, 2022.
+\bibitem[Mikulik et al.(2020)]{mikulik2020meta} V.~Mikulik, G.~Del\'etang,
+T.~McGrath, et al. Meta-trained agents implement Bayes-optimal agents.
+\emph{NeurIPS}, 2020.
+\bibitem[Pinto et al.(2018)]{pinto2018towers} L.~Pinto, S.~A. Koay, et al. An
+accumulation-of-evidence task using visual pulses for mice navigating in virtual
+reality. \emph{Frontiers in Behavioral Neuroscience}, 2018.
+\bibitem[Ravichander et al.(2021)]{ravichander2021probing} A.~Ravichander,
+Y.~Belinkov, and E.~Hovy. Probing the probing paradigm. \emph{EACL}, 2021.
+\bibitem[Schulman et al.(2017)]{schulman2017proximal} J.~Schulman, F.~Wolski,
+P.~Dhariwal, A.~Radford, and O.~Klimov. Proximal policy optimization algorithms.
+\emph{arXiv:1707.06347}, 2017.
+\bibitem[Shai et al.(2024)]{shai2024transformers} A.~Shai, S.~Marzen, P.~Riechers,
+et al. Transformers represent belief state geometry in their residual stream.
+\emph{arXiv}, 2024.
+\bibitem[Starkweather et al.(2017)]{starkweather2017dopamine} C.~Starkweather,
+B.~Babayan, N.~Uchida, and S.~Gershman. Dopamine reward prediction errors reflect
+hidden-state inference across time. \emph{Nature Neuroscience}, 2017.
+\bibitem[Sussillo \& Barak(2013)]{sussillo2013opening} D.~Sussillo and O.~Barak.
+Opening the black box: low-dimensional dynamics in high-dimensional recurrent neural
+networks. \emph{Neural Computation}, 2013.
+\bibitem[Turner et al.(2023)]{turner2023activation} A.~Turner, L.~Thiergart, et al.
+Activation addition: steering language models without optimization. \emph{arXiv},
+2023.
+\bibitem[Wong \& Wang(2006)]{wong2006recurrent} K.-F. Wong and X.-J. Wang. A
+recurrent network mechanism of time integration in perceptual decisions.
+\emph{Journal of Neuroscience}, 2006.
+\bibitem[Zou et al.(2023)]{zou2023representation} A.~Zou, L.~Phan, S.~Chen, et al.
+Representation engineering: a top-down approach to AI transparency. \emph{arXiv},
+2023.
+\end{thebibliography}
+
+\end{document}

@@ -548,7 +548,9 @@ class STORM2(ContinualAgent):
         if is_first is None:
             is_first = jnp.zeros(batch_size, dtype=bool)
         else:
-            is_first = jnp.squeeze(is_first)
+            # reshape, not squeeze: squeeze collapses (1,) to a 0-d scalar and
+            # breaks the per-env masking below for single-env rollouts.
+            is_first = jnp.reshape(is_first, (batch_size,))
         return self.act(state, obs, prev_action, is_first, training=training)
 
     # ── env loops (same structure as cl/agents/storm.py) ─────────────────

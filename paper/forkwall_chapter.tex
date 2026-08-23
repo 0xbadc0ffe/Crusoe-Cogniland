@@ -1,0 +1,325 @@
+% !TEX program = pdflatex
+% Thesis chapter: the bridge_tunnel fork_wall environment — seven sequential
+% experiments. Self-contained, stock packages only. Figures from
+% outputs/thesis_forkwall (copied to paper/figures/thesis_forkwall).
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{float}
+\usepackage[section]{placeins}
+
+\renewcommand{\topfraction}{0.92}
+\renewcommand{\floatpagefraction}{0.72}
+\captionsetup{font=small, labelfont=bf}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\figdir}{figures/thesis_forkwall}
+
+% headline numbers (filled from the final runs)
+\input{\figdir/numbers.tex}
+
+\title{\textbf{The \code{fork\_wall} Environment:}\\[2pt]
+\large A Sequential Experimental Study of a Recurrent Agent's\\
+Beliefs, Skills and Decisions in Partially Observed Navigation}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-2.5em}
+
+\begin{abstract}\noindent
+This chapter develops, end to end, the experimental testbed used throughout the
+thesis: the \code{bridge\_tunnel} \code{fork\_wall} task, a partially observed
+navigation problem in which the map's hidden \emph{category} must be inferred
+from terrain evidence and read out in a discrete door choice. We proceed in
+seven steps: (\S\ref{sec:env}) the environment; (\S\ref{sec:data}) the
+procedural map dataset; (\S\ref{sec:train}) training recurrent PPO agents with
+and without an auxiliary belief loss, separating task \emph{completion} from
+\emph{decision quality}; (\S\ref{sec:rollouts}) behaviour, including
+generalisation to out-of-distribution maps and the three crossing regimes
+(build / mine / avoid); (\S\ref{sec:hidden}) what the recurrent state encodes,
+via linear probes; (\S\ref{sec:belief}) belief formation along trajectories;
+and (\S\ref{sec:plan}) whether the agent's state contains its \emph{future}
+crossing strategy before the obstacle is reached --- a minimal test of
+model-free planning.
+\end{abstract}
+
+% =====================================================================
+\section{The environment}
+\label{sec:env}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{\figdir/fig1_env.png}
+  \caption{\textbf{The \code{fork\_wall} task.} \emph{Left:} a full map. The
+  agent spawns at the west edge (white dot) and must cross a procedurally
+  generated terrain field --- water it can bridge (\emph{build}), rock it can
+  tunnel through (\emph{mine}), impassable trees, and open grass --- to reach a
+  wall at the east edge. The wall has a single passage; behind it lie
+  \emph{two} doors. Only the door matching the map's hidden category pays
+  reward: bottom for \code{lakes}, top for \code{rocky}, either for
+  \code{balanced}. \emph{Right:} the agent's observation --- a $21{\times}21$
+  egocentric crop of tile identities plus scalar features (goal compass,
+  facing, step count). The category is never observed directly: it must be
+  \emph{inferred} from the terrain statistics seen en route.}
+  \label{fig:env}
+\end{figure}
+
+\paragraph{Why this design.} The task couples three computations that we want
+to study separately in one agent: (i) \emph{navigation} with terrain-dependent
+skills (bridging water costs a build action per cell; mining rock likewise);
+(ii) \emph{belief formation} --- the map category is a latent variable whose
+evidence is spatially distributed and noisy; and (iii) a \emph{discrete
+decision} (the door) whose only correct predictor is that belief. Because the
+doors are physically identical and spatially separated from the evidence, door
+accuracy is a pure behavioural readout of the agent's belief.
+
+\paragraph{Mechanics.} Actions: four movements, \code{build} (place a bridge
+tile on adjacent water) and \code{mine} (convert adjacent rock to walkable
+ground). Reward: a per-step slack penalty, potential-based shaping toward the
+correct door, and a terminal bonus for the category-correct door. Episodes are
+capped generously (800 steps) so that timeouts indicate genuine failure to
+cross rather than tight scheduling.
+
+% =====================================================================
+\section{The map dataset}
+\label{sec:data}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{\figdir/fig2_dataset.png}
+  \caption{\textbf{Procedural maps by category.} Rows: \code{balanced},
+  \code{lakes}, \code{rocky}; columns: generator seeds. Categories share one
+  generator and differ only in the water/rock coverage fractions, so no single
+  tile identifies the category --- classification requires integrating terrain
+  statistics. Training samples maps procedurally (fresh seed per episode);
+  evaluation uses held-out seeds ($\geq$10\,000).}
+  \label{fig:dataset}
+\end{figure}
+
+The three categories are deliberately \emph{overlapping} distributions:
+\code{balanced} maps contain both lakes and rock formations, and individual
+local views of a \code{lakes} map can look rocky. The category is thus a
+genuinely latent, spatially extended variable --- the property that makes the
+belief analyses of \S\ref{sec:hidden}--\ref{sec:plan} meaningful.
+
+% =====================================================================
+\section{Training: auxiliary belief loss vs.\ none}
+\label{sec:train}
+
+We train recurrent PPO (GRU core, 128 units; identical architecture and
+hyperparameters, seed 2, 6M environment steps) in two variants: with an
+\textbf{auxiliary belief loss} (a linear head on the GRU state classifying the
+map category, coefficient 0.3, gradients flowing into the recurrent core) and
+with \textbf{no auxiliary loss}. The auxiliary head never affects the reward;
+it only shapes the representation.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{\figdir/fig3_training.png}
+  \caption{\textbf{Training curves} (aux-belief seeds 2 and 3, no-aux seed 2).
+  (A) mean episode return; (B) success = category-correct door; (C) the
+  success \emph{split}: solid = fraction of episodes that terminate at
+  \emph{some} door (task completion, no timeout); dashed = correct-door rate
+  \emph{among} terminated episodes (decision quality); (D) auxiliary
+  belief-head accuracy (aux runs only; chance $1/3$).}
+  \label{fig:training}
+\end{figure}
+
+The split in panel (C) carries the chapter's two substantive training
+observations. First, \emph{completion and decision quality are different
+skills with different learning curves}: both agents drive the terminated
+fraction (solid) to $1.0$ within the first quarter of training --- crossing
+the map, with its terrain-dependent skills, is learned quickly --- while the
+correct-door rate among terminated episodes (dashed) develops later and more
+slowly. All remaining error is decision error, not failure to cross.
+
+Second, and contrary to the motivating intuition, \emph{the auxiliary belief
+loss did not help --- it hurt}. The no-aux agent reaches $\approx 0.99$ door
+accuracy; the aux agent plateaus at $\approx 0.69$, and a replicate aux run
+with a different seed lands at the same value ($0.70$). Inspecting the aux
+agents' behaviour reveals what the plateau is: \textbf{both aux agents take
+the bottom door on 100\% of episodes, in every category} --- a constant door
+policy, which scores exactly the always-bottom baseline of $2/3$
+(\code{balanced} and \code{lakes} correct, \code{rocky} wrong). Meanwhile
+their auxiliary heads read the category at $0.77$--$0.85$ accuracy throughout
+(panel D). The aux agents therefore \emph{represent} the belief but never
+couple it to the door decision; the no-aux agent, which can only earn the last
+third of reward by conditioning on the category, escapes the constant-door
+local optimum and uses its belief. Representation supervision is no guarantee
+of behavioural integration --- an early, purely behavioural instance of the
+representation-vs-use dissociation that the later chapters establish causally.
+Final performance:
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+ & success & terminated & door-correct $\mid$ terminated \\
+\midrule
+aux belief (seed 2) & \succAux & \termAux & \doorAux \\
+aux belief (seed 3) & \succAuxRep & \termAuxRep & \doorAuxRep \\
+no aux (seed 2)     & \succNoaux & \termNoaux & \doorNoaux \\
+\bottomrule
+\end{tabular}
+\caption{End-of-training metrics (mean of last 10 logged iterations).}
+\label{tab:final}
+\end{table}
+
+% =====================================================================
+\section{Behaviour: rollouts, generalisation, regimes}
+\label{sec:rollouts}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{\figdir/fig4a_rollouts_noaux.png}
+  \caption{\textbf{Stochastic rollouts on held-out maps} (30 sampled-policy
+  episodes per map; paths overlaid). Titles give success (correct door) and
+  wrong-door rates.}
+  \label{fig:rollouts}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{\figdir/fig4b_ood_noaux.png}
+  \caption{\textbf{Out-of-distribution generalisation.} Success / wrong-door /
+  timeout on maps drawn outside the training distribution: larger maps
+  ($40{\times}96$ vs.\ $32{\times}64$), quadrupled tree density, and a
+  single-cell wall passage.}
+  \label{fig:ood}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.8\linewidth]{\figdir/fig4c_regimes_noaux.png}
+  \caption{\textbf{The three crossing regimes, from the agent's eyes.}
+  Egocentric observations at the step each regime is expressed: \emph{build}
+  (facing water, placing a bridge tile), \emph{mine} (facing rock, tunnelling),
+  \emph{avoid} (obstacle ahead, agent detours without using a skill).}
+  \label{fig:regimes}
+\end{figure}
+
+Three points. First, behaviour is category-appropriate: on \code{lakes} maps
+the agent bridges, on \code{rocky} maps it tunnels, and on all maps it
+opportunistically detours around small obstacles (the \emph{avoid} regime) ---
+a substantial fraction of successful episodes use no skill at all. Second,
+generalisation is perfect along the size ($40{\times}96$) and passage-width
+axes and degrades only under quadrupled tree density ($0.83$--$0.90$).
+Third, the OOD errors are informative about \emph{which} competence breaks:
+under dense trees the failures are almost entirely \emph{timeouts}, not
+wrong doors --- the navigation problem gets harder, but the belief and its
+door read-out remain intact.
+
+% =====================================================================
+\section{What the recurrent state encodes}
+\label{sec:hidden}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{\figdir/fig5_hidden_noaux.png}
+  \caption{\textbf{Hidden-state analysis (no-aux agent).} (A) PCA of GRU
+  states coloured by the \emph{next} action --- action selection is organised
+  in a few directions of state space. (B) Mean activation of the 40 most
+  action-selective units by next action: \code{build} and \code{mine} recruit
+  distinct unit populations. (C) Linear probes (logistic regression, trained
+  on half the episodes, tested on held-out episodes) against
+  majority/chance baselines.}
+  \label{fig:hidden}
+\end{figure}
+
+The probe battery makes the division of labour explicit: from the no-aux
+agent's GRU state a linear read-out recovers the map category at $0.83$
+(chance $0.33$), its position along the corridor at $0.83$ (chance $0.125$),
+the terrain ahead at $0.94$, the next action at $0.76$, and the door it will
+eventually choose at $0.85$ --- long before the doors are visible. Crucially,
+the category is decodable from an agent that was \emph{never supervised on
+it}: the belief emerges from reward alone, because the door decision requires
+it.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{\figdir/fig5_hidden_aux.png}
+  \caption{\textbf{Same analysis for the aux-belief agent.} The auxiliary loss
+  yields an even sharper category code ($0.92$ vs.\ $0.83$ probe accuracy) ---
+  yet this is the agent that takes the bottom door on every episode
+  (\S\ref{sec:train}); its ``final door'' probe is degenerate because the
+  behaviour is constant. Decodability of the belief and behavioural use of the
+  belief fully dissociate.}
+  \label{fig:hidden_aux}
+\end{figure}
+
+% =====================================================================
+\section{Belief along trajectories}
+\label{sec:belief}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{\figdir/fig6_belieftraj_noaux.png}
+  \caption{\textbf{Trajectories and belief formation (no-aux agent).} Top: single
+  stochastic rollouts (colour = time). Bottom: the probe-decoded belief
+  $P(\text{category}\mid h_t)$ over the same episodes. The belief is not
+  written in one step: it accumulates as terrain evidence enters the view, can
+  dip when the local view is ambiguous (a grassy stretch on a \code{lakes}
+  map), and is held across the evidence-free corridor before the wall.}
+  \label{fig:belieftraj}
+\end{figure}
+
+% =====================================================================
+\section{Does the agent know its plan?}
+\label{sec:plan}
+
+Finally we ask a forward-looking question: when the agent approaches an
+obstacle it could either cross with a skill or walk around, does its hidden
+state already contain the choice? We build \emph{toy maps} --- a flat grass
+corridor with a single water or rock band of controlled extent and gap ---
+roll the stochastic policy repeatedly, label each successful episode by the
+strategy it eventually expressed (\emph{skill} vs.\ \emph{around}), and train
+a probe to predict that label from the hidden state at fixed distances
+\emph{before} the obstacle.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{\figdir/fig7_planning_noaux.png}
+  \caption{\textbf{Strategy is decodable before the obstacle.} (A) Held-out
+  probe accuracy for the eventual strategy as a function of distance to the
+  obstacle (right = closer). (B) Example toy map with \emph{around} (cyan) and
+  \emph{bridge} (pink) episodes from identical starts.}
+  \label{fig:planning}
+\end{figure}
+
+The curve has a sharp, interpretable structure. While the obstacle is beyond
+the agent's $21{\times}21$ view (distance $>10$), accuracy sits at chance ---
+there is nothing to know, since the toy corridor contains no earlier evidence.
+At $d=10$, \emph{exactly when the obstacle enters the field of view}, accuracy
+jumps to $\approx 0.86$, and it climbs to $\approx 0.98$ by contact: the
+strategy is largely determined on first sight, several seconds of game time
+before the crossing is executed, and is then refined rather than reversed.
+The agent does not walk to the obstacle and react; it commits on approach.
+We are careful about the inferential limit: decodability before the obstacle
+shows the state \emph{contains} the plan, not that the readout is causally
+used; the causal analyses of the following chapters take up exactly that
+question.
+
+% =====================================================================
+\section{Summary}
+The chapter established the full experimental loop on \code{fork\_wall}: a
+task whose latent category must be inferred (\S\ref{sec:env}--\ref{sec:data});
+agents whose completion and decision quality develop on different timescales,
+with the surprising twist that auxiliary belief supervision \emph{trapped}
+two independent runs in a belief-blind constant-door optimum while the
+unsupervised agent coupled its belief to the decision
+(\S\ref{sec:train}--\ref{sec:rollouts}); a recurrent state that linearly
+encodes belief, action, position and the eventual decision --- with belief
+decodability and belief \emph{use} fully dissociating between the two agents
+(\S\ref{sec:hidden}--\ref{sec:belief}); and evidence that the state contains
+the agent's crossing plan from the moment an obstacle enters view, well before
+execution (\S\ref{sec:plan}). These are the ingredients --- and the
+measurement tools --- for the causal belief-steering experiments of the next
+chapters.
+
+\end{document}

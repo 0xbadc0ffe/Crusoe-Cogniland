@@ -1,0 +1,738 @@
+% !TEX program = pdflatex
+% Cogniland project overview: environment, methods, experiments, results.
+% Self-contained, stock packages only.
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage[colorlinks=true,linkcolor=violet,citecolor=teal,urlcolor=teal]{hyperref}
+\usepackage[section]{placeins}
+
+\definecolor{lakes}{RGB}{42,120,214}
+\definecolor{rocky}{RGB}{217,89,38}
+\definecolor{balanced}{RGB}{25,158,112}
+\captionsetup{font=small, labelfont=bf}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\lakes}{\textcolor{lakes}{\textbf{lakes}}}
+\newcommand{\rocky}{\textcolor{rocky}{\textbf{rocky}}}
+\newcommand{\balanced}{\textcolor{balanced}{\textbf{balanced}}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\ctg}{\mathrm{ctg}}
+
+\title{\textbf{Cogniland}\\[3pt]
+\large A Partially-Observed Navigation Testbed for the\\
+Mechanistic Study of \emph{Belief} in World Models and Recurrent Agents}
+\author{Project overview}
+\date{\today}
+
+\begin{document}
+\maketitle
+\vspace{-2em}
+
+\begin{abstract}\noindent
+\textbf{Cogniland} is a research codebase built around one idea: give a
+reinforcement-learning agent a task where it \emph{cannot see everything at
+once}, so that to act well it must build and hold an internal \emph{belief}
+about the hidden state of the world; then open the agent up and study that
+belief directly. This document is a self-contained tour of the project. We
+describe the current flagship environment---the \code{bridge\_tunnel}
+\code{fork\_wall} task, a small grid world in which a hidden ``map category''
+must be inferred from terrain seen early, remembered across a blind corridor,
+and finally read out as a left-or-right door choice. We then describe the two
+kinds of agents we train on it (a recurrent policy and a \emph{world model}),
+the interpretability tools we use to read and edit their beliefs (linear
+probes, activation steering, and manifold geometry), and the experiments and
+results those tools produce. Throughout we favour plain language and give the
+math needed to reproduce every claim. The recurring lesson is that the agent's
+belief is real, causal, and geometrically structured---but also that getting a
+world model to learn the task at all exposed a subtle reward-design pitfall
+that we document and fix.
+\end{abstract}
+
+\tableofcontents
+\vspace{1em}
+
+% ======================================================================
+\section{Introduction: why a ``belief'' testbed}
+\label{sec:intro}
+
+Most interesting decision problems are \emph{partially observed}: the thing you
+need to know is not written on the current observation. A driver at a fork does
+not see the destination; a rat in a maze does not see the reward arm; a language
+model predicting the next token does not see the author's intent. Formally these
+are \emph{partially observable Markov decision processes} (POMDPs)
+\cite{kaelbling1998planning}. The classical result for POMDPs is that the
+optimal action depends not on the current observation $o_t$ but on the
+\emph{belief state}---a probability distribution over the hidden state given the
+entire history $o_{1:t}, a_{1:t-1}$. A good agent must therefore compute
+something belief-like and carry it forward in memory.
+
+Recurrent neural networks do exactly this in practice: their hidden state is a
+learned, compressed summary of history, and there is now strong evidence---in
+neuroscience \cite{mante2013context,wong2006recurrent,sussillo2013opening}, in
+meta-RL \cite{mikulik2020meta,lambrechts2022recurrent}, and in large models
+\cite{li2023othello,shai2024transformers}---that these hidden states encode
+recoverable, sometimes even Bayes-optimal, beliefs about latent variables.
+\textbf{Cogniland exists to make this phenomenon concrete and manipulable.} We
+want a task where (i) the hidden variable is simple and known to us (so we can
+check what the agent believes against the truth), (ii) the belief must genuinely
+be \emph{held in memory} (so it is not a trivial reflex), and (iii) the belief
+must be \emph{used} to drive a discrete decision (so it is behaviourally
+load-bearing). The \code{fork\_wall} environment (\S\ref{sec:env}) is engineered
+to satisfy all three.
+
+Once such a task exists, we can ask sharper questions than ``does the agent
+succeed?''. We can ask: \emph{where} is the belief stored? Is it \emph{causal}
+(does editing it change behaviour)? Does it lie on a simple geometric object?
+And in a \emph{world model}---an agent that learns to imagine the future---does
+the belief shape what the agent dreams? Sections \ref{sec:methods} and
+\ref{sec:experiments} develop the tools and answers.
+
+% ======================================================================
+\section{The environment: \code{bridge\_tunnel} / \code{fork\_wall}}
+\label{sec:env}
+
+\subsection{The task in one paragraph}
+The agent is a single point that starts at the left edge of a rectangular grid
+and must reach a goal door on the right. Early in its journey it walks past
+patches of \textbf{terrain}---water and rock---whose \emph{amounts} secretly
+encode the map's \emph{category}. It then crosses a stretch of empty grass (the
+\emph{memory corridor}), where no terrain is visible, and arrives at a
+\textbf{wall} with a narrow passage. Beyond the wall are two doors, one near the
+top and one near the bottom. Exactly which door counts as success depends on the
+category the agent saw earlier. Because the terrain has scrolled out of view by
+the time the agent reaches the doors, it must have \emph{remembered} the
+category to choose correctly. Figure~\ref{fig:maps} shows one map per category.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{../outputs/bridge_tunnel_forkwall/sample_maps.png}
+\caption{Three maps from the fixed training set, one per category. Spawn is the
+white marker on the left. Category evidence (water for \lakes, rock for \rocky,
+both for \balanced) is confined to the left of the cyan line; a grass
+\emph{memory corridor} then runs to the fork wall and its top/bottom doors
+(yellow). By the fork the evidence has left the agent's egocentric view, so the
+door choice requires memory rather than a glance.}
+\label{fig:maps}
+\end{figure}
+
+\subsection{The hidden variable: map category}
+Every map belongs to one of three categories, defined by how much water versus
+rock its terrain contains:
+\begin{itemize}[nosep]
+\item \lakes{}: water-dominant. The \emph{correct} door is the \textbf{bottom}.
+\item \rocky{}: rock-dominant. The correct door is the \textbf{top}.
+\item \balanced{}: roughly equal water and rock. \emph{Either} door counts.
+\end{itemize}
+The category is never handed to the agent as an input; it is only implicit in
+the terrain. It is the ``hidden state'' of our POMDP, and ``what the agent
+believes the category is'' is the belief we study throughout.
+
+\subsection{Observation: an egocentric window}
+The agent never sees the whole map. At each step it receives a square,
+agent-centred crop of the terrain of side $V=21$ cells, together with a few
+scalar signals (which way the goal lies, how far into the episode we are). Write
+the terrain as $T\in\{0,\dots,K-1\}^{H\times W}$ with $K=9$ tile types (grass,
+water, rock, wood, target, tree, sand, dirt, and an out-of-bounds pad), $H=32$,
+$W=64$. The observation is
+\begin{equation}
+o_t \;=\; \big(\underbrace{\mathrm{onehot}\big(T[\,r_t-\tfrac{V-1}{2}:r_t+\tfrac{V-1}{2}\,,\ c_t-\tfrac{V-1}{2}:c_t+\tfrac{V-1}{2}]\big)}_{V\times V\times K \text{ one-hot crop}},\ \underbrace{s_t}_{\in\R^{5}}\big),
+\end{equation}
+where $(r_t,c_t)$ is the agent's cell and cells outside the map are filled with
+the out-of-bounds tile. Flattened, this is a vector of dimension
+$V^2K + 5 = 21^2\cdot 9 + 5 = 3974$. Crucially, because the window has radius
+$\lfloor V/2\rfloor = 10$, terrain more than $10$ cells behind the agent is
+\emph{invisible}. This single fact is what makes the memory corridor
+(\S\ref{sec:memory}) do its job.
+
+\subsection{Actions and dynamics}
+The action space is $\mathcal{A}=\{\text{up},\text{down},\text{left},
+\text{right},\text{build},\text{mine}\}$ (six discrete actions). Moves are
+grid steps; \code{build} turns a faced water cell into a walkable bridge and
+\code{mine} turns a faced rock cell into grass. In the variant used here
+(``\code{BT}-rules'', i.e.\ commitment disabled) the tools are always available
+and the agent can also simply walk around obstacles, so the decision that
+matters is purely \emph{which door} it goes to. An episode ends when the agent
+steps onto either door, or after a step budget of $800$.
+
+\subsection{The memory corridor (task design)}
+\label{sec:memory}
+An earlier version of this map placed terrain right up to the fork, so the agent
+could see the evidence and the doors \emph{in the same window} and pick the door
+by reflex---no memory needed. We fix this with a \textbf{memory corridor}: a band
+of $g=16$ pure-grass columns immediately before the wall, with all category
+terrain confined to its left. Let $c_{\text{wall}}$ be the wall column and
+$c_{\text{ev}}$ the rightmost terrain column; the construction guarantees
+$c_{\text{wall}}-c_{\text{ev}} \ge g$. Since the view radius is $10 < g$, when
+the agent stands at the fork ($c_t \approx c_{\text{wall}}-1$) the nearest
+evidence at $c_{\text{ev}}$ is $\ge g - 1 > 10$ cells away and therefore outside
+the window. Concretely the evidence leaves view once $c_t - 10 > c_{\text{ev}}$,
+giving the agent on the order of $c_{\text{wall}} - (c_{\text{ev}}+10)\approx 6$
+``blind'' timesteps in which the correct action depends only on memory. This
+turns a reflex into a genuine working-memory problem.
+
+\subsection{Reward, and a reward-shaping pitfall}
+\label{sec:reward}
+The reward at each step is a sum of three parts:
+\begin{equation}
+r_t \;=\; \underbrace{-\lambda_{\text{slack}}}_{\text{time cost}}
+\;+\; \underbrace{\rho\,\big[\text{stepped onto the correct door}\big]}_{\text{goal bonus}}
+\;+\; \underbrace{\kappa\,\big(\Phi(s_{t})-\gamma_{\!\text{sh}}\,\Phi(s_{t+1})\big)}_{\text{shaping}},
+\label{eq:reward}
+\end{equation}
+with $\lambda_{\text{slack}}=0.01$, $\rho=3.0$, $\kappa=0.015$, and the
+\emph{potential} $\Phi(s) = -\ctg(s)$, where $\ctg(s)$ is the number of steps
+from the agent's cell to the correct door (a cost-to-go computed by
+breadth-first search on the terrain). Shaping of the form
+$F = \gamma_{\!\text{sh}}\Phi(s') - \Phi(s)$ is the classic
+\emph{potential-based reward shaping} of Ng, Harada, and Russell
+\cite{ng1999policy}, which provably does not change the optimal policy when
+$\gamma_{\!\text{sh}}$ equals the RL discount $\gamma$.
+
+\paragraph{The pitfall.} Potential-based shaping is policy-invariant in theory
+but not \emph{exploration}-invariant in practice. At a fixed state
+($s_{t+1}=s_t$, i.e.\ the agent stands still), the shaping term is
+\begin{equation}
+\kappa\big(\Phi - \gamma_{\!\text{sh}}\Phi\big)
+= \kappa(1-\gamma_{\!\text{sh}})\,\big(-\Phi\big)
+= \kappa(1-\gamma_{\!\text{sh}})\,\ctg(s) \;>\; 0 .
+\end{equation}
+Near the spawn, $\ctg$ is large ($\approx 70$), so with $\gamma_{\!\text{sh}}
+=\gamma=0.99$ this is $0.015\cdot0.01\cdot70 \approx 0.0105$ per step, which
+\emph{exceeds} the time cost $\lambda_{\text{slack}}=0.01$. \textbf{The agent is
+literally paid to do nothing.} We observed exactly this failure: a DreamerV3
+world model, trained from scratch, converged to a policy that never left the
+spawn tile (maximum column reached $=0$) while collecting positive reward and
+timing out every episode. On-policy PPO happened to explore its way out of this
+basin, but the world model, which learns its policy \emph{in imagination}, sat
+in it comfortably; raising the exploration bonus did not help.
+
+\paragraph{The fix.} We set $\gamma_{\!\text{sh}}=1$, turning the shaping into
+\emph{pure progress}:
+\begin{equation}
+\kappa\big(\Phi(s_t)-\Phi(s_{t+1})\big)
+= \kappa\big(\ctg(s_t)-\ctg(s_{t+1})\big).
+\end{equation}
+Now standing still earns exactly zero shaping (net reward $-\lambda_{\text{slack}}
+<0$), a step toward the goal earns $+\kappa$, and a step away earns $-\kappa$;
+there is no stationary way to accumulate reward, so the only route to positive
+return is to reach a door. Empirically this immediately removed the basin: the
+world model began leaving the spawn and reaching doors, and evaluation success
+rose from a flat $0$ toward the same regime PPO reaches. We flag this because it
+is a general and easily-missed lesson: \emph{discounted potential shaping can
+create a ``loitering'' optimum whenever the potential is large and the step cost
+is small}, and an imagination-based learner is especially prone to fall into it.
+
+\subsection{A fixed map dataset}
+So that every agent trains and is tested on identical data, we pre-generate a
+fixed dataset of $6000$ maps---$2000$ per category---and split it $80/20$ into
+$4800$ \emph{train} and $1200$ \emph{test} maps. Maps are procedurally generated
+from simplex-noise heightmaps thresholded to hit the target water/rock fractions,
+then post-processed to carve the memory corridor and guarantee the correct door
+is reachable. Training draws maps uniformly from the train split; all reported
+success numbers are on the disjoint test split, so nothing evaluated was ever
+seen in training.
+
+% ======================================================================
+\section{The agents}
+\label{sec:agents}
+
+We study two agents on identical data. They differ in \emph{what} they learn:
+the first learns only to act; the second additionally learns to \emph{imagine}.
+
+\subsection{Recurrent PPO with a GRU memory}
+The first agent is a recurrent policy trained with Proximal Policy Optimization
+(PPO) \cite{schulman2017proximal}. Because the task is partially observed, the
+policy needs memory; we give it a Gated Recurrent Unit (GRU) \cite{cho2014gru}.
+An encoder maps the observation $o_t$ to a feature $e_t$; the GRU updates a
+hidden state
+\begin{equation}
+h_t = \mathrm{GRU}(e_t, h_{t-1}) \in \R^{128},
+\end{equation}
+and linear heads read the action distribution $\pi_\theta(a_t\mid h_t)$ and value
+$V_\theta(h_t)$ off $h_t$. The GRU hidden state $h_t$ \emph{is} the agent's
+working memory and hence its belief; it is what a probe (\S\ref{sec:probe})
+reads. PPO optimizes the clipped surrogate
+\begin{equation}
+\mathcal{L}^{\text{PPO}}(\theta)=\E_t\Big[\min\big(\varrho_t(\theta)\hat A_t,\
+\mathrm{clip}(\varrho_t(\theta),1-\epsilon,1+\epsilon)\hat A_t\big)\Big],\quad
+\varrho_t(\theta)=\frac{\pi_\theta(a_t\mid h_t)}{\pi_{\theta_{\text{old}}}(a_t\mid h_t)},
+\end{equation}
+with advantages $\hat A_t$ from generalized advantage estimation. We optionally
+add a small \emph{auxiliary head} that predicts the map category from $h_t$; this
+does not change behaviour but makes the belief more linearly readable, and its
+accuracy (\code{belief\_acc}) is a convenient training-time diagnostic.
+
+\subsection{World models: DreamerV3 / R2-Dreamer}
+The second agent is a \emph{world model} in the DreamerV3 family
+\cite{hafner2023dreamerv3,ha2018world}. A world model learns a compact latent
+model of the environment's dynamics and then trains its policy by ``dreaming''
+---rolling that latent model forward and doing RL on the imagined trajectories,
+never touching the real environment during policy improvement. Concretely we use
+the in-repo \code{purejaxwm} port and an efficient PyTorch reimplementation,
+R2-Dreamer \cite{morihira2026r2dreamer}. The core is a \emph{Recurrent State
+Space Model} (RSSM), whose state has a deterministic part $d_t$ and a stochastic
+part $z_t$:
+\begin{align}
+d_t &= f_\phi(d_{t-1}, z_{t-1}, a_{t-1}) && \text{(deterministic recurrence, a GRU)}\\
+\hat z_t &\sim p_\phi(\hat z_t \mid d_t) && \text{(\emph{prior}: what the model expects, no observation)}\\
+z_t &\sim q_\phi(z_t \mid d_t, e_t) && \text{(\emph{posterior}: corrected by the encoded observation $e_t$)}
+\end{align}
+The world model is trained to (a) predict the next stochastic state (a KL
+between posterior and prior), (b) predict reward and episode continuation, and,
+in the reconstruction variant we use here, (c) \emph{decode} the observation back
+from the latent state, $\hat o_t = \mathrm{dec}_\phi(z_t, d_t)$. Writing the full
+latent (``feature'') as $b_t = [\,z_t;\,d_t\,]\in\R^{3840}$, the world-model loss
+is a variational bound of the form
+\begin{equation}
+\mathcal{L}^{\text{WM}} = \E\Big[\underbrace{-\log \mathrm{dec}_\phi(o_t\mid b_t)}_{\text{reconstruction}}
+\;+\;\underbrace{-\log p_\phi(r_t\mid b_t)-\log p_\phi(\text{cont}_t\mid b_t)}_{\text{reward/continue}}
+\;+\;\beta\,\underbrace{\mathrm{KL}\!\big[q_\phi(z_t)\,\|\,p_\phi(\hat z_t)\big]}_{\text{dynamics}}\Big].
+\end{equation}
+The actor and critic are trained purely on latent rollouts of the \emph{prior}
+(imagination): starting from a real $b_t$, one repeatedly samples
+$a\sim\pi$, advances $d,\hat z$ with $f_\phi$ and $p_\phi$, and optimizes the
+policy against imagined reward. This is what makes a world model special for us:
+its belief $b_t$ is not only read by the policy---it \emph{generates} the future
+the policy plans against. We can literally decode what the agent imagines.
+
+\paragraph{Reconstruction vs.\ decoder-free.} R2-Dreamer's default objective is
+decoder-free (it replaces reconstruction with a redundancy-reduction term). For
+this project we deliberately train with the \emph{reconstruction} objective
+(``\code{rep\_loss=dreamer}'') so that the world model is genuinely generative
+and its dreams decode to legible maps---at the mild cost of extra compute. When
+we analyse an older decoder-free checkpoint, we instead fit a small decoder
+post hoc by frozen-backbone probing (it reaches $99.6\%$ per-cell tile accuracy),
+which recovers the same picture.
+
+\subsection{What we mean by ``belief''}
+Two notions of belief appear, and it helps to keep them straight.
+\begin{itemize}[nosep]
+\item The \textbf{internal belief} is the recurrent state itself---the GRU hidden
+$h_t$ for PPO, the RSSM feature $b_t=[z_t;d_t]$ for the world model. It is a
+high-dimensional vector, the physical substrate of memory.
+\item The \textbf{belief distribution} is a probability vector over the three map
+categories, $\mathbf{p}_t = (p_t^{\balanced}, p_t^{\lakes}, p_t^{\rocky})\in
+\Delta^2$. This is the ``Bayesian'' belief a reader expects: as evidence
+accumulates it should sharpen from near-uniform (uncertain) toward a one-hot
+(committed). We obtain it by \emph{probing} the internal belief
+(\S\ref{sec:probe}).
+\end{itemize}
+The whole project is, in a sense, about the map from the first to the second, and
+about whether that map is causal and geometric.
+
+% ======================================================================
+\section{Methods: reading and editing belief}
+\label{sec:methods}
+
+\subsection{Probing: decoding the belief distribution}
+\label{sec:probe}
+A \emph{probe} is a simple classifier fit to predict the hidden category from the
+internal belief \cite{ravichander2021probing,li2023othello}. Given a dataset of
+(belief, true-category) pairs $\{(b^{(i)}, c^{(i)})\}$ collected from rollouts,
+we fit two linear probes:
+\begin{enumerate}[nosep]
+\item \textbf{Nearest class mean.} Compute the per-category centroid
+$\mu_c=\frac{1}{n_c}\sum_{i:c^{(i)}=c} b^{(i)}$ and predict
+$\hat c(b)=\arg\min_c \|b-\mu_c\|_2$. This is the simplest possible linear
+readout; its decision boundary is the perpendicular bisector between centroids.
+\item \textbf{Logistic regression.} Fit a multinomial logistic model
+$\mathbf{p}(b)=\mathrm{softmax}(Wb+w_0)$ with an $\ell_2$ penalty chosen by
+cross-validation. This is a \emph{discriminative} linear probe: it learns the
+directions that best separate the classes, and its softmax output is exactly the
+belief distribution $\mathbf{p}_t$.
+\end{enumerate}
+The probe is deliberately linear: if a linear map recovers the category, the
+belief is stored in a linearly-accessible way, which is the property that makes
+the later steering experiments meaningful. Because the probe is trained on one
+set of episodes and evaluated on held-out ones, its accuracy measures genuine
+\emph{decodability}, not memorization.
+
+\subsection{Steering: editing the belief to test causality}
+\label{sec:steer}
+Decoding shows the belief is \emph{present}; steering tests whether it is
+\emph{causal}. The idea, following activation-editing work in language models
+\cite{turner2023activation,zou2023representation,meng2022locating} and the
+causal-abstraction programme \cite{geiger2021causal}, is to \emph{patch} the
+belief toward another category and see whether behaviour follows. We form a
+steering direction $\Delta_{s\to t}$ from source category $s$ to target $t$ and
+apply
+\begin{equation}
+b' \;=\; b \;+\; \alpha\,\Delta_{s\to t},
+\end{equation}
+then feed $b'$ to the (frozen) actor and record its decision. Two choices of
+direction:
+\begin{itemize}[nosep]
+\item \textbf{Difference of means:} $\Delta_{s\to t}=\mu_t-\mu_s$, the vector
+between class centroids.
+\item \textbf{Probe weights:} $\Delta_{s\to t}=w_t-w_s$, the difference of the
+logistic probe's per-class weight vectors---the directions the classifier
+actually found most discriminative.
+\end{itemize}
+A clean causal result looks like: patching a belief from \rocky\ toward \lakes\
+flips the agent's door choice from top to bottom. Reporting both directions lets
+us separate ``the belief is decodable'' (a property of the probe) from ``the
+belief is steerable'' (a property of the representation)---these are not the
+same, as \S\ref{sec:exp1} shows.
+
+\subsection{Geometry: is belief a direction or a manifold?}
+\label{sec:manifold}
+Difference-of-means steering assumes the belief varies along a straight
+\emph{line} between categories. But recurrent belief states are known to trace
+\emph{curved, low-dimensional structures}---line attractors and rings---in their
+activation space \cite{sussillo2013opening,shai2024transformers}. If the belief
+lives on a curved \emph{manifold}, moving in a straight line between two beliefs
+leaves the manifold, landing on states the network never actually occupies. We
+test this directly, adapting the manifold-steering method of the Goodfire
+\code{causalab} framework \cite{geiger2021causal}.
+
+Concretely we parameterize belief by a scalar \emph{evidence coordinate}
+$\zeta\in[-1,1]$ (signed by which door the trajectory heads to, scaled by
+progress), bin it, and take the mean belief in each bin as a control point
+$\{(\zeta_j, \bar b_j)\}$. We fit a natural cubic smoothing spline
+$\gamma:[-1,1]\to\R^{3840}$ through these points (the 1-D analogue of a
+thin-plate spline, minimizing curvature $\int\|\gamma''\|^2$)
+\cite{reinsch1967smoothing}, giving a smooth 1-D curve $\mathcal{M}=\{\gamma(u)\}$
+in belief space. Two ways to steer from belief $\gamma(u_a)$ to $\gamma(u_b)$:
+\begin{align}
+\text{linear:}\quad & b(t) = (1-t)\,\gamma(u_a) + t\,\gamma(u_b), \\
+\text{manifold:}\quad & b(t) = \gamma\big((1-t)u_a + t\,u_b\big),
+\end{align}
+i.e.\ interpolate in \emph{ambient space} (a chord) versus in the \emph{intrinsic
+coordinate} (staying on the curve). We measure how far each path strays from the
+manifold via Gauss--Newton projection: for a point $x$, find
+$u^\star=\arg\min_u\|\gamma(u)-x\|^2$ and report the residual
+$\|x-\gamma(u^\star)\|$. If the belief manifold is curved, the linear chord will
+bow off it while the manifold path stays on it by construction.
+
+\subsection{Dreams: decoding the imagined future}
+\label{sec:dreams}
+Because the world model is generative, we can ask what it \emph{imagines}. From a
+belief $b_t$ we roll the prior forward under the actor for $H$ steps and decode
+each latent to a map crop:
+\begin{equation}
+\hat o_{t+k} = \mathrm{dec}_\phi(b_{t+k}), \qquad
+b_{t+k+1} = \big[\,\hat z_{t+k+1};\,f_\phi(d_{t+k}, \hat z_{t+k}, a_{t+k})\,\big],\quad a_{t+k}\sim\pi.
+\end{equation}
+This yields a sequence of imagined observations---a ``dream''---that we can look
+at directly and measure (e.g.\ what fraction of imagined tiles are water vs.\
+rock, or where the goal door appears). Dreams let us ask the sharpest version of
+our question: does the belief not only label the map but \emph{generate} a future
+consistent with that label?
+
+% ======================================================================
+\section{Experiments and results}
+\label{sec:experiments}
+
+We first establish that the task is solvable and that belief is the mechanism,
+then progressively test how structured and how causal that belief is. Unless
+noted, analyses are run on a trained \code{fork\_wall} \code{BT}-rules agent and
+report held-out numbers.
+The figures in this section are produced by the belief-analysis pipeline on a
+trained \code{fork\_wall} \code{BT}-rules agent (held-out episodes); the memory-corridor
+world model of \S\ref{sec:reward} is retrained on the fixed dataset and its
+figures will be regenerated identically once it saturates.
+\newcommand{\cogfig}{figures/cogniland}
+
+\subsection{Training: the task is solvable, and requires memory}
+On the fixed dataset with the memory corridor, recurrent PPO reaches
+\textbf{$100\%$ success} on held-out maps, with an auxiliary category-probe
+accuracy of $\approx 0.90$ and efficient $\sim\!100$-step episodes---it walks the
+corridor, holds the category across the blind stretch, and picks the correct
+door. That the corridor makes this a genuine memory problem is visible in
+training: on the old evidence-at-the-fork maps the policy hit $100\%$ almost
+immediately, whereas on the memory maps it climbs gradually as the recurrent
+state learns to carry the belief. The world model, once the reward-shaping
+pitfall of \S\ref{sec:reward} is fixed, likewise leaves the spawn and its success
+rises from $0$ into the same regime. The key methodological takeaways are (i) the
+environment is well-posed and solvable, and (ii) an imagination-based learner is
+uniquely sensitive to farmable shaping and must be trained with the
+pure-progress form.
+
+\subsection{Experiment 1: the belief \emph{causes} the fork decision}
+\label{sec:exp1}
+We collect beliefs at the moment just before the agent commits up or down, fit
+the probes of \S\ref{sec:probe}, and test steering.
+
+\paragraph{The belief is decodable.} The map category is linearly readable from
+the pre-decision belief well above the $33\%$ chance level: the nearest-mean
+probe reaches $\approx 60\%$ and the logistic probe $\approx 67\%$. (These are
+deliberately weak linear readouts; a small nonlinear probe would score higher.)
+
+\paragraph{Behaviour follows the \emph{belief}, not the map.} The decisive test
+is a within-model consistency check. On held-out episodes we compare the door the
+agent actually reached against (a) the true category and (b) the probe's
+\emph{decoded} category. The door matched the \emph{decoded} belief
+$\approx\!100\%$ of the time---slightly \emph{tighter} than it matched the ground
+truth ($\approx\!92\%$). In other words, on the episodes where the model's belief
+was wrong, its \emph{decision} was wrong in exactly the same way. The agent acts
+on what it believes, not on what is true---the signature of a genuine internal
+belief driving behaviour.
+
+\paragraph{Decodable is not the same as steerable.} Patching the pre-decision
+belief with the difference-of-means direction changes the action $\approx\!92\%$
+of the time but only lands on the \emph{target} door $\approx\!12\%$ of the time;
+using the logistic probe's own discriminative direction raises the on-target rate
+to $\approx\!38\%$ (a $3\times$ improvement). Two lessons: the category direction
+found by a discriminative probe is a much better steering handle than the naive
+centroid difference; and even so, the belief is not perfectly separable by linear
+arithmetic---category information is entangled with the ``where am I in the
+episode'' information the recurrent state also carries.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{\cogfig/probes_success.png}
+\caption{Experiment~1, quantitative. \textbf{(a)} Held-out success per category
+for the analysed agent. \textbf{(b)} The map category is linearly decodable from
+the pre-decision belief, well above the $33\%$ chance line; a discriminative
+(logistic) probe beats the nearest-mean readout. \textbf{(c)} Behaviour follows
+the belief: the door reached matches the probe's \emph{decoded} category
+($\approx\!100\%$) even more tightly than the true category ($\approx\!92\%$).
+Steering by the logistic probe's own direction lands on the target door about
+$3\times$ more often than the naive centroid difference---but neither is perfect,
+confirming decodable $\ne$ steerable.}
+\label{fig:exp1}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.86\textwidth]{\cogfig/confusion_door.png}
+\caption{Experiment~1, structure. \textbf{(a)} Confusion matrix of the logistic
+probe (counts): the diagonal dominates, with the residual confusion concentrated
+on the ambiguous \balanced\ class. \textbf{(b)} The category$\to$door behaviour
+the belief drives: \rocky\ goes to the top door, \lakes\ to the bottom, \balanced\
+to either; timeouts are rare.}
+\label{fig:confdoor}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{\cogfig/belief_pca_end3d.png}
+\caption{The belief state \emph{at the end of the episode} (the pre-decision
+state at the fork), projected onto its first three principal components.
+\textbf{(a)} In 3-D the three categories occupy distinct regions---\rocky\
+(stars mark class means) separates cleanly from \lakes/\balanced\ along PC1---so
+the category is present in the belief right where the door choice is made.
+\textbf{(b)} The same points in the PC1--PC2 plane, now with the marker showing
+the \emph{door reached}: up-triangles (top) and down-triangles (bottom) segregate
+by category, and the rare timeouts ($\times$) cluster together---the geometry of
+the belief and the geometry of the decision line up. Note the top three PCs hold
+only $\sim\!30\%$ of the variance: the belief is genuinely high-dimensional, with
+category a modest but well-separated factor.}
+\label{fig:pca_end}
+\end{figure}
+
+\subsection{Experiment 2: the belief shapes the dream}
+\label{sec:exp2}
+We seed the world model with beliefs from mid-corridor and let it imagine forward
+(\S\ref{sec:dreams}), then measure the terrain it hallucinates. Imagined rollouts
+from a \lakes\ belief contain markedly more water than those from any other
+belief, and rollouts from a \rocky\ belief contain markedly more rock---the
+imagined future reflects the believed category, not the currently-visible tiles
+(which by mid-corridor are mostly empty grass). The belief is therefore not just
+a label read at decision time; it is an active generator of the content of the
+agent's planning rollouts.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.52\textwidth]{\cogfig/dream_composition.png}\hfill
+\includegraphics[width=0.46\textwidth]{\cogfig/offmanifold.png}
+\caption{Left (Experiment~2): the terrain the world model \emph{imagines} depends
+on the believed category---a \lakes\ belief dreams more water, a \rocky\ belief
+more rock (mean $\pm$ s.d.\ over imagined rollouts). Right (Experiment~3): a
+straight (linear) steering path bows off the fitted belief manifold at
+mid-traverse, while the geodesic path stays on it by construction---direct
+evidence that the belief is curved.}
+\label{fig:dream_off}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{\cogfig/dream_rollout.png}
+\caption{Experiment~2, qualitative. Decoded imagined-future (``dream'') strips,
+one row per belief category, seeded mid-corridor and rolled forward under the
+actor. The frames are legible maps whose composition matches the seeded belief.}
+\label{fig:rollout}
+\end{figure}
+
+\subsection{Experiment 3: belief is a \emph{curved} manifold, but a robust one}
+\label{sec:exp3}
+Using the machinery of \S\ref{sec:manifold} we ask whether belief is a direction
+or a manifold. The answer to the geometric question is clear: it is
+\textbf{curved}. A straight (linear) steering path between two decisive beliefs
+bows measurably off the fitted belief manifold---peaking around $0.5$ in the
+evidence-accumulation corridor and up to $\approx\!0.9$ across the full
+door-to-door traverse---while the manifold-trace path stays at $0$ off the
+manifold by construction. Since a straight line is exactly what direction-based
+steering assumes, this explains why that steering was imperfect in
+Experiment~1: the direction is a chord across a curved object.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.82\textwidth]{\cogfig/belief_pca.png}
+\caption{Experiment~3: PCA of the belief. Each dot is a real belief state,
+coloured by the evidence coordinate $\zeta$ (rocky $-1$ $\to$ neutral $0$ $\to$
+lakes $+1$); PC1 of the manifold's own plane tracks $\zeta$ ($r=0.73$). The
+fitted spline (black) is the 1-D belief manifold. Steering from the rocky end to
+the lakes end along the \emph{geodesic} (green) follows the curve, whereas the
+\emph{linear} chord (dashed) cuts across it and bows off---the geometric root of
+why direction-based steering is imperfect.}
+\label{fig:pca}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.66\textwidth]{\cogfig/manifold_3d.png}
+\caption{The same corridor belief manifold in three dimensions (a fresh 3-D PCA
+of the corridor belief cloud, not the planar curve basis of
+Fig.~\ref{fig:pca}). The binned-mean polyline (black) traces a smooth curve
+through the cloud from the rocky pole to the lakes pole; the third component
+carries little additional structure, confirming the manifold is essentially
+one-dimensional, embedded in a high-dimensional, position-dominated space.}
+\label{fig:manifold3d}
+\end{figure}
+
+However, the striking downstream consequence found for a \emph{pixel} world
+model---that leaving the activation manifold corrupts the decoded observation
+into an incoherent superposition---does \emph{not} transfer here. On both the
+linear and manifold paths the decoded map stays crisp, and, when we steer the
+actual fork decision and imagine forward, the predicted door flips cleanly from
+one side to the other (the imagined commitment
+$p(\text{down})-p(\text{up})$ sweeps from strongly one-sided to the other,
+crossing zero) with \emph{no visible corruption}, even where the linear path sits
+far off the manifold. Two model-specific reasons: this RSSM belief manifold is
+high-dimensional and diffuse (the category coordinate is a low-variance factor
+inside a much larger position-dominated state, not the tidy low-dimensional
+closed curve a vision encoder traces), and the symbolic decoder and dynamics
+generalize gracefully to off-manifold beliefs rather than smearing. The honest
+summary is: \emph{the belief geometry is genuinely curved, but robust}---manifold
+awareness confirms the shape without being required to steer it in this model.
+
+\subsection{Reading the whole picture}
+Putting the experiments together yields a coherent account of the agent's mind on
+this task. Terrain evidence early in the corridor moves the internal belief along
+a curved, largely one-dimensional path parameterized by ``how much the evidence
+favours each door''; a linear probe reads a sharpening category distribution off
+that path; the belief is carried, essentially unchanged, across the blind memory
+corridor; at the fork the actor reads the belief and commits to the matching
+door; and, in the world model, the same belief generates an imagined future whose
+terrain and door placement match the believed category. Editing the belief edits
+the decision (imperfectly, because category and episode-phase are entangled), and
+the belief lives on a curved but robust manifold rather than a straight line.
+
+% ======================================================================
+\section{Discussion and lessons}
+\label{sec:discussion}
+Three transferable lessons stand out.
+
+\textbf{(1) Task design controls what ``memory'' means.} A single geometric
+change---confining evidence to the left of a grass corridor wider than the view
+radius---converts a reflex task into a working-memory task, because it forces the
+evidence out of the observation window before the decision. Whenever a
+partially-observed task is meant to test memory, one should check that the cue
+and the response cannot co-occur in a single observation.
+
+\textbf{(2) Discounted potential shaping can pay for loitering.} Equation
+\eqref{eq:reward} with $\gamma_{\!\text{sh}}=\gamma<1$ gives a positive
+per-step reward $\kappa(1-\gamma)\ctg$ for standing still, which beats a small
+time cost when the potential is large. Imagination-based agents fall into the
+resulting basin far more readily than on-policy ones. Using pure-progress shaping
+($\gamma_{\!\text{sh}}=1$) removes the basin at no cost to the useful gradient.
+
+\textbf{(3) Decodable, causal, and steerable are three different claims.} The
+belief here is strongly decodable and strongly causal (behaviour tracks it almost
+perfectly), yet only moderately steerable by linear edits, because the
+representation entangles category with episode phase and curves through activation
+space. Interpretability claims should say which of the three they mean.
+
+% ======================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+Cogniland packages a simple but pointed question---\emph{what does an agent
+believe about a hidden variable, and can we read, edit, and watch it plan with
+that belief?}---into a small, fully-controlled navigation task and a matched set
+of tools. The \code{fork\_wall} environment makes the hidden variable known, the
+memory requirement real, and the decision discrete; recurrent PPO and DreamerV3
+give us a policy-only and a generative agent on identical data; and linear
+probing, activation steering, manifold geometry, and dream decoding let us turn
+the vague notion of ``belief'' into measured, falsifiable statements. The
+findings---belief drives the decision more tightly than ground truth, belief
+generates the dream, belief curves through activation space but robustly---make
+the environment a useful substrate for the mechanistic study of memory and
+planning, and the reward-shaping and task-design pitfalls we hit and fixed are
+lessons that generalize well beyond it.
+
+% ======================================================================
+\small
+\begin{thebibliography}{99}
+\bibitem[Cho et al.(2014)]{cho2014gru} K.~Cho, B.~van Merri\"enboer, C.~Gulcehre,
+D.~Bahdanau, F.~Bougares, H.~Schwenk, and Y.~Bengio. Learning phrase
+representations using RNN encoder--decoder for statistical machine translation.
+\emph{EMNLP}, 2014.
+\bibitem[Geiger et al.(2021)]{geiger2021causal} A.~Geiger, H.~Lu, T.~Icard, and
+C.~Potts. Causal abstractions of neural networks. \emph{NeurIPS}, 2021.
+(Framework realized in Goodfire's \code{causalab}, \emph{manifold\_steering}
+branch.)
+\bibitem[Ha \& Schmidhuber(2018)]{ha2018world} D.~Ha and J.~Schmidhuber. World
+models. \emph{NeurIPS}, 2018.
+\bibitem[Hafner et al.(2023)]{hafner2023dreamerv3} D.~Hafner, J.~Pasukonis,
+J.~Ba, and T.~Lillicrap. Mastering diverse domains through world models.
+\emph{arXiv:2301.04104}, 2023.
+\bibitem[Kaelbling et al.(1998)]{kaelbling1998planning} L.~Kaelbling, M.~Littman,
+and A.~Cassandra. Planning and acting in partially observable stochastic domains.
+\emph{Artificial Intelligence}, 1998.
+\bibitem[Lambrechts et al.(2022)]{lambrechts2022recurrent} G.~Lambrechts,
+A.~Bolland, and D.~Ernst. Recurrent networks, hidden states and beliefs in
+partially observable environments. \emph{TMLR}, 2022.
+\bibitem[Li et al.(2023)]{li2023othello} K.~Li, A.~K. Hopkins, D.~Bau,
+F.~Vi\'egas, H.~Pfister, and M.~Wattenberg. Emergent world representations:
+exploring a sequence model trained on a synthetic task. \emph{ICLR}, 2023.
+\bibitem[Mante et al.(2013)]{mante2013context} V.~Mante, D.~Sussillo, K.~Shenoy,
+and W.~Newsome. Context-dependent computation by recurrent dynamics in prefrontal
+cortex. \emph{Nature}, 2013.
+\bibitem[Meng et al.(2022)]{meng2022locating} K.~Meng, D.~Bau, A.~Andonian, and
+Y.~Belinkov. Locating and editing factual associations in GPT. \emph{NeurIPS},
+2022.
+\bibitem[Mikulik et al.(2020)]{mikulik2020meta} V.~Mikulik, G.~Del\'etang,
+T.~McGrath, et al. Meta-trained agents implement Bayes-optimal agents.
+\emph{NeurIPS}, 2020.
+\bibitem[Morihira et al.(2026)]{morihira2026r2dreamer} N.~Morihira, A.~Nahar,
+K.~Bharadwaj, Y.~Kato, A.~Hayashi, and T.~Harada. R2-Dreamer: redundancy-reduced
+world models without decoders or augmentation. \emph{ICLR}, 2026.
+\bibitem[Ng et al.(1999)]{ng1999policy} A.~Ng, D.~Harada, and S.~Russell. Policy
+invariance under reward transformations: theory and application to reward
+shaping. \emph{ICML}, 1999.
+\bibitem[Ravichander et al.(2021)]{ravichander2021probing} A.~Ravichander,
+Y.~Belinkov, and E.~Hovy. Probing the probing paradigm: does probing accuracy
+entail task relevance? \emph{EACL}, 2021.
+\bibitem[Reinsch(1967)]{reinsch1967smoothing} C.~Reinsch. Smoothing by spline
+functions. \emph{Numerische Mathematik}, 1967.
+\bibitem[Schulman et al.(2017)]{schulman2017proximal} J.~Schulman, F.~Wolski,
+P.~Dhariwal, A.~Radford, and O.~Klimov. Proximal policy optimization algorithms.
+\emph{arXiv:1707.06347}, 2017.
+\bibitem[Shai et al.(2024)]{shai2024transformers} A.~Shai, S.~Marzen,
+P.~Riechers, et al. Transformers represent belief state geometry in their
+residual stream. \emph{arXiv}, 2024.
+\bibitem[Sussillo \& Barak(2013)]{sussillo2013opening} D.~Sussillo and O.~Barak.
+Opening the black box: low-dimensional dynamics in high-dimensional recurrent
+neural networks. \emph{Neural Computation}, 2013.
+\bibitem[Turner et al.(2023)]{turner2023activation} A.~Turner, L.~Thiergart,
+et al. Activation addition: steering language models without optimization.
+\emph{arXiv}, 2023.
+\bibitem[Wong \& Wang(2006)]{wong2006recurrent} K.-F. Wong and X.-J. Wang. A
+recurrent network mechanism of time integration in perceptual decisions.
+\emph{Journal of Neuroscience}, 2006.
+\bibitem[Zou et al.(2023)]{zou2023representation} A.~Zou, L.~Phan, S.~Chen, et al.
+Representation engineering: a top-down approach to AI transparency. \emph{arXiv},
+2023.
+\end{thebibliography}
+
+\end{document}
