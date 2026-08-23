@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Environment figures for the fork_wall paper.
+"""Reward and dataset figures for the Cogniland paper.
+
+Figures 1 and 2 live in paper_task_figs.py; this file must never write those
+filenames (two writers = whichever ran last wins, silently).
 
 Generates (into --out, default paper/figures/forkwall_paper/):
-  fig_task_categories.png   one example map per category, doors + spawn annotated
-  fig_task_anatomy.png      a single map with the corridor / wall / doors labelled
-  fig_observation.png       agent view: full map + egocentric 21x21 crop + scalars
-  fig_reward.png            reward decomposition along an optimal trajectory
-  fig_dataset.png           dataset composition + per-category geometry stats
+  fig_observation.png       agent view (kept for reference; unused by the report)
+  fig_reward.png            reward decomposition along a real episode
+  fig_dataset.png           per-type water/rock coverage
 
 Usage:
     PYTHONPATH=src python scripts/figures/paper_env_figs.py
@@ -80,108 +81,6 @@ def annotate_map(ax, rec, show_labels=True):
     ax.plot(sc, sr, "o", color="white", mec="black", ms=6, zorder=7)
     if show_labels and rec.wall_col is not None:
         ax.axvline(rec.wall_col, color="white", ls=":", lw=1.0, alpha=.75, zorder=5)
-
-
-def fig_task_categories(by_cat, out):
-    """One example map per category."""
-    with plt.rc_context(PLT_RC):
-        fig, axes = plt.subplots(3, 1, figsize=(8.2, 7.0))
-        for ax, cat in zip(axes, CATS):
-            rec = by_cat[cat][0]
-            ax.imshow(rgb(rec.terrain), interpolation="nearest")
-            annotate_map(ax, rec)
-            ax.set_title(f"category = {cat}   →   rewarded door: {CAT_DOOR[cat]}",
-                         loc="left")
-            ax.set_xticks([]); ax.set_yticks([])
-        handles = [
-            Patch(facecolor=np.array(TILE_COLORS[1]) / 255, label="water (bridgeable)"),
-            Patch(facecolor=np.array(TILE_COLORS[2]) / 255, label="rock (mineable)"),
-            Patch(facecolor=np.array(TILE_COLORS[6]) / 255, label="tree (impassable)"),
-            Patch(facecolor=np.array(TILE_COLORS[4]) / 255, label="door"),
-            Line2D([], [], color="#22c55e", lw=2, label="rewarded door"),
-            Line2D([], [], color="#ef4444", lw=2, label="decoy door"),
-            Line2D([], [], marker="o", color="white", mec="black", ls="",
-                   label="spawn"),
-        ]
-        fig.legend(handles=handles, loc="lower center", ncol=7, frameon=False,
-                   bbox_to_anchor=(0.5, -0.005), fontsize=8)
-        fig.suptitle("fork_wall: terrain statistics identify the map category; "
-                     "the category selects which door pays", y=0.995)
-        fig.tight_layout(rect=[0, 0.035, 1, 0.97])
-        fig.savefig(out / "fig_task_categories.png", bbox_inches="tight")
-        plt.close(fig)
-
-
-def fig_task_anatomy(by_cat, out):
-    """A single map with the phases of an episode annotated + a zoom of the fork."""
-    rec = by_cat["rocky"][1]
-    H, W = rec.terrain.shape
-    wall = rec.wall_col
-    with plt.rc_context(PLT_RC):
-        fig = plt.figure(figsize=(11.0, 4.3))
-        gs = fig.add_gridspec(1, 2, width_ratios=[2.6, 1.0], wspace=0.08)
-        ax = fig.add_subplot(gs[0])
-        ax.imshow(rgb(rec.terrain), interpolation="nearest")
-        annotate_map(ax, rec, show_labels=False)
-        mem_lo = max(0, wall - 16)
-        ax.add_patch(Rectangle((mem_lo - .5, -.5), wall - mem_lo, H, facecolor="black",
-                               alpha=.20, zorder=4))
-        ax.axvline(wall, color="white", ls=":", lw=1.2, zorder=5)
-
-        def note(axis, x, y, text):
-            axis.annotate(text, xy=(x, y), fontsize=8.5, color="white", ha="center",
-                          va="center", zorder=8,
-                          bbox=dict(boxstyle="round,pad=0.25", fc="black", alpha=.7,
-                                    ec="none"))
-        note(ax, mem_lo / 2, 2.0, "1. evidence phase\n(terrain reveals category)")
-        note(ax, (mem_lo + wall) / 2, 2.0, "2. memory corridor\n(16 cols, no information)")
-        # zoom box around the fork region
-        zx0 = wall - 3
-        ax.add_patch(Rectangle((zx0 - .5, -.5), W - zx0, H, fill=False,
-                               edgecolor="#facc15", lw=1.6, zorder=9))
-        ax.set_xticks([]); ax.set_yticks([])
-        ax.set_title("(a) full map: the category is only visible before the corridor",
-                     loc="left")
-
-        axz = fig.add_subplot(gs[1])
-        axz.imshow(rgb(rec.terrain[:, zx0:]), interpolation="nearest", aspect="auto")
-        for cells, name in ((rec.top_goal_cells, "top"),
-                            (rec.bottom_goal_cells, "bottom")):
-            good = rec.correct_target in ("either", name)
-            for (r, c) in cells:
-                axz.add_patch(Rectangle((c - zx0 - .5, r - .5), 1, 1, fill=False,
-                                        edgecolor="#22c55e" if good else "#ef4444",
-                                        lw=2.4, zorder=6))
-
-        def arrow(axis, xy, text, dx, dy, color="white"):
-            axis.annotate(text, xy=xy, xytext=(xy[0] + dx, xy[1] + dy),
-                          fontsize=8, color=color, ha="center", va="center", zorder=9,
-                          arrowprops=dict(arrowstyle="->", color=color, lw=1.2),
-                          bbox=dict(boxstyle="round,pad=0.22", fc="black", alpha=.75,
-                                    ec="none"))
-        if rec.passage_cells:
-            pr = [c[0] for c in rec.passage_cells]
-            pc = rec.passage_cells[0][1] - zx0
-            axz.add_patch(Rectangle((pc - .5, min(pr) - .5), 1, len(pr), fill=False,
-                                    edgecolor="#38bdf8", lw=2.0, zorder=6))
-            arrow(axz, (pc, float(np.mean(pr))), "3. passage\n(only way through)",
-                  -2.6, 0, color="#38bdf8")
-        top_r = rec.top_goal_cells[0][0] if rec.top_goal_cells else 4
-        bot_r = rec.bottom_goal_cells[0][0] if rec.bottom_goal_cells else H - 4
-        tc = rec.top_goal_cells[0][1] - zx0 if rec.top_goal_cells else 5
-        bc = rec.bottom_goal_cells[0][1] - zx0 if rec.bottom_goal_cells else 5
-        arrow(axz, (tc, top_r), "4a. top door\n(rewarded: rocky)", -2.4, -4.5,
-              color="#22c55e")
-        arrow(axz, (bc, bot_r), "4b. bottom door\n(decoy)", -2.4, 4.5, color="#ef4444")
-        axz.set_xticks([]); axz.set_yticks([])
-        for s in axz.spines.values():
-            s.set_edgecolor("#facc15"); s.set_linewidth(1.6); s.set_visible(True)
-        axz.set_title("(b) the fork (zoom)", loc="left")
-
-        fig.suptitle("Anatomy of an episode — the agent must carry the category "
-                     "across an information-free corridor", y=1.02, fontsize=10)
-        fig.savefig(out / "fig_task_anatomy.png", bbox_inches="tight")
-        plt.close(fig)
 
 
 def fig_observation(by_cat, out):
@@ -335,8 +234,8 @@ def main():
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
 
     records, by_cat = load_records(args.maps)
-    fig_task_categories(by_cat, out)
-    fig_task_anatomy(by_cat, out)
+    # NB: figures 1 & 2 are owned by paper_task_figs.py -- do not write them here,
+    # or whichever script runs last silently wins.
     obs_info = fig_observation(by_cat, out)
     rew_info = fig_reward(by_cat, out, args.ppo_ckpt)
     ds_info = fig_dataset(records, out, args.meta)

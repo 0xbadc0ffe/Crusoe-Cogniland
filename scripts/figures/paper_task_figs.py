@@ -134,37 +134,36 @@ def fig_anatomy(by_cat, out, ppo_ckpt):
             break
     traj = np.asarray(traj, dtype=float)
 
-    i_ev = max(range(len(log)), key=lambda i: log[i]["evidence"])
-    # the blind moment: no category evidence left in view, doors not yet in view
-    blind = [i for i in range(i_ev, len(log))
-             if log[i]["evidence"] == 0 and log[i]["doors"] == 0]
-    i_mid = blind[len(blind) // 2] if blind else min(i_ev + 10, len(log) - 1)
-    i_fork = len(log) - 1                       # last frame before the choice
+    # the choice happens between clearing the passage and touching a door, so
+    # the informative frame is the midpoint of that stretch -- not the last one,
+    # where the agent is already standing in the doorway.
+    pass_col = rec.passage_cells[0][1] if rec.passage_cells else wall
+    i_pass = next((i for i, e in enumerate(log) if e["pos"][1] >= pass_col),
+                  len(log) // 2)
+    mem_lo = max(0, wall - 16)
+    i_start = 0
+    # deepest into the blind corridor: halfway between its two walls
+    i_mid = int(np.argmin([abs(e["pos"][1] - (mem_lo + wall) / 2) for e in log]))
+    i_fork = (i_pass + len(log) - 1) // 2
 
     shots = []
-    for i, lab in ((i_ev, "peak evidence — rock and water in view"),
-                   (i_mid, "the corridor — no evidence, no doors yet"),
-                   (i_fork, "at the fork — both doors in view")):
+    for i, lab in ((i_start, "spawn — the run begins"),
+                   (i_mid, "memory corridor — no evidence left to see"),
+                   (i_fork, "mid-choice — committing to a door")):
         e = log[i]
         shots.append((f"t = {e['t']} · {lab}", e["pos"],
                       obs_rgb(e["crop"], e["facing"], sprites, 10)))
 
     Hm, Wm = rec.terrain.shape
     top_r = rec.top_goal_cells[0][0]
-    bot_r = rec.bottom_goal_cells[0][0]
-    pad_r = 2
-    r0, r1 = max(0, top_r - pad_r), min(Hm, bot_r + pad_r + 1)   # door to door
-    zh = r1 - r0
-    c0 = max(0, Wm - zh)                                          # square crop
-    c1 = Wm
 
     with plt.rc_context(PLT_RC):
-        fig = plt.figure(figsize=(13.4, 7.4))
-        gs = fig.add_gridspec(2, 3, height_ratios=[1.05, 1.0], hspace=.34, wspace=.14)
+        fig = plt.figure(figsize=(13.4, 9.8))
+        gs = fig.add_gridspec(2, 3, height_ratios=[1.55, 1.0], hspace=.16, wspace=.14,
+                              top=.925, bottom=.02, left=.02, right=.98)
 
-        axm = fig.add_subplot(gs[0, :2])
+        axm = fig.add_subplot(gs[0, :])
         axm.imshow(T.TILE_COLORS[rec.terrain], interpolation="nearest")
-        mem_lo = max(0, wall - 16)
         axm.add_patch(Rectangle((mem_lo - .5, -.5), wall - mem_lo, Hm,
                                 facecolor="black", alpha=.20, zorder=3))
         axm.plot(traj[:, 1], traj[:, 0], color="#fde68a", lw=1.8, zorder=6)
@@ -175,40 +174,20 @@ def fig_anatomy(by_cat, out, ppo_ckpt):
                 axm.add_patch(Rectangle((c - .5, r - .5), 1, 1, fill=False,
                                         edgecolor="#22c55e" if good else "#ef4444",
                                         lw=2.2, zorder=8))
-        axm.add_patch(Rectangle((c0 - .5, r0 - .5), c1 - c0, zh, fill=False,
-                                edgecolor="#facc15", lw=1.6, zorder=9))
-        for x, y, txt in ((mem_lo / 2, 2.2, "1 · evidence\n(terrain reveals the type)"),
-                          ((mem_lo + wall) / 2, 2.2, "2 · memory corridor\n(16 columns, no evidence)")):
-            axm.annotate(txt, (x, y), color="white", fontsize=8, ha="center", va="center",
+        if rec.passage_cells:
+            pr = [c[0] for c in rec.passage_cells]
+            axm.add_patch(Rectangle((pass_col - .5, min(pr) - .5), 1, len(pr),
+                                    fill=False, edgecolor="#38bdf8", lw=1.8, zorder=8))
+        for x, y, txt, col in (
+                (mem_lo / 2, 2.4, "1 · evidence\n(terrain reveals the type)", "white"),
+                ((mem_lo + wall) / 2, 2.4, "2 · memory corridor\n(16 columns, no evidence)", "white"),
+                (pass_col - 5.5, Hm - 2.6, "3 · passage", "#38bdf8"),
+                (Wm - 7.0, top_r - 2.6, "4 · door choice", "white")):
+            axm.annotate(txt, (x, y), color=col, fontsize=8, ha="center", va="center",
                          zorder=10, bbox=dict(boxstyle="round,pad=.25", fc="black",
                                               alpha=.72, ec="none"))
         axm.set_xticks([]); axm.set_yticks([])
         axm.set_title("(a) the full map — one PPO episode (yellow)", loc="left")
-
-        axz = fig.add_subplot(gs[0, 2])
-        axz.imshow(T.TILE_COLORS[rec.terrain[r0:r1, c0:c1]], interpolation="nearest")
-        m = (traj[:, 0] >= r0) & (traj[:, 0] < r1) & (traj[:, 1] >= c0)
-        axz.plot(traj[m, 1] - c0, traj[m, 0] - r0, color="#fde68a", lw=2.0, zorder=6)
-        for cells, name in ((rec.top_goal_cells, "top"), (rec.bottom_goal_cells, "bottom")):
-            good = rec.correct_target in ("either", name)
-            for (r, c) in cells:
-                axz.add_patch(Rectangle((c - c0 - .5, r - r0 - .5), 1, 1, fill=False,
-                                        edgecolor="#22c55e" if good else "#ef4444",
-                                        lw=2.4, zorder=8))
-        if rec.passage_cells:
-            pr = [c[0] for c in rec.passage_cells]; pc = rec.passage_cells[0][1]
-            axz.add_patch(Rectangle((pc - c0 - .5, min(pr) - r0 - .5), 1, len(pr),
-                                    fill=False, edgecolor="#38bdf8", lw=2.0, zorder=8))
-            axz.annotate("3 · passage", (pc - c0 - 1.2, float(np.mean(pr)) - r0),
-                         color="#38bdf8", fontsize=8, ha="right", va="center", zorder=10,
-                         bbox=dict(boxstyle="round,pad=.2", fc="black", alpha=.72, ec="none"))
-        axz.annotate("4 · door choice", (c1 - c0 - 1.5, (top_r - r0) - 1.5),
-                     color="white", fontsize=8, ha="right", va="center", zorder=10,
-                     bbox=dict(boxstyle="round,pad=.2", fc="black", alpha=.72, ec="none"))
-        axz.set_xticks([]); axz.set_yticks([])
-        for s in axz.spines.values():
-            s.set_edgecolor("#facc15"); s.set_linewidth(1.6)
-        axz.set_title("(b) the fork, door to door", loc="left")
 
         # three observations, wired back to where they were taken
         for k, (label, pos, img) in enumerate(shots[:3]):
@@ -217,7 +196,7 @@ def fig_anatomy(by_cat, out, ppo_ckpt):
             axo.set_xticks([]); axo.set_yticks([])
             for s in axo.spines.values():
                 s.set_edgecolor("#94a3b8"); s.set_linewidth(1.2)
-            axo.set_title(f"({'cde'[k]}) {label}", loc="left", fontsize=8.5)
+            axo.set_title(f"({'bcd'[k]}) {label}", loc="left", fontsize=8.5)
             con = ConnectionPatch(xyA=(pos[1], pos[0]), coordsA=axm.transData,
                                   xyB=(img.shape[1] / 2, 0), coordsB=axo.transData,
                                   color="#94a3b8", lw=1.0, ls=(0, (4, 3)),
@@ -225,8 +204,8 @@ def fig_anatomy(by_cat, out, ppo_ckpt):
             fig.add_artist(con)
             axm.plot(pos[1], pos[0], "o", color="#94a3b8", mec="black", ms=5, zorder=11)
 
-        fig.suptitle("Anatomy of an episode", y=.995, fontsize=12)
-        fig.text(.5, .945, "what the agent receives — a 21×21 egocentric crop "
+        fig.suptitle("Anatomy of an episode", y=.985, fontsize=12)
+        fig.text(.5, .958, "what the agent receives — a 21×21 egocentric crop "
                  "(Crafter tiles) plus heading and elapsed time; black = out of bounds",
                  ha="center", fontsize=8.5, color="#6d7a70")
         fig.savefig(out / "fig_task_anatomy.png", bbox_inches="tight")

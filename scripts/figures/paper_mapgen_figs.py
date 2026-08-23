@@ -320,7 +320,8 @@ def fig_pipeline(out):
     stage5[:, 63] = np.where(stage5[:, 63] == 4, 0, stage5[:, 63])
 
     with plt.rc_context(PLT_RC):
-        fig, ax = plt.subplots(6, 1, figsize=(8.6, 9.2))
+        fig, ax = plt.subplots(2, 3, figsize=(13.6, 3.9))
+        ax = ax.flat
         imgs = [h0, hw, hov, TILE_COLORS[thr], TILE_COLORS[stage5],
                 TILE_COLORS[final.terrain]]
         for a, im, (_, title, kind) in zip(ax, imgs, panels):

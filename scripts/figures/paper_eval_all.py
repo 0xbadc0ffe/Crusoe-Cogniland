@@ -10,8 +10,10 @@ self-consistent:
               proxy used by the training loops scores fast wrong-door episodes
               as successes, because PBRS shaping outweighs the slack penalty.)
   * outcomes  correct door / wrong door / timeout, reported per category
-  * actions   each agent in its native operating mode (PPO, STORM sample;
-              Dreamer is deterministic) -- recorded in the output.
+  * actions   all three agents sample from their policy. Stochastic action
+              selection is the mode all three were trained under, so it is the
+              like-for-like comparison; `--mode deterministic` re-runs the same
+              protocol greedily and is reported alongside as a sensitivity.
 
 Run once per agent with the matching interpreter (see paper_rollouts.py header):
 
@@ -43,7 +45,10 @@ from paper_rollouts import (  # noqa: E402
 )
 
 CATS = ("balanced", "lakes", "rocky")
-MODE = {"ppo": "sampled", "storm": "sampled", "dreamer": "deterministic"}
+# The headline protocol is the same for every agent: sample from the policy,
+# which is how all three are trained. Greedy action selection is a separate
+# ablation, not a different agent's "native" setting.
+NATIVE = {"ppo": "sampled", "storm": "sampled", "dreamer": "sampled"}
 
 
 def main():
@@ -59,18 +64,34 @@ def main():
     p.add_argument("--dreamer-ckpt", default=str(REPO / "final_models/dreamer/dreamer_25M_bl64.pt"))
     p.add_argument("--dreamer-size", default="size25M")
     p.add_argument("--device", default="cuda")
+    p.add_argument("--mode", choices=["native", "sampled", "deterministic"],
+                   default="native",
+                   help="override the agent's action-selection mode so the "
+                        "same protocol can be applied to every agent")
     args = p.parse_args()
+    mode = NATIVE[args.agent] if args.mode == "native" else args.mode
 
+    # seed every source of stochasticity: map draw, policy sampling, and the
+    # world models' latent sampling. Without this the sampled-mode numbers move
+    # by ~0.5pp between identical invocations.
     with open(args.maps, "rb") as f:
         pool = pickle.load(f)
     rng = np.random.default_rng(args.seed)
+    np.random.seed(args.seed)
+    try:
+        import torch
+        torch.manual_seed(args.seed)
+    except Exception:
+        pass
 
+    sampled = (mode == "sampled")
     if args.agent == "ppo":
-        act, reset = make_ppo(args.ppo_ckpt)
+        act, reset = make_ppo(args.ppo_ckpt, sampled=sampled)
     elif args.agent == "storm":
-        act, reset = make_storm(args.storm_bundle, args.storm_step)
+        act, reset = make_storm(args.storm_bundle, args.storm_step, sampled=sampled)
     else:
-        act, reset = make_dreamer(args.dreamer_ckpt, args.device, args.dreamer_size)
+        act, reset = make_dreamer(args.dreamer_ckpt, args.device, args.dreamer_size,
+                                  sampled=sampled)
 
     stats = {c: defaultdict(int) for c in CATS}
     lengths = {c: [] for c in CATS}
@@ -107,7 +128,7 @@ def main():
     tot = {k: sum(v[k] for v in stats.values()) for k in ("n", "correct", "wrong", "timeout")}
     result = {
         "agent": args.agent,
-        "mode": MODE[args.agent],
+        "mode": mode,
         "episodes": tot["n"],
         "success": tot["correct"] / tot["n"],
         "wrong_door": tot["wrong"] / tot["n"],
@@ -138,7 +159,9 @@ def main():
     outp = Path(args.out)
     outp.parent.mkdir(parents=True, exist_ok=True)
     allr = json.loads(outp.read_text()) if outp.exists() else {}
-    allr[args.agent] = result
+    allr[f"{args.agent}:{mode}"] = result
+    if mode == NATIVE[args.agent]:
+        allr[args.agent] = result          # back-compat key used by the figures
     outp.write_text(json.dumps(allr, indent=1))
     print("merged ->", outp)
 

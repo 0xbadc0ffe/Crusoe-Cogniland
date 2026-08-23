@@ -270,7 +270,8 @@ def fig_compare(data, out, heldout):
         for i, v in enumerate(vals):
             ax.text(i, v + his[i] + .003, f"{v*100:.1f}%", ha="center", fontsize=8)
         ax.set_ylim(.94, 1.005); ax.set_ylabel("held-out success (TRUE metric)")
-        ax.set_title("(b) unified eval, 900 episodes each\n(differences n.s., all p>0.25)",
+        ax.set_title("(b) unified eval, 900 episodes each, all sampling\n"
+                     "(PPO vs STORM n.s.; Dreamer below both)",
                      loc="left", fontsize=8.5)
 
         # (c) outcome decomposition of the residual error

@@ -240,9 +240,11 @@ footer{grid-column:1/-1; justify-self:center; width:min(1180px,96vw); margin-top
   <b>⅔</b> success. We train three agents — recurrent PPO, DreamerV3 with an RSSM world
   model, and STORM with a Transformer world model — on a <em>byte-identical</em> environment,
   reward and fixed map dataset, and evaluate all three through one harness on 900 held-out
-  episodes. All three clear the memoryless ceiling and land within 0.7 percentage points of
-  each other: <b>98.6 %</b> (PPO), <b>98.1 %</b> (Dreamer), <b>98.8 %</b> (STORM); no pairwise
-  difference is significant (p&nbsp;&gt;&nbsp;0.25). What separates them is not final score but
+  episodes, all three sampling from their policies. All three clear the memoryless ceiling and
+  land within 1.8 percentage points of each other: <b>99.2 %</b> (PPO), <b>98.8 %</b> (STORM),
+  <b>97.4 %</b> (Dreamer); PPO and STORM are statistically indistinguishable
+  (p&nbsp;=&nbsp;0.34) and Dreamer trails both by a small but real margin. What separates them
+  is not final score but
   <em>what each needed in order to escape the constant-door optimum</em>: PPO needed an
   annealed high-entropy schedule, and both world-model agents needed a training window at
   least as long as the ~75-step evidence→door dependency. We report the full sweeps, the
@@ -250,13 +252,13 @@ footer{grid-column:1/-1; justify-self:center; width:min(1180px,96vw); margin-top
 </div>
 
 <div class="strip">
-  <div class="ppo"><span class="n">98.6%</span><span class="k">PPO + GRU</span></div>
-  <div class="dreamer"><span class="n">98.1%</span><span class="k">DreamerV3 25M</span></div>
+  <div class="ppo"><span class="n">99.2%</span><span class="k">PPO + GRU</span></div>
   <div class="storm"><span class="n">98.8%</span><span class="k">STORM</span></div>
+  <div class="dreamer"><span class="n">97.4%</span><span class="k">DreamerV3 25M</span></div>
   <div><span class="n">66.7%</span><span class="k">memoryless ceiling</span></div>
 </div>
 <p class="small">Held-out success on <code>forkwall6k/test.pkl</code>, 900 episodes per agent,
-TRUE door metric, each agent in its native action mode. Wilson 95 % intervals in Table 3.</p>
+TRUE door metric, each agent in its native action mode. Wilson 95 % intervals in Table 4.</p>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
 <h2><span class="num">1</span>Why this task exists</h2>
@@ -306,12 +308,13 @@ narrow strip containing two single-cell doors, one at the top and one at the bot
 either door ends the episode; only the matching one pays the bonus.</p>
 
 <figure class="plate">
-  <img src="{{FIG:fig_task_anatomy.png}}" alt="One map annotated with the four phases of an episode, plus a zoomed view of the fork">
+  <img src="{{FIG:fig_task_anatomy.png}}" alt="One map annotated with the four phases of an episode and three of the agent's own observations">
   <figcaption><span class="tag">Figure 2</span><b>Anatomy of an episode.</b> (a) one real PPO
-  episode; the shaded band is the memory corridor — 16 columns scrubbed of category evidence.
-  (b) the fork, cropped door to door: the passage is the only way through the tree wall. (c–e) the
-  agent's <em>actual input</em> at three moments of that same episode, rendered in Crafter tiles:
-  terrain evidence in view, then the blind corridor, then the fork. The observation is a 21×21
+  episode, with the four phases marked: terrain evidence, the shaded memory corridor (16 columns
+  scrubbed of category evidence), the passage that is the only way through the tree wall, and the
+  door choice. (b–d) the agent's <em>actual input</em> at three moments of that same episode,
+  rendered in Crafter tiles: evidence in view at spawn, then the blind corridor, then mid-choice
+  with both doors visible and nothing on screen to say which one pays. The observation is a 21×21
   egocentric crop of tile ids (one-hot over 9 types) plus 5 scalars — a one-hot heading and elapsed
   time — 3 974 numbers in total; black is out-of-bounds padding. Nothing in it names the type.</figcaption>
 </figure>
@@ -570,7 +573,7 @@ fractions:</p>
 
 <div class="tw">
   <table>
-    <caption><b>Table 1.</b> The complete definition of the three map types. Everything else in
+    <caption><b>Table 2.</b> The complete definition of the three map types. Everything else in
       the generator — noise, warping, features, trees, walls, doors — is identical.</caption>
     <thead><tr><th>Map type</th><th class="num">water_frac</th><th class="num">rock_frac</th>
       <th>rewarded door</th><th>rule</th></tr></thead>
@@ -751,19 +754,19 @@ only when cutting through is shorter.</p>
   map it tunnels straight through the ridge — 14 mine actions, the most aggressive tool use of
   any clip — arrives at the fork fast (88 steps, the shortest run on that map), and then takes the
   <em>wrong</em> door. Speed and tool skill are intact; the belief is what slipped. This is the
-  shape of essentially all residual error in Table 3: not lost agents, but confident agents
+  shape of essentially all residual error in Table 4: not lost agents, but confident agents
   arriving at the fork with the wrong memory.
 </div>
 
 <figure class="plate-wide">
   <img src="{{FIG:fig_trajectories.png}}" alt="Trajectories of all three agents on three identical held-out maps">
   <figcaption><span class="tag">Figure 11</span><b>24 episodes per panel, same maps.</b> Each
-  line is one stochastic rollout at 16 % opacity, so agreement accumulates into a bright highway
-  and lone deviations stay faint but visible. The contrast is structural: Dreamer acts
-  deterministically, so its 24 runs coincide exactly and draw a single hard line; PPO fans
-  slightly; STORM samples from its policy and fans widest — it pays for that in episode length
-  without losing accuracy. All three commit to the correct <em>half</em> of the map long before a
-  door is visible.</figcaption>
+  line is one rollout with the agent sampling from its policy, drawn at low opacity, so agreement
+  accumulates into a bright highway while lone deviations stay faint but visible. All three fan
+  out, but differently: PPO's spread is narrow and its highway is the brightest, STORM's is widest
+  — it pays for that exploration in episode length without losing accuracy — and Dreamer sits
+  between them while taking the most direct routes. What matters is that in every panel the
+  bundle commits to the correct <em>half</em> of the map long before a door is visible.</figcaption>
 </figure>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
@@ -804,9 +807,47 @@ attention summary of the past.</p>
   heads, context-primed imagination) is what makes the STORM column of this report exist.
 </div>
 
+
+<h3><span class="num">5.4</span>What the world models dream</h3>
+
+<p>PPO has no model of the world; it maps observations to actions. The other two agents train
+their policies almost entirely on <em>imagined</em> experience, which means there is a decoder
+sitting inside each of them that can be asked, directly, what it thinks is about to happen. Below
+we give each model 24 real steps of context, then cut the observations off and let it roll forward
+on its own dynamics, decoding every imagined latent back into a 21&times;21 observation.</p>
+
+<figure class="plate-wide">
+  <img src="{{FIG:fig_dream_dreamer.png}}" alt="DreamerV3 imagined observations compared against what really happened">
+  <figcaption><span class="tag">Figure 12</span><b>DreamerV3 dreaming.</b> Top: what really
+  happened. Bottom: what the RSSM predicted, given no observations after the context frame.
+  Tile-level agreement decays from <b>90%</b> at +1 to <b>44%</b> at +18. The lake, the rock
+  outcrop and the tree line stay in place; the coastline is what smears first.</figcaption>
+</figure>
+
+<figure class="plate-wide">
+  <img src="{{FIG:fig_dream_storm.png}}" alt="STORM imagined observations compared against what really happened">
+  <figcaption><span class="tag">Figure 13</span><b>STORM dreaming</b>, same protocol and the same
+  map. Agreement decays from <b>82%</b> to <b>63%</b> over 18 steps &mdash; a slower decay
+  than Dreamer's on this episode, consistent with attention re-reading the whole context at every
+  imagined step rather than threading it through a single recurrent state.</figcaption>
+</figure>
+
+<p>The detail worth pausing on: this is a <em>lakes</em> map, and in both dreams the agent
+imagines itself <b>laying a bridge across the water</b> &mdash; the brown plank line that appears
+in the bottom rows around +10 is the model predicting the consequence of its own build actions,
+and it matches what the real episode does. These models have learned not just the terrain but the
+effect of their tools on it, which is precisely the part that has to be right for
+imagination-based policy learning to work at all.</p>
+
+<p>The failure mode is the usual one for learned world models: geometry survives, fine detail
+dissolves. Shorelines round off, isolated sand speckles vanish, and by the end of the horizon the
+dream is a plausible map rather than <em>this</em> map. Both agents plan over horizons of 15&ndash;16
+steps, which Figures 12&ndash;13 suggest is roughly the range where the dream is still
+trustworthy.</p>
+
 <div class="tw">
   <table>
-    <caption><b>Table 2.</b> Agent configurations as trained. Every row above the rule is a
+    <caption><b>Table 3.</b> Agent configurations as trained. Every row above the rule is a
       property of the algorithm; below the rule are the settings that mattered for this task
       (Section&nbsp;8).</caption>
     <thead><tr><th></th><th class="agent-ppo">PPO + GRU</th><th class="agent-dreamer">DreamerV3</th><th class="agent-storm">STORM</th></tr></thead>
@@ -844,82 +885,136 @@ explicitly.</p>
   <code>forkwall6k/test.pkl</code> (1 200 maps), which is never touched during training.</li>
   <li><b>Evaluation is one harness.</b> 900 episodes per agent, maps drawn with a shared seed,
   the TRUE door metric, outcomes bucketed into correct / wrong-door / timeout.</li>
-  <li><b>Each agent acts in its native mode.</b> PPO and STORM sample from their policies;
-  Dreamer acts deterministically. This is how each was trained and how each is intended to run —
-  forcing a common mode would penalise agents for a mismatch that is not part of the method.
-  (STORM in particular degrades badly under greedy action selection: it deadlocks against
-  obstacles and times out on ~8 % of episodes.)</li>
+  <li><b>Action selection is identical: all three sample.</b> Every agent draws its action from
+  its own policy distribution, which is the mode all three were trained under, so nothing about
+  the comparison is tilted by one agent being run greedily and another stochastically. We also
+  re-ran the whole matrix with argmax actions; §7.2 reports it, and it is emphatically not a
+  neutral change.</li>
 </ul>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
 <h2><span class="num">7</span>Results</h2>
 
+<!-- BEGIN:results-table -->
 <div class="tw">
   <table>
-    <caption><b>Table 3.</b> Held-out results, 900 episodes per agent, TRUE door metric. Wilson
-      95 % intervals. <b>Decisive-door</b> restricts to lakes + rocky maps, where a memoryless
-      policy scores 50 %.</caption>
+    <caption><b>Table 4.</b> Held-out results, 900 episodes per agent per mode, TRUE door metric,
+      identical map draw and seed. Wilson 95 % intervals. <b>Decisive</b> restricts to lakes + rocky
+      maps, where a memoryless policy scores 50 %. Shaded rows are the headline protocol
+      (stochastic), identical for all three agents; the greedy rows are the same evaluation re-run with argmax actions.</caption>
     <thead><tr>
       <th>Agent</th><th>Mode</th><th class="num">Success</th><th class="num">95 % CI</th>
       <th class="num">Decisive</th><th class="num">Wrong door</th><th class="num">Timeout</th>
       <th class="num">Steps</th><th class="num">Return</th>
     </tr></thead>
     <tbody>
-      <tr><td class="agent-ppo">PPO + GRU</td><td>sampled</td><td class="num">98.56 %</td>
-        <td class="num ci">[97.5, 99.2]</td><td class="num">98.16 %</td><td class="num">0.67 %</td>
-        <td class="num">0.78 %</td><td class="num">106.9</td><td class="num">+3.08</td></tr>
+      <tr class="hl"><td class="agent-ppo">PPO + GRU</td><td>sampled</td><td class="num">99.22 %</td>
+        <td class="num ci">[98.4, 99.6]</td><td class="num">98.99 %</td><td class="num">0.44 %</td>
+        <td class="num">0.33 %</td><td class="num">104.3</td><td class="num">+3.13</td></tr>
+      <tr><td class="agent-ppo">PPO + GRU</td><td>deterministic</td><td class="num">58.11 %</td>
+        <td class="num ci">[54.9, 61.3]</td><td class="num">61.47 %</td><td class="num">0.33 %</td>
+        <td class="num">41.56 %</td><td class="num">389.5</td><td class="num">-1.29</td></tr>
+      <tr class="hl"><td class="agent-dreamer">DreamerV3 25M</td><td>sampled</td><td class="num">97.44 %</td>
+        <td class="num ci">[96.2, 98.3]</td><td class="num">96.31 %</td><td class="num">2.44 %</td>
+        <td class="num">0.11 %</td><td class="num">106.0</td><td class="num">+3.06</td></tr>
       <tr><td class="agent-dreamer">DreamerV3 25M</td><td>deterministic</td><td class="num">98.11 %</td>
-        <td class="num ci">[97.0, 98.8]</td><td class="num">97.65 %</td><td class="num">1.56 %</td>
-        <td class="num">0.33 %</td><td class="num">85.5</td><td class="num">+3.28</td></tr>
+        <td class="num ci">[97.0, 98.8]</td><td class="num">97.15 %</td><td class="num">1.78 %</td>
+        <td class="num">0.11 %</td><td class="num">83.7</td><td class="num">+3.30</td></tr>
       <tr class="hl"><td class="agent-storm">STORM</td><td>sampled</td><td class="num">98.78 %</td>
         <td class="num ci">[97.8, 99.3]</td><td class="num">98.16 %</td><td class="num">1.22 %</td>
         <td class="num">0.00 %</td><td class="num">125.1</td><td class="num">+2.91</td></tr>
+      <tr><td class="agent-storm">STORM</td><td>deterministic</td><td class="num">86.78 %</td>
+        <td class="num ci">[84.4, 88.8]</td><td class="num">87.94 %</td><td class="num">1.22 %</td>
+        <td class="num">12.00 %</td><td class="num">172.7</td><td class="num">+1.99</td></tr>
       <tr><td colspan="2" class="small">memoryless constant-door policy</td><td class="num">66.7 %</td>
         <td class="num ci">—</td><td class="num">50.0 %</td><td class="num">33.3 %</td>
         <td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>
     </tbody>
   </table>
 </div>
+<!-- END:results-table -->
 
-<p><b>No pairwise difference is statistically significant</b> (two-proportion z-tests:
-PPO vs Dreamer p = 0.46, PPO vs STORM p = 0.68, Dreamer vs STORM p = 0.25). The honest reading is
-that all three <em>solve</em> the task, and that a 900-episode evaluation cannot separate 98.1 %
-from 98.8 %. What the table does separate is <em>character</em>: Dreamer is the most efficient
-navigator (85 steps, highest return) but makes the most wrong-door errors; STORM never times out
-but takes 40 % longer routes because it samples; PPO sits between the two.</p>
+<p><b>PPO and STORM are indistinguishable; Dreamer trails both by a small but real margin.</b>
+Two-proportion z-tests on the 900-episode samples give PPO vs STORM p&nbsp;=&nbsp;0.34 — the
+0.44-point gap is noise — while PPO vs Dreamer gives p&nbsp;=&nbsp;0.003 and STORM vs Dreamer
+p&nbsp;=&nbsp;0.038. So the ranking is real, but it is worth keeping its size in view: 1.8
+percentage points separates the best from the worst, all three are more than 30 points clear of
+the memoryless ceiling, and Dreamer is a single seed where PPO is three. The table also separates
+<em>character</em>, which is the more interesting axis. Dreamer is the most efficient navigator
+and takes the most direct routes; STORM never times out at all but walks 20 % further because it
+samples widely; PPO is both the most accurate and close to the shortest, and its errors are the
+rarest of the three.</p>
 
 <figure class="plate-wide">
   <img src="{{FIG:fig_compare.png}}" alt="Training curves for all three agents, final held-out success with confidence intervals, and error decomposition">
-  <figcaption><span class="tag">Figure 12</span><b>Three agents, one task.</b> (a) training-time
+  <figcaption><span class="tag">Figure 14</span><b>Three agents, one task</b>, all sampling.
+  (a) training-time
   success against environment frames — note this is each trainer's own proxy metric, which is why
   the curves sit above the honest numbers in (b); the PPO band spans three seeds. (b) the unified
-  held-out evaluation with Wilson intervals; the intervals overlap heavily. (c) how the remaining
-  ~1.5 % of episodes are spent: Dreamer's residual is mostly wrong doors, PPO's is split, STORM's
-  is entirely wrong doors and never a timeout.</figcaption>
+  held-out evaluation with Wilson intervals — PPO's and STORM's overlap, Dreamer's sits just below
+  both. (c) how the residual episodes are spent: almost entirely wrong doors rather than timeouts,
+  for all three. STORM never times out at all.</figcaption>
 </figure>
 
 <h3><span class="num">7.1</span>Per-category breakdown</h3>
 
+<!-- BEGIN:category-table -->
 <div class="tw">
   <table>
-    <caption><b>Table 4.</b> Success by map category. <em>balanced</em> maps accept either door,
-      so they measure navigation alone; <em>lakes</em> and <em>rocky</em> measure memory.</caption>
+    <caption><b>Table 5.</b> Success by map category, all agents sampling. <em>balanced</em>
+      maps accept either door, so they measure navigation alone; <em>lakes</em> and <em>rocky</em> measure
+      memory.</caption>
     <thead><tr><th>Agent</th><th class="num">balanced <span class="small">(navigation)</span></th>
       <th class="num">lakes <span class="small">(memory)</span></th>
       <th class="num">rocky <span class="small">(memory)</span></th></tr></thead>
     <tbody>
-      <tr><td class="agent-ppo">PPO + GRU</td><td class="num">99.34 %</td><td class="num">97.92 %</td><td class="num">98.38 %</td></tr>
-      <tr><td class="agent-dreamer">DreamerV3</td><td class="num">99.01 %</td><td class="num">97.22 %</td><td class="num">98.06 %</td></tr>
+      <tr><td class="agent-ppo">PPO + GRU</td><td class="num">99.67 %</td><td class="num">98.96 %</td><td class="num">99.03 %</td></tr>
+      <tr><td class="agent-dreamer">DreamerV3 25M</td><td class="num">99.67 %</td><td class="num">99.31 %</td><td class="num">93.53 %</td></tr>
       <tr><td class="agent-storm">STORM</td><td class="num">100.00 %</td><td class="num">97.57 %</td><td class="num">98.71 %</td></tr>
     </tbody>
   </table>
 </div>
+<!-- END:category-table -->
 
-<p>The pattern is identical across agents and worth noting: <em>balanced</em> maps are essentially
-solved (99–100 %), and the residual error is concentrated on the two decisive categories. Since
-balanced maps are the ones where the door choice is free, this confirms that the remaining
-failures are memory failures — a slightly wrong belief at the fork — rather than navigation
-failures.</p>
+<p>The first pattern is shared: <em>balanced</em> maps are essentially solved (99.7–100 %) for
+every agent, and all the residual error sits on the two decisive categories. Since balanced maps
+are the ones where the door choice is free, this confirms that what remains are memory failures —
+a slightly wrong belief at the fork — and not navigation failures.</p>
+
+<p>The second pattern is not shared, and it is where Dreamer's 1.8-point deficit actually lives.
+Dreamer is the <em>best</em> of the three on lakes (99.31 %) and by far the worst on rocky
+(93.53 %); PPO and STORM are near-symmetric across the two. Dreamer's belief is therefore not
+uniformly weaker — it is biased. When it is unsure, it falls back on the bottom door, which is
+free on lakes maps and wrong on rocky ones. This is the residue of the same constant-door
+attractor that §8 shows all three agents have to escape during training: Dreamer escaped it, but
+not completely, and the asymmetry only becomes visible once the results are split by category.
+An aggregate success number hides it entirely.</p>
+
+<h3><span class="num">7.2</span>Stochastic vs greedy action selection</h3>
+
+<p>An obvious question about any comparison like this is whether the agents were run in
+comparable modes. They were — all three sample — but the lower half of Table 4 shows why the
+question is worth asking, because re-running the identical protocol with <code>argmax</code>
+actions does not affect the three agents equally. It barely touches Dreamer (97.44 % →
+98.11 %, p = 0.34, and its routes shorten from 106 to 84 steps), but it destroys PPO
+(<b>99.22 % → 58.11 %</b>) and badly hurts STORM (<b>98.78 % → 86.78 %</b>).</p>
+
+<p>The mechanism is visible in the timeout column and has nothing to do with memory. Greedy PPO
+times out on <b>41.6 %</b> of episodes with a mean length of 389 steps, against 0.33 % and 104
+steps when sampling; greedy STORM times out on 12 %. What happens is deadlock. A policy that
+always takes its single highest-probability action has no way to break a tie, so an agent that
+walks into an obstacle it cannot mine or bridge walks into it again, and again, until the step
+limit. The sampling noise these two agents were trained with is not decoration — it is the
+tie-breaker that keeps the controller unstuck, and removing it at evaluation time is a change to
+the algorithm, not a neutral measurement choice. Dreamer is unaffected because its actor was
+trained to a much lower entropy and its argmax is already close to its mean behaviour.</p>
+
+<p>This is the reason the headline protocol is stochastic for everyone rather than "each agent in
+whatever mode looks best for it." Reporting greedy Dreamer (98.11 %) next to sampled PPO
+(99.22 %) would compare two different evaluation procedures; picking each agent's better mode
+would flatter all three. Sampling is the mode all three were trained under, so it is the one that
+measures the same thing in every case — and it happens to be the mode where the two agents that
+depend on it are not artificially crippled.</p>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
 <h2><span class="num">8</span>What each agent needed</h2>
@@ -943,7 +1038,7 @@ contingency has been discovered.</p>
 
 <figure class="plate-wide">
   <img src="{{FIG:fig_ppo_training.png}}" alt="PPO training curves across four exploration arms and three seeds">
-  <figcaption><span class="tag">Figure 13</span><b>PPO + GRU, released run.</b> (b) success
+  <figcaption><span class="tag">Figure 15</span><b>PPO + GRU, released run.</b> (b) success
   climbs past the ⅔ line only after the annealing schedule has had time to act. (d) the
   belief probe reaches ~0.85 — and in the arms that stay stuck at ⅔ (not plotted) it reaches the
   same value, which is the evidence that memory is not the bottleneck, use of memory is. (e) the
@@ -965,7 +1060,7 @@ window; every configuration with a long enough window clears the ceiling.</p>
 
 <figure class="plate-wide">
   <img src="{{FIG:fig_dreamer_training.png}}" alt="DreamerV3 sweep over model size and batch length">
-  <figcaption><span class="tag">Figure 14</span><b>DreamerV3, released run</b> (25M,
+  <figcaption><span class="tag">Figure 16</span><b>DreamerV3, released run</b> (25M,
   <code>batch_length</code> 64). (a) the trainer's own eval metric crosses the ⅔ line at ~1M frames
   and saturates near 1.0. (d) the dynamics KL peaks while the world model is still fitting the
   terrain and then relaxes. (f) actor entropy collapses as the policy commits to a door
@@ -990,7 +1085,7 @@ than PPO — and too much sampling noise actively prevents the policy from sharp
 
 <figure class="plate-wide">
   <img src="{{FIG:fig_storm_training.png}}" alt="STORM training curves for the winning configuration">
-  <figcaption><span class="tag">Figure 15</span><b>STORM, released recipe</b> (entropy 0.01,
+  <figcaption><span class="tag">Figure 17</span><b>STORM, released recipe</b> (entropy 0.01,
   <code>batch_length</code> 128, context 128). Curves come from a faithful re-run of the released
   configuration — the original run's telemetry was lost in a repository cleanup, and the evaluated
   checkpoint comes from that original run. <b>This re-run is still in progress</b> (~0.9M of 6M
@@ -1014,7 +1109,7 @@ than PPO — and too much sampling noise actively prevents the policy from sharp
 
 <div class="tw">
   <table>
-    <caption><b>Table 5.</b> Each agent's gating hyperparameter — the one change that separates a
+    <caption><b>Table 6.</b> Each agent's gating hyperparameter — the one change that separates a
       constant-door policy from a solution.</caption>
     <thead><tr><th>Agent</th><th>Default behaviour</th><th>Gating change</th><th>Why</th></tr></thead>
     <tbody>
@@ -1035,9 +1130,9 @@ than PPO — and too much sampling noise actively prevents the policy from sharp
 <h2><span class="num">9</span>Limitations</h2>
 
 <ul>
-  <li><b>Single seed per released agent.</b> Table 3 compares one checkpoint per method. The
+  <li><b>Single seed per released agent.</b> Table 4 compares one checkpoint per method. The
   seed-to-seed variance across the sweeps (Section 8) is larger than the between-agent
-  differences, so the ranking in Table 3 should not be read as a ranking of methods.</li>
+  differences, so the ranking in Table 4 should not be read as a ranking of methods.</li>
   <li><b>Checkpoint selection differs.</b> STORM's checkpoint was selected on held-out data from
   an archive; PPO's and Dreamer's are end-of-training. This favours STORM by roughly a point.</li>
   <li><b>Action modes differ</b> (Section 6). Defensible, but it means the comparison is
@@ -1075,8 +1170,18 @@ cd STORM_model &amp;&amp; python -m scripts.train \
     --env-config   configs/envs/bridge_tunnel_storm2_run6.yaml \
     --agent-config configs/agents/sweep/stormH_ent001_bl128.yaml --offline
 
-# 4 · the unified evaluation used for Table 3 (per agent)
-python scripts/figures/paper_eval_all.py --agent {ppo|dreamer|storm} --episodes 900</pre>
+# 4 · the unified evaluation behind Tables 4-5 (per agent, per mode)
+python scripts/figures/paper_eval_all.py --agent {ppo|dreamer|storm} \
+    --episodes 900 --mode {native|sampled|deterministic}
+
+# 5 · figures, tables and videos
+PYTHONPATH=src python scripts/figures/paper_task_figs.py       # Fig 1-2
+PYTHONPATH=src python scripts/figures/paper_mapgen_figs.py     # Fig 5-10
+PYTHONPATH=src python scripts/figures/paper_traj_density.py    # Fig 11
+python scripts/figures/paper_dreams.py --agent {dreamer|storm} # Fig 12-13
+python scripts/figures/paper_training_figs.py                  # Fig 14-17
+python scripts/figures/paper_results_table.py                  # Tables 4-5
+python scripts/figures/build_paper.py                          # inline everything</pre>
 
 <details>
   <summary>Where the artifacts live</summary>
@@ -1088,7 +1193,10 @@ python scripts/figures/paper_eval_all.py --agent {ppo|dreamer|storm} --episodes 
     <li><code>scripts/figures/paper_*.py</code> — every figure, video and number in this report:
     <code>paper_env_figs.py</code>, <code>paper_rollouts.py</code>,
     <code>paper_training_data.py</code>, <code>paper_training_figs.py</code>,
-    <code>paper_eval_all.py</code>, <code>build_paper.py</code>.</li>
+    <code>paper_eval_all.py</code>, <code>paper_results_table.py</code>,
+    <code>paper_dreams.py</code>, <code>build_paper.py</code>. Tables 4-5 are written into the
+    paper source by <code>paper_results_table.py</code> rather than typed by hand, so a retrained
+    agent cannot leave a stale number behind.</li>
     <li><code>STORM_model/scripts/true_eval_w.py</code> — the TRUE-metric evaluator
     (<code>--sampled --env-context 128</code>).</li>
     <li><code>data/bridge_tunnel/forkwall6k/</code> — the frozen dataset.</li>
@@ -1098,7 +1206,7 @@ python scripts/figures/paper_eval_all.py --agent {ppo|dreamer|storm} --episodes 
 <footer>
   <p><b>Cogniland</b> · technical report · generated from repository state at
   commit time. Figures and videos are produced by the scripts listed above; every number in
-  Tables 3–4 comes from <code>paper/figures/forkwall_paper/eval_all.json</code>, written by a
+  Tables 4–5 come from <code>paper/figures/forkwall_paper/eval_all.json</code>, written by a
   single evaluation harness run once per agent.</p>
   <p>Potential-based shaping follows Ng, Harada &amp; Russell (1999). DreamerV3: Hafner et al.
   (2023). STORM: Zhang et al. (2023), NeurIPS.</p>

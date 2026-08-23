@@ -86,29 +86,36 @@ def render_frame(env, rec, traj, step, reward_sum, agent_name):
 
 # ── agent adapters: each returns act(obs, done) -> int ───────────────────
 
-def make_ppo(ckpt_path):
+def make_ppo(ckpt_path, sampled=True):
     import torch
     from cogniland.bridge_tunnel.policy import PPOGRUPolicy
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     probe = BridgeTunnelEnv(seed=0, **FORKWALL_KWARGS); probe.reset()
     policy = PPOGRUPolicy.from_checkpoint(ckpt, probe.observation_space)
     h = torch.zeros(1, 1, policy.gru_hidden)
+    h_prev = [h]
 
     def reset():
         nonlocal h
         h = torch.zeros(1, 1, policy.gru_hidden)
+        h_prev[0] = h
 
     def act(obs, done):
         nonlocal h
         with torch.no_grad():
             t = {k: torch.as_tensor(np.asarray(v))[None] for k, v in obs.items()}
-            a, _, _, _, h = policy.get_action_and_value(
-                t, h, torch.zeros(1))
+            a, _, _, _, h = policy.get_action_and_value(t, h, torch.zeros(1))
+            if not sampled:                       # greedy: argmax of the logits
+                obs_seq = {k: v.unsqueeze(0) for k, v in t.items()}
+                gru_out, _ = policy._gru_forward(obs_seq, torch.zeros(1, 1), h_prev[0])
+                logits, _ = policy._heads(gru_out.squeeze(0))
+                a = logits.argmax(-1)
+        h_prev[0] = h
         return int(a.item())
     return act, reset
 
 
-def make_storm(bundle, step, env_context=128):
+def make_storm(bundle, step, env_context=128, sampled=True):
     """STORM (storm2): rolling (z,a) context window, sampled actions."""
     from cl.config import setup_environment
     setup_environment()
@@ -154,14 +161,14 @@ def make_storm(bundle, step, env_context=128):
         rng, ar = jax.random.split(rng)
         a, state = agent.select_action(
             state, {"vector": jnp.asarray(vec)[None]}, ar,
-            is_first=jnp.asarray([first]), prev_action=prev, training=True)
+            is_first=jnp.asarray([first]), prev_action=prev, training=sampled)
         prev = jax.nn.one_hot(a, agent.action_space)
         first = False
         return int(a[0])
     return act, reset
 
 
-def make_dreamer(ckpt_path, device="cuda", model_size="size25M"):
+def make_dreamer(ckpt_path, device="cuda", model_size="size25M", sampled=False):
     """R2-Dreamer, loaded exactly as scripts/bridge_tunnel/eval_forkwall_fixed.py does
     (hydra config + strict=False state dict); deterministic (eval=True) actions."""
     import gymnasium as gym
@@ -211,7 +218,7 @@ def make_dreamer(ckpt_path, device="cuda", model_size="size25M"):
             "vector": torch.as_tensor(vec, device=device, dtype=torch.float32)[None],
             "is_first": torch.tensor([first[0]], device=device)}, batch_size=(1,))
         with torch.no_grad():
-            a, st[0] = agent.act(trans, st[0], eval=True)
+            a, st[0] = agent.act(trans, st[0], eval=not sampled)
         first[0] = False
         return int(a.argmax(-1))
     return act, reset

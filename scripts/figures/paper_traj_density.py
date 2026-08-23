@@ -47,7 +47,7 @@ def collect(agent, map_ids, n, args):
     elif agent == "storm":
         act, reset = make_storm(args.storm_bundle, args.storm_step)
     else:
-        act, reset = make_dreamer(args.dreamer_ckpt, args.device, args.dreamer_size)
+        act, reset = make_dreamer(args.dreamer_ckpt, args.device, args.dreamer_size, sampled=True)
 
     with open(args.maps, "rb") as f:
         pool = pickle.load(f)
@@ -98,6 +98,10 @@ def plot(dirpath, map_ids, maps_path):
             for c, agent in enumerate([a for a in AGENTS if a in data]):
                 ax = axes[r, c]
                 ax.imshow(TILE_COLORS[rec.terrain], interpolation="nearest")
+                H, W = rec.terrain.shape
+                # a run that ends inside the door cell can push the autoscale one
+                # column past the map and letterbox the panel
+                ax.set_xlim(-.5, W - .5); ax.set_ylim(H - .5, -.5)
                 for cells, name in ((rec.top_goal_cells, "top"),
                                     (rec.bottom_goal_cells, "bottom")):
                     good = rec.correct_target in ("either", name)
@@ -111,8 +115,10 @@ def plot(dirpath, map_ids, maps_path):
                     t = np.asarray(run["traj"], dtype=float)
                     # sub-cell jitter: identical paths still stack visibly
                     t = t + rng.normal(0, .16, t.shape)
-                    ax.plot(t[:, 1], t[:, 0], color=COL[agent], lw=1.15,
-                            alpha=.16, solid_capstyle="round", zorder=6)
+                    # one line reads about as strongly as eight did at .16
+                    # (1-(1-.16)**8 = .75); thinner strokes keep bundles legible
+                    ax.plot(t[:, 1], t[:, 0], color=COL[agent], lw=.85,
+                            alpha=.72, solid_capstyle="round", zorder=6)
                 ax.plot([], [], color=COL[agent], lw=2, label="one episode")
                 ax.set_xticks([]); ax.set_yticks([])
                 ax.set_title(f"{LABEL[agent]} — {ok}/{len(runs)} reach the right door",
