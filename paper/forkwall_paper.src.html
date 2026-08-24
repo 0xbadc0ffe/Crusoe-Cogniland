@@ -1107,19 +1107,41 @@ agents.</p>
   <em>first</em> seen (the agent bridges and mines as it goes, so later values are contaminated).
   (a) on balanced maps, P(top door) rises monotonically with the rock-minus-water surplus actually
   observed — AUC 0.86 / 0.76 / 0.84 — even though both doors pay. Dotted lines are each agent's
-  standing bias. (b) the same free choice read off the agent's <em>internal</em> state instead:
-  projecting the carried state at the wall onto the lakes→rocky axis (a difference of means taken
-  from decisive maps only) predicts the balanced-map door at <b>AUC 0.97</b> for PPO and
-  <b>1.00</b> for Dreamer. (c) on decisive maps the wrong-door episodes are systematically the ones
-  where the agent saw <em>less</em> evidence for the true type.</figcaption>
+  standing bias. (b) the same free choice read off the agent's <em>internal</em> state, at four
+  points along the episode. The lakes→rocky axis is a difference of class means fit on
+  <em>decisive</em> maps only; the dotted line and band are a <b>shuffled-label null</b> — the same
+  estimator on the same states with the categories destroyed. The gap between solid and dotted is
+  the result; it closes at the wall. The map type itself is decodable throughout (held-out AUC
+  0.999 for PPO; 0.931 → 0.991 → 0.994 for Dreamer, which <em>sharpens</em> its belief across the
+  corridor). (c) on decisive maps the wrong-door episodes are systematically the ones where the
+  agent saw <em>less</em> evidence for the true type. STORM appears in (a) and (c) only: its
+  carried state is a rolling token context that would need a transformer re-run to
+  materialise.</figcaption>
 </figure>
 
-<p>Panel (b) is the load-bearing one. The lakes→rocky axis is estimated only from
-<em>decisive</em> maps, where the type is real and the reward depends on it. Projecting balanced
-episodes onto that axis then separates their door choice almost perfectly. So the agents do not
-have a separate coin-flip mechanism for the free case: they run the same evidence-integration
-circuit, land somewhere on the same belief axis, and read the door off it. A balanced map is not a
-map with no answer — it is a map where the agent forms an answer anyway and nothing punishes it.</p>
+<p>Panel (b) asks whether the <em>internal</em> belief drives that free choice, and it needs care,
+because the obvious way to ask the question does not work. A difference of class means in 128 to
+3 072 dimensions is a high-variance direction: run the identical estimator on shuffled labels and
+it still separates the balanced-map door, so an impressive-looking AUC on its own establishes
+nothing. Every number in panel (b) is therefore reported against that shuffled-label null.</p>
+
+<p><b>Where along the episode you look decides the answer.</b> At the wall the null is already at
+0.401 (PPO) and 0.458 (Dreamer) — by then the agent has committed, the decision itself is in the
+carried state, and essentially any direction predicts it (PPO p&nbsp;=&nbsp;0.28). The informative
+phase is the middle of the memory corridor, where the belief must be held but the decision is not
+yet being executed. There Dreamer's axis reaches an effect of 0.440 against a null of 0.253,
+<b>p&nbsp;&lt;&nbsp;0.001</b>; PPO reaches 0.460 against 0.340, p&nbsp;=&nbsp;0.060 — suggestive,
+not significant. At spawn the axis is undefined, because every episode carries the identical reset
+state; that is the correct answer for an agent that has seen nothing, and it confirms no label is
+leaking backwards through the pipeline.</p>
+
+<p>So the claim that survives is narrower than the one panel (b) first appears to make, and it is
+Dreamer's: halfway through an evidence-free corridor, with no terrain on screen and no door yet
+chosen, the direction that distinguishes lakes from rocky maps predicts which door the agent will
+freely take on a map where both pay. The agents do not have a separate coin-flip mechanism for the
+free case; at least in Dreamer, they run the evidence-integration circuit and read the answer off
+it. A balanced map is not a map with no answer — it is a map where the agent forms one anyway and
+nothing punishes it.</p>
 
 <p>The standing biases differ in <em>direction</em>, and they predict the asymmetries of
 Section&nbsp;7.1. Dreamer leans bottom (P(top) = 0.287) and is the agent that underperforms on

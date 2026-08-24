@@ -32,6 +32,8 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "figures"))
 
 CATS = ("balanced", "lakes", "rocky")
+# where along the episode the carried state is sampled, in order
+PHASES = ("spawn", "evidence_end", "corridor_mid", "wall")
 COL = {"ppo": "#d97706", "dreamer": "#2563eb", "storm": "#16a34a"}
 LBL = {"ppo": "PPO + GRU", "dreamer": "DreamerV3", "storm": "STORM"}
 
@@ -62,7 +64,7 @@ def collect(agent, args):
     except Exception:
         pass
 
-    rows = []
+    rows, ep_states = [], []
     for i, rec in enumerate(pool):
         env = BridgeTunnelEnv(seed=0, map_record=rec, **FORKWALL_KWARGS)
         obs, _ = env.reset()
@@ -71,7 +73,15 @@ def collect(agent, args):
         seen = np.zeros((H, W), bool)
         n_water = n_rock = 0
         pass_col = rec.passage_cells[0][1] if rec.passage_cells else rec.wall_col
-        fork_state = None
+        mem_lo = max(0, rec.wall_col - 16)
+        # Capture the carried state at four points along the episode. One state
+        # at the fork is not enough: by then the door decision is already in the
+        # state, so *any* direction predicts it and the AUC stops being
+        # diagnostic. The corridor is the phase where the belief must be held
+        # but the decision is not yet being executed.
+        phase_col = {"spawn": -1, "evidence_end": mem_lo,
+                     "corridor_mid": (mem_lo + pass_col) // 2, "wall": pass_col}
+        phase_state = {k: None for k in phase_col}
 
         for t in range(FORKWALL_KWARGS["max_steps"]):
             r, c = env._pos
@@ -85,9 +95,10 @@ def collect(agent, args):
                 n_water += int((tiles == T.WATER).sum())
                 n_rock += int((tiles == T.ROCK).sum())
                 win |= True
-            # carried state the moment the wall is reached = belief at decision
-            if fork_state is None and c >= pass_col and get_state is not None:
-                fork_state = get_state().astype(np.float32)
+            if get_state is not None:
+                for ph, col in phase_col.items():
+                    if phase_state[ph] is None and c >= col:
+                        phase_state[ph] = get_state().astype(np.float16)
             obs, _, term, trunc, _ = env.step(act(obs, False))
             if term or trunc:
                 break
@@ -103,9 +114,12 @@ def collect(agent, args):
         else:
             door = "top" if fr in top else "bottom" if fr in bot else "none"
 
+        # evidence seen by the time each phase was reached is recorded too, so
+        # "what it knew" and "what it had seen" line up phase by phase
         rows.append(dict(cat=rec.category, water=n_water, rock=n_rock,
                          door=door, correct=bool(reached), steps=t + 1,
-                         state=None if fork_state is None else fork_state.tolist()))
+                         phases=[ph for ph in phase_col if phase_state[ph] is not None]))
+        ep_states.append(phase_state)
         if (i + 1) % 200 == 0:
             print(f"  {i+1}/{len(pool)}", flush=True)
 
@@ -113,14 +127,16 @@ def collect(agent, args):
     # Keep the per-episode record small and put the states in a compressed .npz.
     out = Path(args.out) / f"evidence_{agent}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    states = [r.pop("state") for r in rows]
-    has_state = any(x is not None for x in states)
     out.write_text(json.dumps(rows))
+    has_state = any(any(v is not None for v in d.values()) for d in ep_states)
     if has_state:
-        idx = [i for i, x in enumerate(states) if x is not None]
-        np.savez_compressed(out.with_suffix(".npz"),
-                            idx=np.asarray(idx, np.int32),
-                            states=np.asarray([states[i] for i in idx], np.float32))
+        arrs = {}
+        for ph in PHASES:
+            idx = [i for i, d in enumerate(ep_states) if d.get(ph) is not None]
+            if idx:
+                arrs[f"idx_{ph}"] = np.asarray(idx, np.int32)
+                arrs[ph] = np.asarray([ep_states[i][ph] for i in idx], np.float16)
+        np.savez_compressed(out.with_suffix(".npz"), **arrs)
     print(f"wrote {out}  ({len(rows)} episodes, "
           f"state={'yes -> ' + out.with_suffix('.npz').name if has_state else 'no'})")
 
@@ -239,16 +255,100 @@ def belief_axis_stats(rows):
     return res
 
 
+def phase_sweep(rows, n_null=200, seed=0):
+    """Fit the lakes->rocky axis at each episode phase and test it honestly.
+
+    Two questions per phase:
+      decode  -- is the map type linearly readable from the carried state at all?
+                 (axis fit on half the decisive episodes, scored on the other half)
+      free    -- does that axis predict the door on BALANCED maps, where the
+                 choice carries no reward?
+
+    `free` is reported against a shuffled-label null: the same difference-of-means
+    estimator on the same states with the category labels destroyed. Without it the
+    number is meaningless -- in 128 to 3072 dimensions a difference of means is a
+    high-variance direction and |AUC-0.5| sits nowhere near 0 under the null.
+    """
+    rng = np.random.default_rng(seed)
+    out = {}
+    for ph in PHASES:
+        have = [r for r in rows if ph in r["st"]]
+        by = {c: np.array([r["st"][ph] for r in have if r["cat"] == c], np.float32)
+              for c in ("lakes", "rocky")}
+        if min(len(by["lakes"]), len(by["rocky"])) < 40:
+            continue
+        bal = [r for r in have if r["cat"] == "balanced"
+               and r["door"] in ("top", "bottom")]
+        if len(bal) < 40:
+            continue
+        B = np.array([r["st"][ph] for r in bal], np.float32)
+        top = np.array([r["door"] == "top" for r in bal], float)
+
+        # held-out decodability of the map type
+        dec = []
+        for _ in range(20):
+            tr, te = {}, {}
+            for c in ("lakes", "rocky"):
+                q = rng.permutation(len(by[c])); h = len(q) // 2
+                tr[c], te[c] = by[c][q[:h]], by[c][q[h:]]
+            w = tr["rocky"].mean(0) - tr["lakes"].mean(0)
+            n = np.linalg.norm(w)
+            if n == 0:
+                continue
+            w /= n
+            sc = np.concatenate([te["rocky"] @ w, te["lakes"] @ w])
+            lb = np.concatenate([np.ones(len(te["rocky"])), np.zeros(len(te["lakes"]))])
+            dec.append(auc(sc, lb))
+
+        # the real axis, and the balanced-door effect it produces
+        v = by["rocky"].mean(0) - by["lakes"].mean(0)
+        nv = float(np.linalg.norm(v))
+        if nv < 1e-8:
+            # at reset every episode carries the same state, so the class means
+            # coincide and the axis is undefined. That is the correct answer for
+            # a phase where the agent has seen nothing, not a failure.
+            out[ph] = dict(n=len(have), n_balanced=len(bal), degenerate=True,
+                           decode_auc=None, decode_sd=None, free_effect=None,
+                           null_mean=None, null_sd=None, null_p=None)
+            continue
+        v = v / nv
+        real = abs(auc(B @ v, top) - .5)
+
+        # shuffled-label null, same estimator and same states
+        allc = np.concatenate([by["lakes"], by["rocky"]])
+        null = []
+        for _ in range(n_null):
+            q = rng.permutation(len(allc)); h = len(q) // 2
+            w = allc[q[:h]].mean(0) - allc[q[h:]].mean(0)
+            n = np.linalg.norm(w)
+            if n > 0:
+                null.append(abs(auc(B @ (w / n), top) - .5))
+        null = np.array(null)
+
+        out[ph] = dict(n=len(have), n_balanced=len(bal),
+                       decode_auc=float(np.mean(dec)) if dec else None,
+                       decode_sd=float(np.std(dec)) if dec else None,
+                       free_effect=float(real),
+                       null_mean=float(null.mean()), null_sd=float(null.std()),
+                       null_p=float((null >= real).mean()))
+    return out
+
+
 def load_rows(json_path: Path):
-    """Read the episode records and re-attach states from the sidecar .npz."""
+    """Read the episode records and re-attach per-phase states from the .npz."""
     rows = json.loads(json_path.read_text())
     for r in rows:
-        r.setdefault("state", None)
+        r["st"] = {}
     npz = json_path.with_suffix(".npz")
     if npz.exists():
         z = np.load(npz)
-        for i, st in zip(z["idx"], z["states"]):
-            rows[int(i)]["state"] = st
+        for ph in PHASES:
+            if ph not in z:
+                continue
+            for i, st in zip(z[f"idx_{ph}"], z[ph]):
+                rows[int(i)]["st"][ph] = st.astype(np.float32)
+    for r in rows:                       # back-compat with the old single-state field
+        r["state"] = r["st"].get("wall")
     return rows
 
 
@@ -259,7 +359,7 @@ def plot(out):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    data, stats, axis = {}, {}, {}
+    data, stats, axis, sweeps = {}, {}, {}, {}
     for ag in ("ppo", "dreamer", "storm"):
         f = out / f"evidence_{ag}.json"
         if f.exists():
@@ -268,6 +368,9 @@ def plot(out):
             a = belief_axis_stats(data[ag])
             if a:
                 axis[ag] = a
+            sw = phase_sweep(data[ag])
+            if sw:
+                sweeps[ag] = sw
     if not data:
         raise SystemExit("no evidence_*.json found -- run collection first")
 
@@ -297,28 +400,49 @@ def plot(out):
                     xy=(.98, .06), xycoords="axes fraction", fontsize=6.8,
                     ha="right", color="#6b7280")
 
-        # (b) same free choice, but read off the internal belief axis
+        # (b) phase sweep. The story is the GAP between the real axis and the
+        #     shuffled-label null, so draw the null as a band and the effect on
+        #     top of it; decodability goes in as text since it is ~1 throughout.
         ax = axes[1]
-        any_state = False
+        xs = np.arange(len(PHASES))
+        drawn = False
         for ag in data:
-            d = axis.get(ag, {}).get("balanced")
-            if not d or "curve_proj" not in d:
+            sw = sweeps.get(ag) or {}
+            m = [i for i, ph in enumerate(PHASES)
+                 if sw.get(ph, {}).get("free_effect") is not None]
+            if not m:
                 continue
-            any_state = True
-            cur = np.array(d["curve_proj"])
-            ax.plot(cur[:, 0], cur[:, 1], "o-", color=COL[ag], lw=1.7, ms=4.5,
-                    label=f"{LBL[ag]}   AUC {d['auc_proj_top']:.2f}")
-        ax.axhline(.5, color="#9ca3af", ls="--", lw=1)
-        ax.set_title("(b) …and read off the belief axis instead", loc="left")
-        ax.set_xlabel("state projected on the lakes→rocky axis")
-        ax.set_ylabel("P(top door)")
-        ax.set_ylim(-.02, 1.05)
-        if any_state:
-            ax.legend(frameon=False, fontsize=7.4, loc="upper left")
-        else:
-            ax.text(.5, .5, "no carried state captured", ha="center",
-                    transform=ax.transAxes, color="#9ca3af")
+            drawn = True
+            X = xs[m]
+            eff = np.array([sw[PHASES[i]]["free_effect"] for i in m])
+            nm = np.array([sw[PHASES[i]]["null_mean"] for i in m])
+            nsd = np.array([sw[PHASES[i]]["null_sd"] for i in m])
+            ax.fill_between(X, nm - nsd, nm + nsd, color=COL[ag], alpha=.13, lw=0)
+            ax.plot(X, nm, ls=":", color=COL[ag], lw=1.2)
+            ax.plot(X, eff, "o-", color=COL[ag], lw=2.0, ms=5.5,
+                    label=f"{LBL[ag]}")
+            dy = 8 if ag == "ppo" else -14
+            for i, x in zip(m, X):
+                pv = sw[PHASES[i]]["null_p"]
+                ax.annotate(f"p={pv:.3f}" if pv >= .001 else "p<0.001",
+                            (x, sw[PHASES[i]]["free_effect"]),
+                            textcoords="offset points", xytext=(0, dy),
+                            fontsize=6.6, ha="center", color=COL[ag],
+                            fontweight="bold" if pv < .05 else "normal")
+        ax.set_xticks(xs)
+        ax.set_xticklabels(["spawn\n(undefined)", "evidence\nends",
+                            "corridor\nmid", "at the\nwall"], fontsize=7.6)
+        ax.set_ylabel("|AUC − 0.5|  on the free door choice")
+        ax.set_ylim(0, .62)
+        ax.set_title("(b) the belief decides — but only before the wall", loc="left")
+        if drawn:
+            ax.legend(frameon=False, fontsize=7.2, loc="upper left")
         ax.grid(alpha=.25, lw=.5)
+        ax.annotate("dotted + band = shuffled-label null (mean ± sd)",
+                    xy=(.97, .04), xycoords="axes fraction", fontsize=6.6,
+                    ha="right", color="#6b7280",
+                    bbox=dict(boxstyle="round,pad=.25", fc="white",
+                              alpha=.85, ec="none"))
 
         # (c) decisive maps: near ceiling, so show the evidence DISTRIBUTION
         ax = axes[2]
@@ -354,7 +478,8 @@ def plot(out):
         plt.close(fig)
 
     (out / "evidence_stats.json").write_text(
-        json.dumps({"outcome": stats, "belief_axis": axis}, indent=1))
+        json.dumps({"outcome": stats, "belief_axis": axis,
+                    "phase_sweep": sweeps}, indent=1))
     for ag in stats:
         print(f"\n{LBL[ag]}")
         for cat in CATS:
