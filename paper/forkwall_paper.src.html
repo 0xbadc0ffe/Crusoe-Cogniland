@@ -226,60 +226,118 @@ footer{grid-column:1/-1; justify-self:center; width:min(1180px,96vw); margin-top
     <span><b>Environment</b> Cogniland (bridge_tunnel engine)</span>
     <span><b>Agents</b> PPO+GRU · DreamerV3 (RSSM) · STORM (Transformer)</span>
     <span><b>Data</b> forkwall6k, 4 800 train / 1 200 held-out maps</span>
-    <span><b>Evaluation</b> 900 held-out episodes per agent, identical harness</span>
+    <span><b>Evaluation</b> all 1 200 held-out maps per agent, identical harness</span>
   </div>
 </header>
 
 <div class="abstract">
   <span class="lbl">Abstract</span>
-  <p><b>Cogniland</b> is a 32×64 grid-world POMDP built so that memory is the <em>only</em>
-  hard part. Terrain statistics at the start of an episode identify one of three map
-  categories; the category is then hidden behind an information-free corridor; at the far
-  wall the agent picks one of two doors, and only the door matching the remembered category
-  pays. Navigation is easy, the reward is dense, and a memoryless policy is capped at
-  <b>⅔</b> success. We train three agents — recurrent PPO, DreamerV3 with an RSSM world
-  model, and STORM with a Transformer world model — on a <em>byte-identical</em> environment,
-  reward and fixed map dataset, and evaluate all three through one harness on 900 held-out
-  episodes, all three sampling from their policies. All three clear the memoryless ceiling and
-  land within 1.8 percentage points of each other: <b>99.2 %</b> (PPO), <b>98.8 %</b> (STORM),
-  <b>97.4 %</b> (Dreamer); PPO and STORM are statistically indistinguishable
-  (p&nbsp;=&nbsp;0.34) and Dreamer trails both by a small but real margin. What separates them
-  is not final score but
-  <em>what each needed in order to escape the constant-door optimum</em>: PPO needed an
-  annealed high-entropy schedule, and both world-model agents needed a training window at
-  least as long as the ~75-step evidence→door dependency. We report the full sweeps, the
-  training telemetry, and a metric pitfall that inflates success by 6–13 points if unnoticed.</p>
+  <p><b>Cogniland</b> is a 32×64 grid-world POMDP built as a benchmark for one question in
+  mechanistic interpretability: <b>can you steer a behaviour in an agent without corrupting
+  what it believes?</b> The task deliberately couples three things that are usually studied
+  apart. An agent must (i) <em>integrate a belief</em> — terrain statistics early in the episode
+  identify one of three map types, and the evidence then disappears behind an information-free
+  corridor; (ii) <em>navigate using skills</em> — water must be bridged and rock mined, so
+  crossing the map exercises two distinct, legible tool competences; and (iii) make a
+  <em>downstream decision that consumes the belief</em> — at the far wall it picks one of two
+  doors, and only the door matching the remembered type pays. The coupling is the point: the
+  evidence <em>is</em> the obstacle, so the skill axis (build↔mine) and the belief axis
+  (lakes↔rocky) are entangled by the data-generating process rather than by accident. A
+  belief-blind policy is capped at <b>⅔</b> success, which turns belief corruption into
+  something you can read off behaviour instead of only off a probe.</p>
+
+  <p>This report establishes the substrate. We train three architecturally distinct agents —
+  recurrent PPO, DreamerV3 with an RSSM world model, and STORM with a Transformer world model —
+  on a <em>byte-identical</em> environment, reward and fixed map dataset, and evaluate all three
+  through one harness on all 1 200 held-out maps with every agent sampling from its policy.
+  All three clear the memoryless ceiling and land within 0.9 points of each other:
+  <b>99.1 %</b> (STORM), <b>98.9 %</b> (PPO), <b>98.2 %</b> (Dreamer) — no pairwise difference is
+  significant. Having three unrelated architectures at the same competence is what
+  lets a later steering result be attributed to the <em>task</em> rather than to one network's
+  quirks. Along the way we report what each agent needed to escape the constant-door optimum —
+  an annealed high-entropy schedule for PPO, a long enough training window for both world models
+  — a metric pitfall that inflates success by 6–13 points if unnoticed, and a checkpoint
+  metastability that spans 0 % to 99 % within a single run.</p>
 </div>
 
 <div class="strip">
-  <div class="ppo"><span class="n">99.2%</span><span class="k">PPO + GRU</span></div>
-  <div class="storm"><span class="n">98.8%</span><span class="k">STORM</span></div>
-  <div class="dreamer"><span class="n">97.4%</span><span class="k">DreamerV3 25M</span></div>
+  <div class="storm"><span class="n">99.1%</span><span class="k">STORM</span></div>
+  <div class="ppo"><span class="n">98.9%</span><span class="k">PPO + GRU</span></div>
+  <div class="dreamer"><span class="n">98.2%</span><span class="k">DreamerV3 25M</span></div>
   <div><span class="n">66.7%</span><span class="k">memoryless ceiling</span></div>
 </div>
-<p class="small">Held-out success on <code>forkwall6k/test.pkl</code>, 900 episodes per agent,
-TRUE door metric, each agent in its native action mode. Wilson 95 % intervals in Table 4.</p>
+<p class="small">Held-out success on <code>forkwall6k/test.pkl</code> — every one of the 1 200
+maps, evaluated once per agent, TRUE door metric, all three sampling from their policies. Wilson
+95 % intervals in Table 4.</p>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
 <h2><span class="num">1</span>Why this task exists</h2>
 
-<p class="lede">Most benchmarks that require memory also require something else — exploration,
-credit assignment over sparse reward, visual abstraction, long-horizon control. When an agent
-fails, the failure is hard to attribute. Cogniland was built to remove every confound except
-one.</p>
+<p class="lede">Activation steering works. You can find a linear direction for a concept in a
+network's state and push on it, and the behaviour moves. What is far less clear is whether the
+push <em>stays where you aimed it</em> — whether suppressing one competence leaves the rest of
+the agent's internal state intact. Cogniland exists to make that question answerable.</p>
 
-<p>The design constraints were: (i) the information the agent must retain is a <em>single
-categorical variable</em>, visible early and never again; (ii) the delay between seeing it and
-needing it is long enough to defeat a short context window, but short enough that episodes stay
-cheap (~95 steps for a good policy); (iii) navigation is dense-rewarded and easy, so a failure
-is a memory failure, not a control failure; and (iv) there is a precisely known score for a
-memoryless policy, so "did it actually remember?" has a numerical answer rather than a
-qualitative one.</p>
+<p>The sharp form of the question, for an agent: <b>can you remove a skill without corrupting a
+belief?</b> Suppose an agent has learned to tunnel through rock, and you want a version that
+never tunnels — not by masking the action, which is trivial, but by editing activations, which is
+the thing that would generalise. The intervention is only a success if the agent stops tunnelling
+<em>and</em> everything else it knows survives. Testing that requires a task where "everything
+else it knows" is (a) genuinely present, (b) independently measurable, and (c) consequential. Most
+memory benchmarks give you the belief but no skills to steer; most tool-use benchmarks give you
+skills but no belief to corrupt.</p>
 
-<p>That last property is what makes the task useful as an interpretability substrate. A policy
-that ignores the hidden category still collects <b>⅔</b> of the reward (Section&nbsp;2.5), so the
-gap between 67 % and 99 % is entirely attributable to a belief that was formed, retained across
-the corridor, and read out at the fork. Everything above the ceiling is memory.</p>
+<h3><span class="num">1.1</span>Three properties, on purpose</h3>
+
+<p>Cogniland puts all three in one episode:</p>
+
+<ul>
+  <li><b>A belief that must be integrated and held.</b> The map type is not visible in any single
+  frame — it is a statistic of the terrain, accumulated over the opening stretch of the episode.
+  It then vanishes behind a 16-column corridor scrubbed of evidence. A belief formed this way is a
+  persistent state the agent carries, not a feature it can recompute from the current observation,
+  which is what makes it a meaningful target for probing.</li>
+
+  <li><b>Navigation that requires skills, not just movement.</b> Water and rock are not scenery
+  and not walls: water is crossed by <em>building</em> a bridge and rock by <em>mining</em>
+  through it, each a distinct action with its own cost and its own signature in the agent's state.
+  Reaching the far wall is reliably solvable but not trivial — it exercises two legible tool
+  competences that are worth steering in the first place.</li>
+
+  <li><b>A downstream decision that consumes the belief.</b> At the wall the agent chooses a door,
+  and only the type-matching door pays. The belief is <em>load-bearing</em>: corrupt it and the
+  behaviour visibly breaks, at a place far removed from wherever the intervention was applied.</li>
+</ul>
+
+<h3><span class="num">1.2</span>The coupling is the experiment</h3>
+
+<p>These three are not merely co-located — they are wired together by construction, and that is
+the design's whole point. <b>The evidence is the obstacle.</b> The water that tells the agent it
+is on a <em>lakes</em> map is the same water it has to bridge; the rock that says <em>rocky</em>
+is the rock it has to mine. So in any agent that solves this task, the skill axis (build↔mine)
+and the belief axis (lakes↔rocky) are correlated <em>by the data-generating process</em>, not by
+some accident of initialisation. Cogniland is therefore a deliberately hard case: if a steering
+technique can separate skill from belief here, the separation is unlikely to be an artifact of
+the two concepts having been unrelated to begin with.</p>
+
+<p>The ⅔ ceiling (Section&nbsp;2.5) is what turns this into a measurement rather than a
+narrative. A policy that ignores the hidden type still collects two-thirds of the door reward, so
+the gap between 67 % and 99 % is precisely the part attributable to a belief that was formed,
+retained across the corridor, and read out at the fork. An intervention that damages the belief
+does not merely shift a probe — it drags the door metric back toward the ceiling, in units anyone
+can check. Belief integrity becomes a behavioural quantity.</p>
+
+<h3><span class="num">1.3</span>Why three agents</h3>
+
+<p>A steering result obtained on one network is an anecdote about that network. Cogniland is
+therefore trained by three agents whose memory mechanisms have nothing in common: a GRU's
+recurrent hidden state (PPO), an RSSM's latent state carried by a deterministic path plus
+discrete stochastic variables (DreamerV3), and a Transformer's attention over a rolling context
+window (STORM). All three reach 97–99 % on the identical environment, reward and map split. Any
+entanglement that shows up in all three is a property of the <em>task</em>; anything that shows
+up in one is a property of that architecture. This report is the part of the programme that
+establishes the substrate and proves the three agents are solving the same problem — the
+steering experiments it is built for are summarised in Section&nbsp;9.</p>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
 <h2><span class="num">2</span>The environment</h2>
@@ -313,8 +371,11 @@ either door ends the episode; only the matching one pays the bonus.</p>
   episode, with the four phases marked: terrain evidence, the shaded memory corridor (16 columns
   scrubbed of category evidence), the passage that is the only way through the tree wall, and the
   door choice. (b–d) the agent's <em>actual input</em> at three moments of that same episode,
-  rendered in Crafter tiles: evidence in view at spawn, then the blind corridor, then mid-choice
-  with both doors visible and nothing on screen to say which one pays. The observation is a 21×21
+  rendered in Crafter tiles. At spawn the view is mostly out-of-bounds padding; by t = 50 the agent
+  is surrounded by the rock and water that identify the type; by t = 91 it is halfway down the
+  memory corridor, where <b>both doors are already visible and nothing on screen says which one
+  pays</b>. Panels (c) and (d) are the whole task in two images: everything that distinguishes them
+  has to be carried in the agent's state. The observation is a 21×21
   egocentric crop of tile ids (one-hot over 9 types) plus 5 scalars — a one-hot heading and elapsed
   time — 3 974 numbers in total; black is out-of-bounds padding. Nothing in it names the type.</figcaption>
 </figure>
@@ -423,7 +484,7 @@ policy scores 50 %.</p>
       <tr><td>memory corridor</td><td class="mono">mem_gap = 16 cols</td><td>shaping discount</td><td class="mono">1.0 (telescoping)</td></tr>
       <tr><td>wall passage</td><td class="mono">3 cells (passage_half 1)</td><td>door bonus</td><td class="mono">+3.0 (correct only)</td></tr>
       <tr><td>doors</td><td class="mono">2 × 1 cell (goal_half 0)</td><td>wrong-door penalty</td><td class="mono">0.0</td></tr>
-      <tr><td>view</td><td class="mono">21 × 21 egocentric</td><td>discount γ</td><td class="mono">0.99</td></tr>
+      <tr><td>view</td><td class="mono">21 × 21 egocentric</td><td>agent discount γ</td><td class="mono">per agent — Table 3</td></tr>
       <tr><td>observation dim</td><td class="mono">3 974 (one-hot + 5)</td><td>episode limit</td><td class="mono">800 steps</td></tr>
       <tr><td>actions</td><td class="mono">Discrete(6)</td><td>tree coverage</td><td class="mono">0.03</td></tr>
     </tbody>
@@ -859,6 +920,7 @@ trustworthy.</p>
       <tr><td>policy input</td><td>GRU state</td><td>RSSM state (deter + stoch)</td><td>concat(z<sub>t</sub>, h<sub>t</sub>)</td></tr>
       <tr><td>optimizer</td><td>Adam 3e−4</td><td>LaProp 4e−5, AGC 0.3</td><td>LaProp 1e−4, AGC 0.3</td></tr>
       <tr><td>parallel envs</td><td class="num">32</td><td class="num">24</td><td class="num">32</td></tr>
+      <tr><td>discount γ</td><td class="num">0.99</td><td class="num">0.997 <span class="small">(horizon 333)</span></td><td class="num">0.99 <span class="small">(horizon 100)</span></td></tr>
       <tr><td>imagination horizon</td><td>—</td><td class="num">15</td><td class="num">16 (context 16)</td></tr>
       <tr><td>replay / rollout</td><td>128 steps × 32 envs</td><td>replay, train_ratio 64</td><td>replay, train_ratio 256</td></tr>
       <tr class="hl"><td><b>training window</b></td><td>full episode (BPTT over rollout)</td><td><b>batch_length 64</b></td><td><b>batch_length 128</b></td></tr>
@@ -884,8 +946,19 @@ explicitly.</p>
   <li><b>Data is identical.</b> All agents draw training episodes from
   <code>forkwall6k/train.pkl</code> (4 800 maps) and are evaluated on
   <code>forkwall6k/test.pkl</code> (1 200 maps), which is never touched during training.</li>
-  <li><b>Evaluation is one harness.</b> 900 episodes per agent, maps drawn with a shared seed,
-  the TRUE door metric, outcomes bucketed into correct / wrong-door / timeout.</li>
+  <li><b>Evaluation is one harness, over the whole test set.</b> Every one of the 1 200 held-out
+  maps is played exactly once per agent, in the same order, with the TRUE door metric and outcomes
+  bucketed into correct / wrong-door / timeout. There is no map subsampling: an earlier version of
+  this harness drew 900 maps <em>with replacement</em>, which touched only 631 distinct maps and
+  left the per-category counts unbalanced. Enumerating the pool removes that noise entirely and
+  gives exactly 400 maps per category.</li>
+  <li><b>One thing is <em>not</em> matched: the discount.</b> PPO uses γ = 0.99 and STORM's
+  <code>horizon = 100</code> gives the same 0.99 — chosen deliberately to match. DreamerV3 was left
+  at the stock DreamerV3 default <code>horizon = 333</code>, i.e. <b>γ = 0.997</b>. On a task whose
+  payoff is a single terminal bonus after ~100 steps this is not cosmetic: discounted back to
+  t = 0, the +3.0 door bonus is worth 1.10 under γ = 0.99 but 2.22 under γ = 0.997, so Dreamer
+  weights the door roughly twice as heavily against the per-step slack. We report it rather than
+  paper over it; see Section&nbsp;10.</li>
   <li><b>Action selection is identical: all three sample.</b> Every agent draws its action from
   its own policy distribution, which is the mode all three were trained under, so nothing about
   the comparison is tilted by one agent being run greedily and another stochastically. We also
@@ -899,8 +972,8 @@ explicitly.</p>
 <!-- BEGIN:results-table -->
 <div class="tw">
   <table>
-    <caption><b>Table 4.</b> Held-out results, 900 episodes per agent per mode, TRUE door metric,
-      identical map draw and seed. Wilson 95 % intervals. <b>Decisive</b> restricts to lakes + rocky
+    <caption><b>Table 4.</b> Held-out results, all 1200 test maps per agent per mode, TRUE door metric,
+      every map played once in the same order. Wilson 95 % intervals. <b>Decisive</b> restricts to lakes + rocky
       maps, where a memoryless policy scores 50 %. Shaded rows are the headline protocol
       (stochastic), identical for all three agents; the greedy rows are the same evaluation re-run with argmax actions.</caption>
     <thead><tr>
@@ -909,24 +982,24 @@ explicitly.</p>
       <th class="num">Steps</th><th class="num">Return</th>
     </tr></thead>
     <tbody>
-      <tr class="hl"><td class="agent-ppo">PPO + GRU</td><td>sampled</td><td class="num">99.22 %</td>
-        <td class="num ci">[98.4, 99.6]</td><td class="num">98.99 %</td><td class="num">0.44 %</td>
-        <td class="num">0.33 %</td><td class="num">104.3</td><td class="num">+3.13</td></tr>
-      <tr><td class="agent-ppo">PPO + GRU</td><td>deterministic</td><td class="num">58.11 %</td>
-        <td class="num ci">[54.9, 61.3]</td><td class="num">61.47 %</td><td class="num">0.33 %</td>
-        <td class="num">41.56 %</td><td class="num">389.5</td><td class="num">-1.29</td></tr>
-      <tr class="hl"><td class="agent-dreamer">DreamerV3 25M</td><td>sampled</td><td class="num">97.44 %</td>
-        <td class="num ci">[96.2, 98.3]</td><td class="num">96.31 %</td><td class="num">2.44 %</td>
-        <td class="num">0.11 %</td><td class="num">106.0</td><td class="num">+3.06</td></tr>
-      <tr><td class="agent-dreamer">DreamerV3 25M</td><td>deterministic</td><td class="num">98.11 %</td>
-        <td class="num ci">[97.0, 98.8]</td><td class="num">97.15 %</td><td class="num">1.78 %</td>
-        <td class="num">0.11 %</td><td class="num">83.7</td><td class="num">+3.30</td></tr>
-      <tr class="hl"><td class="agent-storm">STORM</td><td>sampled</td><td class="num">98.78 %</td>
-        <td class="num ci">[97.8, 99.3]</td><td class="num">98.16 %</td><td class="num">1.22 %</td>
-        <td class="num">0.00 %</td><td class="num">125.1</td><td class="num">+2.91</td></tr>
-      <tr><td class="agent-storm">STORM</td><td>deterministic</td><td class="num">86.78 %</td>
-        <td class="num ci">[84.4, 88.8]</td><td class="num">87.94 %</td><td class="num">1.22 %</td>
-        <td class="num">12.00 %</td><td class="num">172.7</td><td class="num">+1.99</td></tr>
+      <tr class="hl"><td class="agent-ppo">PPO + GRU</td><td>sampled</td><td class="num">98.92 %</td>
+        <td class="num ci">[98.2, 99.4]</td><td class="num">98.62 %</td><td class="num">0.83 %</td>
+        <td class="num">0.25 %</td><td class="num">103.9</td><td class="num">+3.12</td></tr>
+      <tr><td class="agent-ppo">PPO + GRU</td><td>deterministic</td><td class="num">57.33 %</td>
+        <td class="num ci">[54.5, 60.1]</td><td class="num">58.50 %</td><td class="num">0.67 %</td>
+        <td class="num">42.00 %</td><td class="num">390.5</td><td class="num">-1.33</td></tr>
+      <tr class="hl"><td class="agent-dreamer">DreamerV3 25M</td><td>sampled</td><td class="num">98.17 %</td>
+        <td class="num ci">[97.2, 98.8]</td><td class="num">97.25 %</td><td class="num">1.75 %</td>
+        <td class="num">0.08 %</td><td class="num">106.1</td><td class="num">+3.08</td></tr>
+      <tr><td class="agent-dreamer">DreamerV3 25M</td><td>deterministic</td><td class="num">98.42 %</td>
+        <td class="num ci">[97.5, 99.0]</td><td class="num">97.62 %</td><td class="num">1.42 %</td>
+        <td class="num">0.17 %</td><td class="num">84.5</td><td class="num">+3.30</td></tr>
+      <tr class="hl"><td class="agent-storm">STORM</td><td>sampled</td><td class="num">99.08 %</td>
+        <td class="num ci">[98.4, 99.5]</td><td class="num">98.62 %</td><td class="num">0.92 %</td>
+        <td class="num">0.00 %</td><td class="num">125.5</td><td class="num">+2.92</td></tr>
+      <tr><td class="agent-storm">STORM</td><td>deterministic</td><td class="num">87.00 %</td>
+        <td class="num ci">[85.0, 88.8]</td><td class="num">88.50 %</td><td class="num">1.33 %</td>
+        <td class="num">11.67 %</td><td class="num">170.8</td><td class="num">+2.01</td></tr>
       <tr><td colspan="2" class="small">memoryless constant-door policy</td><td class="num">66.7 %</td>
         <td class="num ci">—</td><td class="num">50.0 %</td><td class="num">33.3 %</td>
         <td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>
@@ -935,16 +1008,18 @@ explicitly.</p>
 </div>
 <!-- END:results-table -->
 
-<p><b>PPO and STORM are indistinguishable; Dreamer trails both by a small but real margin.</b>
-Two-proportion z-tests on the 900-episode samples give PPO vs STORM p&nbsp;=&nbsp;0.34 — the
-0.44-point gap is noise — while PPO vs Dreamer gives p&nbsp;=&nbsp;0.003 and STORM vs Dreamer
-p&nbsp;=&nbsp;0.038. So the ranking is real, but it is worth keeping its size in view: 1.8
-percentage points separates the best from the worst, all three are more than 30 points clear of
-the memoryless ceiling, and Dreamer is a single seed where PPO is three. The table also separates
-<em>character</em>, which is the more interesting axis. Dreamer is the most efficient navigator
-and takes the most direct routes; STORM never times out at all but walks 20 % further because it
-samples widely; PPO is both the most accurate and close to the shortest, and its errors are the
-rarest of the three.</p>
+<p><b>No pairwise difference is statistically significant.</b> Two-proportion z-tests over the
+full 1 200-map evaluation give STORM vs PPO p&nbsp;=&nbsp;0.68, PPO vs Dreamer
+p&nbsp;=&nbsp;0.13, and STORM vs Dreamer p&nbsp;=&nbsp;0.054 — the last one marginal, the others
+comfortably null. The honest reading is that all three <em>solve</em> the task and that 1 200
+episodes cannot separate 98.2 % from 99.1 %. Two caveats point the same way: Dreamer is a single
+seed where PPO is three, and its discount is not matched to the other two (Section&nbsp;10).</p>
+
+<p>What the table does separate is <em>character</em>. Dreamer is the most efficient navigator
+and takes the most direct routes; STORM never times out at all across 1 200 episodes but walks
+about 20 % further because it samples widely; PPO sits between the two. And in all three the
+residual error is almost entirely wrong doors rather than timeouts — these are confident agents
+arriving at the fork with a wrong memory, not lost ones.</p>
 
 <figure class="plate-wide">
   <img src="{{FIG:fig_compare.png}}" alt="Training curves for all three agents, final held-out success with confidence intervals, and error decomposition">
@@ -969,9 +1044,9 @@ rarest of the three.</p>
       <th class="num">lakes <span class="small">(memory)</span></th>
       <th class="num">rocky <span class="small">(memory)</span></th></tr></thead>
     <tbody>
-      <tr><td class="agent-ppo">PPO + GRU</td><td class="num">99.67 %</td><td class="num">98.96 %</td><td class="num">99.03 %</td></tr>
-      <tr><td class="agent-dreamer">DreamerV3 25M</td><td class="num">99.67 %</td><td class="num">99.31 %</td><td class="num">93.53 %</td></tr>
-      <tr><td class="agent-storm">STORM</td><td class="num">100.00 %</td><td class="num">97.57 %</td><td class="num">98.71 %</td></tr>
+      <tr><td class="agent-ppo">PPO + GRU</td><td class="num">99.50 %</td><td class="num">98.50 %</td><td class="num">98.75 %</td></tr>
+      <tr><td class="agent-dreamer">DreamerV3 25M</td><td class="num">100.00 %</td><td class="num">98.50 %</td><td class="num">96.00 %</td></tr>
+      <tr><td class="agent-storm">STORM</td><td class="num">100.00 %</td><td class="num">98.00 %</td><td class="num">99.25 %</td></tr>
     </tbody>
   </table>
 </div>
@@ -982,14 +1057,15 @@ every agent, and all the residual error sits on the two decisive categories. Sin
 are the ones where the door choice is free, this confirms that what remains are memory failures —
 a slightly wrong belief at the fork — and not navigation failures.</p>
 
-<p>The second pattern is not shared, and it is where Dreamer's 1.8-point deficit actually lives.
-Dreamer is the <em>best</em> of the three on lakes (99.31 %) and by far the worst on rocky
-(93.53 %); PPO and STORM are near-symmetric across the two. Dreamer's belief is therefore not
-uniformly weaker — it is biased. When it is unsure, it falls back on the bottom door, which is
-free on lakes maps and wrong on rocky ones. This is the residue of the same constant-door
-attractor that §8 shows all three agents have to escape during training: Dreamer escaped it, but
-not completely, and the asymmetry only becomes visible once the results are split by category.
-An aggregate success number hides it entirely.</p>
+<p>The second pattern is not shared. Dreamer is <em>asymmetric</em> across the two decisive
+categories — 98.50 % on lakes against 96.00 % on rocky — where PPO is flat (98.50 / 98.75,
+p&nbsp;=&nbsp;0.76) and STORM leans the other way without significance (98.00 / 99.25,
+p&nbsp;=&nbsp;0.13). Dreamer's gap is modest but does survive a test on 400 maps per category
+(p&nbsp;=&nbsp;0.031), and its errors are wrong doors rather than timeouts, so the reading is a
+mild residual bias toward the bottom door: free on lakes maps, wrong on rocky ones. That is the
+residue of the same constant-door attractor §8 shows all three agents must escape during
+training — escaped, but not quite completely. It is worth noting mainly because an aggregate
+success number hides it entirely, and because a per-category split is cheap.</p>
 
 <h3><span class="num">7.2</span>Stochastic vs greedy action selection</h3>
 
@@ -1133,7 +1209,7 @@ than PPO — and too much sampling noise actively prevents the policy from sharp
   anyway. The honest statement is that this recipe produces checkpoints in the 96–99 % band for
   most of the second half of training, that the band is what reproduces, and that any single
   number drawn from it — including the one in Table 4 — carries about a point of selection
-  optimism. See Section 9.
+  optimism. See Section 10.
 </div>
 
 <h3><span class="num">8.4</span>The pattern</h3>
@@ -1160,9 +1236,114 @@ than PPO — and too much sampling noise actively prevents the policy from sharp
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
-<h2><span class="num">9</span>Limitations</h2>
+<h2><span class="num">9</span>What the substrate is for</h2>
+
+<p class="lede">Everything above is scaffolding. This section states the question the environment
+was built to answer, and reports where it currently stands — measured on the PPO + GRU agent,
+whose GRU hidden state is the easiest of the three to intervene on. These results predate the
+Dreamer and STORM agents; replicating them across all three is precisely what the substrate now
+makes possible, and is not yet done.</p>
+
+<h3><span class="num">9.1</span>The target: an intervention that is behaviourally specific</h3>
+
+<p>The goal is a <b>belief-independent activation steering</b> method: an edit to the agent's
+state that changes a chosen behaviour while leaving unrelated internal content intact. In
+Cogniland that has a crisp three-part success criterion, and all three parts are measurable:</p>
 
 <ul>
+  <li><b>The behaviour changes.</b> The targeted skill — say, mining — is actually used less.</li>
+  <li><b>The belief survives.</b> The map type is still decodable, and more importantly the agent
+  still walks to the <em>correct door</em>. Wrong-door rate is the behavioural readout of belief
+  damage.</li>
+  <li><b>The agent stays capable.</b> It still crosses the map and finishes; timeouts do not
+  replace door errors.</li>
+</ul>
+
+<h3><span class="num">9.2</span>Where it stands: four interventions, none of them clean</h3>
+
+<div class="tw">
+  <table>
+    <caption><b>Table 6.</b> Activation interventions on the PPO + GRU agent, held-out maps.
+      <em>Behaviour</em> = does the targeted skill change; <em>belief</em> = is the map type
+      preserved; <em>capable</em> = does the agent still finish. A success would be ✓✓✓.</caption>
+    <thead><tr><th>Intervention</th><th>Behaviour</th><th>Belief</th><th>Capable</th>
+      <th>What actually happens</th></tr></thead>
+    <tbody>
+      <tr><td>push the build→mine axis</td><td>partly ✓</td><td>✗</td><td>✓</td>
+        <td>rocky maps go to <b>84 % wrong door</b>; belief scalar −0.87 → 0.00</td></tr>
+      <tr><td>push a belief-confounded axis</td><td>✗</td><td>✗</td><td>✓</td>
+        <td>lakes <b>97 % wrong</b>, rocky 84 %; beliefs swap, executed skills barely move</td></tr>
+      <tr><td>erase the raw skill axis</td><td>✗</td><td>✗</td><td>✓</td>
+        <td>belief decode 100 % → 75 %; mine count 6.8 → 6.4, i.e. leaks without steering</td></tr>
+      <tr class="hl"><td>erase only the belief-⊥ part</td><td>✗</td><td>✓</td><td>✓</td>
+        <td><b>no leak at all</b> (belief 100 %, 0 % wrong door) — and no behaviour change
+        either (mine 6.8 → 6.0)</td></tr>
+      <tr><td>clamp both skill logits to 0</td><td>✓</td><td>—</td><td>✗</td>
+        <td>zero skills executed, <b>100 % timeouts</b>: it can no longer cross</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p><b>The leak is geometric, and it has a dial.</b> Pushing on a "behaviour" direction flips the
+door because that direction is not orthogonal to the belief direction, and the size of the
+corruption tracks the cosine between them. That cosine is not fixed — it is set by how the axis
+is calibrated. Deriving the build→mine axis from <em>balanced</em> maps only, where the choice of
+tool is not informative about the type, gives cos = <b>0.27</b>; deriving it across all
+categories, where build events come mostly from lakes maps and mine events from rocky ones, gives
+cos = <b>0.65</b> — at which point the "skill" axis has quietly re-derived the belief, and pushing
+it edits belief while barely touching behaviour. This is a concrete, reproducible instance of a
+general hazard: <em>a steering direction estimated from natural behaviour inherits whatever the
+behaviour was correlated with.</em></p>
+
+<p><b>The leak is avoidable — but what is left is inert.</b> Gram–Schmidt the skill axis against
+the belief axis and steer only the orthogonal component, which is 96 % of the original vector,
+and the corruption disappears completely: belief preserved, 0 % wrong door, full success. It also
+does essentially nothing to the behaviour. So the entanglement here is not a representational
+accident that a projection can dissolve; it is <b>causal</b>. In Cogniland the crossing skill is a
+near-deterministic function of terrain and belief, so there is almost no belief-independent
+component of "mining" left to steer once you remove the belief.</p>
+
+<div class="note">
+  <span class="h">The negative result is the useful one</span>
+  No intervention we have tried achieves behaviour-changed <em>and</em> belief-intact
+  <em>and</em> still-capable. That is not a failure of the environment — it is the environment
+  working. The belief-orthogonalised erasure doubles as a <b>test</b>: if steering the
+  belief-orthogonal part of a behaviour direction does nothing, the behaviour has no
+  belief-independent existence in that agent. Reporting "my steering method suppressed skill X"
+  without this control cannot distinguish a genuine behavioural edit from a belief edit wearing
+  its clothes.
+</div>
+
+<p>A second probe points the same way. Steering <em>toward</em> the detour strategy — the agent
+already finishes 30–37 % of episodes without using any tool — has cos(detour, belief) = −0.64, so
+the raw push collapses rocky success from 100 % to 19 %, while the belief-orthogonalised push
+leaves the zero-skill rate at ~32 %, unchanged. Whether the agent detours is set by the map and
+the belief, not by a factor that can be independently moved. Getting a genuinely tool-free agent
+appears to need retraining under masked skills, not an activation edit — which is itself worth
+knowing before one spends a project assuming otherwise.</p>
+
+<h3><span class="num">9.3</span>What the three agents are for</h3>
+
+<p>Every number above comes from one GRU. The obvious objection is that the entanglement is a
+property of that recurrent state rather than of the task, and until now there was no way to
+check. With DreamerV3 and STORM now at the same competence on the identical environment, the
+programme is: re-derive the belief and skill axes inside an RSSM latent and inside a Transformer's
+context window, measure cos(skill, belief) in each, and see whether the leak, the dial and the
+inertness of the orthogonal component reproduce. If they do, the coupling is a fact about tasks in
+which evidence and obstacle are the same object — which is to say, about most realistic ones. If
+they do not, the differences localise the phenomenon in the architecture. Either outcome is worth
+having, and neither was available before.</p>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<h2><span class="num">10</span>Limitations</h2>
+
+<ul>
+  <li><b>Dreamer's discount is not matched to the other two.</b> γ = 0.997 against 0.99 for PPO
+  and STORM (Table 3). This is an oversight, not a design choice: the value is the stock DreamerV3
+  default and was never overridden for this task. It is the one respect in which the comparison is
+  not controlled, and it happens to affect the agent that scores lowest, so the 0.9-point spread in
+  Table 4 cannot be attributed to architecture alone. Re-running Dreamer at
+  <code>horizon = 100</code> would close it and is the first thing we would fix.</li>
   <li><b>Single seed per released agent.</b> Table 4 compares one checkpoint per method. The
   seed-to-seed variance across the sweeps (Section 8) — and, as Figure 18 shows, the
   <em>within-run, checkpoint-to-checkpoint</em> variance — is larger than the between-agent
@@ -1185,7 +1366,7 @@ than PPO — and too much sampling noise actively prevents the policy from sharp
 </ul>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
-<h2><span class="num">10</span>Reproducing this</h2>
+<h2><span class="num">11</span>Reproducing this</h2>
 
 <p>Everything below runs from the repository root. The three pipelines use three separate
 environments and never import each other; they share only the environment package and the map
@@ -1212,7 +1393,7 @@ cd STORM_model &amp;&amp; python -m scripts.train \
 
 # 4 · the unified evaluation behind Tables 4-5 (per agent, per mode)
 python scripts/figures/paper_eval_all.py --agent {ppo|dreamer|storm} \
-    --episodes 900 --mode {native|sampled|deterministic}
+    --mode {native|sampled|deterministic}     # all 1 200 test maps by default
 
 # 5 · figures, tables and videos
 PYTHONPATH=src python scripts/figures/paper_task_figs.py       # Fig 1-2

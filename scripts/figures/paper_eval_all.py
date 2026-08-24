@@ -4,7 +4,11 @@
 One harness, one metric, one map split, so the paper's results table is
 self-consistent:
 
-  * maps      data/bridge_tunnel/forkwall6k/test.pkl (never seen in training)
+  * maps      data/bridge_tunnel/forkwall6k/test.pkl (never seen in training).
+              EVERY map is evaluated exactly once, in pool order -- the full
+              1200, 400 per category. An earlier version drew 900 maps with
+              replacement, which touched only 631 unique maps and skewed the
+              category mix; there is no reason to subsample a fixed test set.
   * metric    TRUE door metric -- an episode counts as a success iff the final
               cell is in the map's rewarded-door set. (The `episode return > 0`
               proxy used by the training loops scores fast wrong-door episodes
@@ -17,9 +21,9 @@ self-consistent:
 
 Run once per agent with the matching interpreter (see paper_rollouts.py header):
 
-  PYTHONPATH=src python scripts/figures/paper_eval_all.py --agent ppo --episodes 900
-  PYTHONPATH=src:r2dreamer_model python scripts/figures/paper_eval_all.py --agent dreamer --episodes 900
-  (from STORM_model/) PYTHONPATH=.:..:../src python ../scripts/figures/paper_eval_all.py --agent storm --episodes 900
+  PYTHONPATH=src python scripts/figures/paper_eval_all.py --agent ppo
+  PYTHONPATH=src:r2dreamer_model python scripts/figures/paper_eval_all.py --agent dreamer
+  (from STORM_model/) PYTHONPATH=.:..:../src python ../scripts/figures/paper_eval_all.py --agent storm
 
 Results are merged into paper/figures/forkwall_paper/eval_all.json.
 """
@@ -54,7 +58,10 @@ NATIVE = {"ppo": "sampled", "storm": "sampled", "dreamer": "sampled"}
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--agent", required=True, choices=["ppo", "dreamer", "storm"])
-    p.add_argument("--episodes", type=int, default=900)
+    p.add_argument("--episodes", type=int, default=0,
+                   help="0 (default) = evaluate the whole map pool exactly once. "
+                        "A positive value subsamples that many maps WITHOUT "
+                        "replacement, for quick checks only.")
     p.add_argument("--maps", default=str(REPO / "data/bridge_tunnel/forkwall6k/test.pkl"))
     p.add_argument("--out", default=str(REPO / "paper/figures/forkwall_paper/eval_all.json"))
     p.add_argument("--seed", type=int, default=12345)
@@ -77,6 +84,12 @@ def main():
     with open(args.maps, "rb") as f:
         pool = pickle.load(f)
     rng = np.random.default_rng(args.seed)
+    if args.episodes and args.episodes < len(pool):
+        order = rng.choice(len(pool), size=args.episodes, replace=False)
+    else:
+        order = np.arange(len(pool))          # every map, once, deterministically
+    print(f"evaluating {len(order)} maps of {len(pool)} "
+          f"({'full pool' if len(order) == len(pool) else 'subsample'})", flush=True)
     np.random.seed(args.seed)
     try:
         import torch
@@ -97,8 +110,8 @@ def main():
     lengths = {c: [] for c in CATS}
     returns = {c: [] for c in CATS}
     t0 = time.time()
-    for ep in range(args.episodes):
-        rec = pool[int(rng.integers(0, len(pool)))]
+    for ep, idx in enumerate(order):
+        rec = pool[int(idx)]
         env = BridgeTunnelEnv(seed=0, map_record=rec, **FORKWALL_KWARGS)
         obs, _ = env.reset()
         reset()
@@ -119,10 +132,10 @@ def main():
             s["wrong"] += 1
         else:
             s["timeout"] += 1
-        if (ep + 1) % 100 == 0:
+        if (ep + 1) % 200 == 0:
             done = sum(v["n"] for v in stats.values())
             ok = sum(v["correct"] for v in stats.values())
-            print(f"  {done:4d}/{args.episodes}  running success {ok/done:.4f}",
+            print(f"  {done:4d}/{len(order)}  running success {ok/done:.4f}",
                   flush=True)
 
     tot = {k: sum(v[k] for v in stats.values()) for k in ("n", "correct", "wrong", "timeout")}

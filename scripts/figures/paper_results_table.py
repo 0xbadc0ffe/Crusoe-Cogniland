@@ -52,10 +52,12 @@ def main():
     ap.add_argument("--src", default=str(REPO / "paper/forkwall_paper.src.html"))
     a = ap.parse_args()
     ev = json.loads(Path(a.eval).read_text())
+    n_eval = max((r["episodes"] for k, r in ev.items() if ":" in k), default=0)
 
     out = [BEGIN, '<div class="tw">', "  <table>",
-           "    <caption><b>Table 4.</b> Held-out results, 900 episodes per agent per mode, "
-           "TRUE door metric,\n      identical map draw and seed. Wilson 95 % intervals. "
+           f"    <caption><b>Table 4.</b> Held-out results, all {n_eval} test maps per agent "
+           "per mode, TRUE door metric,\n      every map played once in the same order. "
+           "Wilson 95 % intervals. "
            "<b>Decisive</b> restricts to lakes + rocky\n      maps, where a memoryless policy "
            "scores 50 %. Shaded rows are the headline protocol\n      (stochastic), identical for all three agents; the greedy rows are the same "
            "evaluation re-run with argmax actions.</caption>",

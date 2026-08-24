@@ -108,50 +108,70 @@ def obs_rgb(crop, facing, sprites, tp):
     return np.transpose(pygame.surfarray.array3d(surf), (1, 0, 2)).copy()
 
 
-def fig_anatomy(by_cat, out, ppo_ckpt):
+def fig_anatomy(by_cat, out, ppo_ckpt, shot_ts=(0, 50, "corridor"), rollout_seed=2):
     pygame.init(); pygame.display.set_mode((1, 1))
     sprites = load_sprites(10)
 
     rec = by_cat["rocky"][1]
-    env = BridgeTunnelEnv(seed=0, map_record=rec, **FORKWALL_KWARGS)
-    obs, _ = env.reset()
     act, reset = make_ppo(ppo_ckpt)
-    reset()
-
-    # record the whole episode, then choose the three most informative frames:
-    # peak evidence, deepest point of the corridor, and the first sight of a door.
-    traj, log = [env._pos], []
     wall = rec.wall_col
-    for t in range(FORKWALL_KWARGS["max_steps"]):
-        crop = np.asarray(obs["minimap"])
-        log.append(dict(t=t, pos=env._pos, facing=env._facing, crop=crop.copy(),
-                        evidence=int(((crop == T.WATER) | (crop == T.ROCK)).sum()),
-                        doors=int((crop == T.TARGET).sum())))
-        a = act(obs, False)
-        obs, r, term, trunc, _ = env.step(a)
-        traj.append(env._pos)
-        if term or trunc:
-            break
-    traj = np.asarray(traj, dtype=float)
 
-    # the choice happens between clearing the passage and touching a door, so
-    # the informative frame is the midpoint of that stretch -- not the last one,
-    # where the agent is already standing in the doorway.
+    def rollout(seed):
+        """One seeded episode; returns (trajectory, per-step log, reached_correct)."""
+        np.random.seed(seed)
+        try:
+            import torch
+            torch.manual_seed(seed)
+        except Exception:
+            pass
+        env = BridgeTunnelEnv(seed=0, map_record=rec, **FORKWALL_KWARGS)
+        obs, _ = env.reset()
+        reset()
+        traj, log = [env._pos], []
+        for t in range(FORKWALL_KWARGS["max_steps"]):
+            crop = np.asarray(obs["minimap"])
+            log.append(dict(t=t, pos=env._pos, facing=env._facing, crop=crop.copy()))
+            obs, r, term, trunc, _ = env.step(act(obs, False))
+            traj.append(env._pos)
+            if term or trunc:
+                break
+        ok = env._pos in (env._correct_cells or set())
+        return np.asarray(traj, dtype=float), log, ok
+
+    # The policy samples, so the episode length varies. The callouts name specific
+    # timesteps, so search for the first seed whose episode actually contains them
+    # rather than silently clamping the last callout to the final frame.
+    need = max([int(x) for x in shot_ts if x != "corridor"] or [0])
+    for seed in range(rollout_seed, rollout_seed + 200):
+        traj, log, ok = rollout(seed)
+        if len(log) > need and ok:
+            break
+    else:
+        raise RuntimeError(f"no seed gave a successful episode longer than {need} steps")
+    print(f"  figure 2: seed {seed}, {len(log)} steps, callouts at {list(shot_ts)}")
+
     pass_col = rec.passage_cells[0][1] if rec.passage_cells else wall
-    i_pass = next((i for i, e in enumerate(log) if e["pos"][1] >= pass_col),
-                  len(log) // 2)
     mem_lo = max(0, wall - 16)
-    i_start = 0
-    # deepest into the blind corridor: halfway between its two walls
-    i_mid = int(np.argmin([abs(e["pos"][1] - (mem_lo + wall) / 2) for e in log]))
-    i_fork = (i_pass + len(log) - 1) // 2
+
+    def label_for(pos):
+        """Describe a frame by where the agent actually is, not by a fixed story."""
+        if pos[1] < mem_lo:
+            return "terrain evidence still in view"
+        if pos[1] < pass_col:
+            return "memory corridor — no evidence left to see"
+        return "past the wall — committing to a door"
+
+    def resolve(spec):
+        """A shot is either a literal timestep or the midpoint of the blind corridor."""
+        if spec == "corridor":
+            mid_col = (mem_lo + pass_col) / 2
+            return int(np.argmin([abs(e["pos"][1] - mid_col) for e in log]))
+        return min(int(spec), len(log) - 1)
 
     shots = []
-    for i, lab in ((i_start, "spawn — the run begins"),
-                   (i_mid, "memory corridor — no evidence left to see"),
-                   (i_fork, "mid-choice — committing to a door")):
-        e = log[i]
-        shots.append((f"t = {e['t']} · {lab}", e["pos"],
+    for spec in shot_ts:
+        e = log[resolve(spec)]
+        shots.append((f"t = {e['t']} · {label_for(e['pos'])}", e["pos"],
                       obs_rgb(e["crop"], e["facing"], sprites, 10)))
 
     Hm, Wm = rec.terrain.shape
@@ -217,11 +237,15 @@ def main():
     p.add_argument("--maps", default=str(REPO / "data/bridge_tunnel/forkwall6k/train.pkl"))
     p.add_argument("--out", default=str(REPO / "paper/figures/forkwall_paper"))
     p.add_argument("--ppo-ckpt", default=str(REPO / "final_models/ppo/ppo_plain.pt"))
+    p.add_argument("--shots", nargs=3, default=["0", "50", "corridor"],
+                   help='timesteps of the three Figure 2 callouts; the literal '
+                        '"corridor" resolves to the midpoint of the memory corridor')
+    p.add_argument("--rollout-seed", type=int, default=2)
     a = p.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     _, by_cat = load_by_cat(a.maps)
     fig_categories(by_cat, out)
-    fig_anatomy(by_cat, out, a.ppo_ckpt)
+    fig_anatomy(by_cat, out, a.ppo_ckpt, tuple(a.shots), a.rollout_seed)
     print("wrote task figures ->", out)
 
 

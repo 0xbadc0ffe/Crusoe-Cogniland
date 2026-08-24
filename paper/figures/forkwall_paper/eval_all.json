@@ -2,316 +2,316 @@
  "ppo": {
   "agent": "ppo",
   "mode": "sampled",
-  "episodes": 900,
-  "success": 0.9922222222222222,
-  "wrong_door": 0.0044444444444444444,
-  "timeout": 0.0033333333333333335,
-  "mean_length": 104.3488888888889,
-  "mean_return": 3.129194444444445,
-  "wall_s": 148.0,
+  "episodes": 1200,
+  "success": 0.9891666666666666,
+  "wrong_door": 0.008333333333333333,
+  "timeout": 0.0025,
+  "mean_length": 103.91166666666666,
+  "mean_return": 3.124208333333334,
+  "wall_s": 179.5,
   "per_category": {
    "balanced": {
-    "n": 303,
-    "success": 0.9966996699669967,
+    "n": 400,
+    "success": 0.995,
     "wrong_door": 0.0,
-    "timeout": 0.0033003300330033004,
-    "mean_length": 106.93069306930693
+    "timeout": 0.005,
+    "mean_length": 107.5075
    },
    "lakes": {
-    "n": 288,
-    "success": 0.9895833333333334,
-    "wrong_door": 0.006944444444444444,
-    "timeout": 0.003472222222222222,
-    "mean_length": 99.63888888888889
+    "n": 400,
+    "success": 0.985,
+    "wrong_door": 0.015,
+    "timeout": 0.0,
+    "mean_length": 98.6125
    },
    "rocky": {
-    "n": 309,
-    "success": 0.9902912621359223,
-    "wrong_door": 0.006472491909385114,
-    "timeout": 0.003236245954692557,
-    "mean_length": 106.20711974110033
+    "n": 400,
+    "success": 0.9875,
+    "wrong_door": 0.01,
+    "timeout": 0.0025,
+    "mean_length": 105.615
    }
   },
-  "decisive_success": 0.9899497487437185
+  "decisive_success": 0.98625
  },
  "storm": {
   "agent": "storm",
   "mode": "sampled",
-  "episodes": 900,
-  "success": 0.9877777777777778,
-  "wrong_door": 0.012222222222222223,
+  "episodes": 1200,
+  "success": 0.9908333333333333,
+  "wrong_door": 0.009166666666666667,
   "timeout": 0.0,
-  "mean_length": 125.14111111111112,
-  "mean_return": 2.908322222222223,
-  "wall_s": 204.0,
+  "mean_length": 125.48583333333333,
+  "mean_return": 2.9154041666666672,
+  "wall_s": 271.0,
   "per_category": {
    "balanced": {
-    "n": 303,
+    "n": 400,
     "success": 1.0,
     "wrong_door": 0.0,
     "timeout": 0.0,
-    "mean_length": 128.1947194719472
+    "mean_length": 125.3975
    },
    "lakes": {
-    "n": 288,
-    "success": 0.9756944444444444,
-    "wrong_door": 0.024305555555555556,
+    "n": 400,
+    "success": 0.98,
+    "wrong_door": 0.02,
     "timeout": 0.0,
-    "mean_length": 123.15972222222223
+    "mean_length": 127.495
    },
    "rocky": {
-    "n": 309,
-    "success": 0.9870550161812298,
-    "wrong_door": 0.012944983818770227,
+    "n": 400,
+    "success": 0.9925,
+    "wrong_door": 0.0075,
     "timeout": 0.0,
-    "mean_length": 123.99352750809061
+    "mean_length": 123.565
    }
   },
-  "decisive_success": 0.981574539363484
+  "decisive_success": 0.98625
  },
  "dreamer": {
   "agent": "dreamer",
   "mode": "sampled",
-  "episodes": 900,
-  "success": 0.9744444444444444,
-  "wrong_door": 0.024444444444444446,
-  "timeout": 0.0011111111111111111,
-  "mean_length": 106.01333333333334,
-  "mean_return": 3.056266666666667,
-  "wall_s": 386.0,
+  "episodes": 1200,
+  "success": 0.9816666666666667,
+  "wrong_door": 0.0175,
+  "timeout": 0.0008333333333333334,
+  "mean_length": 106.1125,
+  "mean_return": 3.0792125,
+  "wall_s": 514.1,
   "per_category": {
    "balanced": {
-    "n": 303,
-    "success": 0.9966996699669967,
+    "n": 400,
+    "success": 1.0,
     "wrong_door": 0.0,
-    "timeout": 0.0033003300330033004,
-    "mean_length": 109.4059405940594
+    "timeout": 0.0,
+    "mean_length": 106.965
    },
    "lakes": {
-    "n": 288,
-    "success": 0.9930555555555556,
-    "wrong_door": 0.006944444444444444,
+    "n": 400,
+    "success": 0.985,
+    "wrong_door": 0.015,
     "timeout": 0.0,
-    "mean_length": 103.99305555555556
+    "mean_length": 105.1975
    },
    "rocky": {
-    "n": 309,
-    "success": 0.9352750809061489,
-    "wrong_door": 0.06472491909385113,
-    "timeout": 0.0,
-    "mean_length": 104.56957928802589
+    "n": 400,
+    "success": 0.96,
+    "wrong_door": 0.0375,
+    "timeout": 0.0025,
+    "mean_length": 106.175
    }
   },
-  "decisive_success": 0.9631490787269682
+  "decisive_success": 0.9725
  },
  "ppo:sampled": {
   "agent": "ppo",
   "mode": "sampled",
-  "episodes": 900,
-  "success": 0.9922222222222222,
-  "wrong_door": 0.0044444444444444444,
-  "timeout": 0.0033333333333333335,
-  "mean_length": 104.3488888888889,
-  "mean_return": 3.129194444444445,
-  "wall_s": 148.0,
+  "episodes": 1200,
+  "success": 0.9891666666666666,
+  "wrong_door": 0.008333333333333333,
+  "timeout": 0.0025,
+  "mean_length": 103.91166666666666,
+  "mean_return": 3.124208333333334,
+  "wall_s": 179.5,
   "per_category": {
    "balanced": {
-    "n": 303,
-    "success": 0.9966996699669967,
+    "n": 400,
+    "success": 0.995,
     "wrong_door": 0.0,
-    "timeout": 0.0033003300330033004,
-    "mean_length": 106.93069306930693
+    "timeout": 0.005,
+    "mean_length": 107.5075
    },
    "lakes": {
-    "n": 288,
-    "success": 0.9895833333333334,
-    "wrong_door": 0.006944444444444444,
-    "timeout": 0.003472222222222222,
-    "mean_length": 99.63888888888889
+    "n": 400,
+    "success": 0.985,
+    "wrong_door": 0.015,
+    "timeout": 0.0,
+    "mean_length": 98.6125
    },
    "rocky": {
-    "n": 309,
-    "success": 0.9902912621359223,
-    "wrong_door": 0.006472491909385114,
-    "timeout": 0.003236245954692557,
-    "mean_length": 106.20711974110033
+    "n": 400,
+    "success": 0.9875,
+    "wrong_door": 0.01,
+    "timeout": 0.0025,
+    "mean_length": 105.615
    }
   },
-  "decisive_success": 0.9899497487437185
+  "decisive_success": 0.98625
  },
  "ppo:deterministic": {
   "agent": "ppo",
   "mode": "deterministic",
-  "episodes": 900,
-  "success": 0.5811111111111111,
-  "wrong_door": 0.0033333333333333335,
-  "timeout": 0.41555555555555557,
-  "mean_length": 389.45666666666665,
-  "mean_return": -1.2928499999999545,
-  "wall_s": 950.0,
+  "episodes": 1200,
+  "success": 0.5733333333333334,
+  "wrong_door": 0.006666666666666667,
+  "timeout": 0.42,
+  "mean_length": 390.49583333333334,
+  "mean_return": -1.3312958333332892,
+  "wall_s": 1271.9,
   "per_category": {
    "balanced": {
-    "n": 303,
-    "success": 0.5148514851485149,
+    "n": 400,
+    "success": 0.55,
     "wrong_door": 0.0,
-    "timeout": 0.48514851485148514,
-    "mean_length": 435.5676567656766
+    "timeout": 0.45,
+    "mean_length": 409.775
    },
    "lakes": {
-    "n": 288,
-    "success": 0.6458333333333334,
-    "wrong_door": 0.0,
-    "timeout": 0.3541666666666667,
-    "mean_length": 344.62152777777777
+    "n": 400,
+    "success": 0.615,
+    "wrong_door": 0.01,
+    "timeout": 0.375,
+    "mean_length": 357.9575
    },
    "rocky": {
-    "n": 309,
-    "success": 0.5857605177993528,
-    "wrong_door": 0.009708737864077669,
-    "timeout": 0.4045307443365696,
-    "mean_length": 386.02912621359224
+    "n": 400,
+    "success": 0.555,
+    "wrong_door": 0.01,
+    "timeout": 0.435,
+    "mean_length": 403.755
    }
   },
-  "decisive_success": 0.6147403685092128
+  "decisive_success": 0.585
  },
  "dreamer:sampled": {
   "agent": "dreamer",
   "mode": "sampled",
-  "episodes": 900,
-  "success": 0.9744444444444444,
-  "wrong_door": 0.024444444444444446,
-  "timeout": 0.0011111111111111111,
-  "mean_length": 106.01333333333334,
-  "mean_return": 3.056266666666667,
-  "wall_s": 386.0,
+  "episodes": 1200,
+  "success": 0.9816666666666667,
+  "wrong_door": 0.0175,
+  "timeout": 0.0008333333333333334,
+  "mean_length": 106.1125,
+  "mean_return": 3.0792125,
+  "wall_s": 514.1,
   "per_category": {
    "balanced": {
-    "n": 303,
-    "success": 0.9966996699669967,
+    "n": 400,
+    "success": 1.0,
     "wrong_door": 0.0,
-    "timeout": 0.0033003300330033004,
-    "mean_length": 109.4059405940594
+    "timeout": 0.0,
+    "mean_length": 106.965
    },
    "lakes": {
-    "n": 288,
-    "success": 0.9930555555555556,
-    "wrong_door": 0.006944444444444444,
+    "n": 400,
+    "success": 0.985,
+    "wrong_door": 0.015,
     "timeout": 0.0,
-    "mean_length": 103.99305555555556
+    "mean_length": 105.1975
    },
    "rocky": {
-    "n": 309,
-    "success": 0.9352750809061489,
-    "wrong_door": 0.06472491909385113,
-    "timeout": 0.0,
-    "mean_length": 104.56957928802589
+    "n": 400,
+    "success": 0.96,
+    "wrong_door": 0.0375,
+    "timeout": 0.0025,
+    "mean_length": 106.175
    }
   },
-  "decisive_success": 0.9631490787269682
+  "decisive_success": 0.9725
  },
  "dreamer:deterministic": {
   "agent": "dreamer",
   "mode": "deterministic",
-  "episodes": 900,
-  "success": 0.9811111111111112,
-  "wrong_door": 0.017777777777777778,
-  "timeout": 0.0011111111111111111,
-  "mean_length": 83.70333333333333,
-  "mean_return": 3.3007500000000007,
-  "wall_s": 314.1,
+  "episodes": 1200,
+  "success": 0.9841666666666666,
+  "wrong_door": 0.014166666666666666,
+  "timeout": 0.0016666666666666668,
+  "mean_length": 84.45833333333333,
+  "mean_return": 3.3034041666666676,
+  "wall_s": 417.5,
   "per_category": {
    "balanced": {
-    "n": 303,
+    "n": 400,
     "success": 1.0,
     "wrong_door": 0.0,
     "timeout": 0.0,
-    "mean_length": 85.12211221122112
+    "mean_length": 83.6225
    },
    "lakes": {
-    "n": 288,
-    "success": 0.9722222222222222,
-    "wrong_door": 0.024305555555555556,
-    "timeout": 0.003472222222222222,
-    "mean_length": 82.36805555555556
+    "n": 400,
+    "success": 0.975,
+    "wrong_door": 0.02,
+    "timeout": 0.005,
+    "mean_length": 84.83
    },
    "rocky": {
-    "n": 309,
-    "success": 0.970873786407767,
-    "wrong_door": 0.02912621359223301,
+    "n": 400,
+    "success": 0.9775,
+    "wrong_door": 0.0225,
     "timeout": 0.0,
-    "mean_length": 83.55663430420712
+    "mean_length": 84.9225
    }
   },
-  "decisive_success": 0.9715242881072027
+  "decisive_success": 0.97625
  },
  "storm:sampled": {
   "agent": "storm",
   "mode": "sampled",
-  "episodes": 900,
-  "success": 0.9877777777777778,
-  "wrong_door": 0.012222222222222223,
+  "episodes": 1200,
+  "success": 0.9908333333333333,
+  "wrong_door": 0.009166666666666667,
   "timeout": 0.0,
-  "mean_length": 125.14111111111112,
-  "mean_return": 2.908322222222223,
-  "wall_s": 204.0,
+  "mean_length": 125.48583333333333,
+  "mean_return": 2.9154041666666672,
+  "wall_s": 271.0,
   "per_category": {
    "balanced": {
-    "n": 303,
+    "n": 400,
     "success": 1.0,
     "wrong_door": 0.0,
     "timeout": 0.0,
-    "mean_length": 128.1947194719472
+    "mean_length": 125.3975
    },
    "lakes": {
-    "n": 288,
-    "success": 0.9756944444444444,
-    "wrong_door": 0.024305555555555556,
+    "n": 400,
+    "success": 0.98,
+    "wrong_door": 0.02,
     "timeout": 0.0,
-    "mean_length": 123.15972222222223
+    "mean_length": 127.495
    },
    "rocky": {
-    "n": 309,
-    "success": 0.9870550161812298,
-    "wrong_door": 0.012944983818770227,
+    "n": 400,
+    "success": 0.9925,
+    "wrong_door": 0.0075,
     "timeout": 0.0,
-    "mean_length": 123.99352750809061
+    "mean_length": 123.565
    }
   },
-  "decisive_success": 0.981574539363484
+  "decisive_success": 0.98625
  },
  "storm:deterministic": {
   "agent": "storm",
   "mode": "deterministic",
-  "episodes": 900,
-  "success": 0.8677777777777778,
-  "wrong_door": 0.012222222222222223,
-  "timeout": 0.12,
-  "mean_length": 172.73666666666668,
-  "mean_return": 1.985816666666681,
-  "wall_s": 272.7,
+  "episodes": 1200,
+  "success": 0.87,
+  "wrong_door": 0.013333333333333334,
+  "timeout": 0.11666666666666667,
+  "mean_length": 170.84916666666666,
+  "mean_return": 2.0130583333333476,
+  "wall_s": 357.1,
   "per_category": {
    "balanced": {
-    "n": 303,
-    "success": 0.8448844884488449,
+    "n": 400,
+    "success": 0.84,
     "wrong_door": 0.0,
-    "timeout": 0.1551155115511551,
-    "mean_length": 198.5775577557756
+    "timeout": 0.16,
+    "mean_length": 201.635
    },
    "lakes": {
-    "n": 288,
-    "success": 0.8819444444444444,
-    "wrong_door": 0.027777777777777776,
-    "timeout": 0.09027777777777778,
-    "mean_length": 151.80208333333334
+    "n": 400,
+    "success": 0.8725,
+    "wrong_door": 0.0325,
+    "timeout": 0.095,
+    "mean_length": 156.045
    },
    "rocky": {
-    "n": 309,
-    "success": 0.8770226537216829,
-    "wrong_door": 0.009708737864077669,
-    "timeout": 0.11326860841423948,
-    "mean_length": 166.9093851132686
+    "n": 400,
+    "success": 0.8975,
+    "wrong_door": 0.0075,
+    "timeout": 0.095,
+    "mean_length": 154.8675
    }
   },
-  "decisive_success": 0.8793969849246231
+  "decisive_success": 0.885
  }
 }
