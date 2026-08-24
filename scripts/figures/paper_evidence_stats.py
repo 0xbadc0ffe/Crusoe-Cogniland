@@ -109,11 +109,20 @@ def collect(agent, args):
         if (i + 1) % 200 == 0:
             print(f"  {i+1}/{len(pool)}", flush=True)
 
+    # States are 3 072-d for Dreamer; inlining them as JSON produced a 77 MB file.
+    # Keep the per-episode record small and put the states in a compressed .npz.
     out = Path(args.out) / f"evidence_{agent}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
+    states = [r.pop("state") for r in rows]
+    has_state = any(x is not None for x in states)
     out.write_text(json.dumps(rows))
+    if has_state:
+        idx = [i for i, x in enumerate(states) if x is not None]
+        np.savez_compressed(out.with_suffix(".npz"),
+                            idx=np.asarray(idx, np.int32),
+                            states=np.asarray([states[i] for i in idx], np.float32))
     print(f"wrote {out}  ({len(rows)} episodes, "
-          f"state={'yes' if rows[0]['state'] else 'no'})")
+          f"state={'yes -> ' + out.with_suffix('.npz').name if has_state else 'no'})")
 
 
 # ── statistics ───────────────────────────────────────────────────────────
@@ -202,7 +211,7 @@ def belief_axis_stats(rows):
     """Project the fork-time carried state on the lakes->rocky diff-in-means axis."""
     S = {r["cat"]: [] for r in rows}
     for r in rows:
-        if r.get("state"):
+        if r.get("state") is not None:
             S[r["cat"]].append(r["state"])
     if len(S.get("lakes", [])) < 20 or len(S.get("rocky", [])) < 20:
         return None
@@ -211,7 +220,7 @@ def belief_axis_stats(rows):
     v /= np.linalg.norm(v) + 1e-9
     res = {}
     for cat in CATS:
-        sub = [r for r in rows if r["cat"] == cat and r.get("state")]
+        sub = [r for r in rows if r["cat"] == cat and r.get("state") is not None]
         if not sub:
             continue
         proj = np.array([float(np.dot(r["state"], v)) for r in sub])
@@ -230,6 +239,19 @@ def belief_axis_stats(rows):
     return res
 
 
+def load_rows(json_path: Path):
+    """Read the episode records and re-attach states from the sidecar .npz."""
+    rows = json.loads(json_path.read_text())
+    for r in rows:
+        r.setdefault("state", None)
+    npz = json_path.with_suffix(".npz")
+    if npz.exists():
+        z = np.load(npz)
+        for i, st in zip(z["idx"], z["states"]):
+            rows[int(i)]["state"] = st
+    return rows
+
+
 # ── figure ───────────────────────────────────────────────────────────────
 
 def plot(out):
@@ -241,7 +263,7 @@ def plot(out):
     for ag in ("ppo", "dreamer", "storm"):
         f = out / f"evidence_{ag}.json"
         if f.exists():
-            data[ag] = json.loads(f.read_text())
+            data[ag] = load_rows(f)
             stats[ag] = analyse(data[ag])
             a = belief_axis_stats(data[ag])
             if a:
