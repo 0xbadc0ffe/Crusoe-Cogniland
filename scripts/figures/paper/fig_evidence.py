@@ -27,9 +27,11 @@ from pathlib import Path
 
 import numpy as np
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "figures"))
+
+import text as TXT  # noqa: E402
 
 CATS = ("balanced", "lakes", "rocky")
 # where along the episode the carried state is sampled, in order
@@ -390,13 +392,13 @@ def plot(out):
                     label=f"{LBL[ag]}   AUC {st['auc']:.2f}")
             ax.axhline(st["p_top"], color=COL[ag], ls=":", lw=1, alpha=.7)
         ax.axhline(.5, color="#9ca3af", ls="--", lw=1)
-        ax.set_title("(a) balanced maps — the door choice is FREE", loc="left")
-        ax.set_xlabel("rock − water seen  (normalised)")
-        ax.set_ylabel("P(top door)")
+        ax.set_title(TXT.FIG_EVIDENCE["free"], loc="left")
+        ax.set_xlabel(TXT.FIG_EVIDENCE["free_x"])
+        ax.set_ylabel(TXT.FIG_EVIDENCE["free_y"])
         ax.set_ylim(-.02, 1.05)
         ax.legend(frameon=False, fontsize=7.4, loc="upper left")
         ax.grid(alpha=.25, lw=.5)
-        ax.annotate("dotted = each agent's overall\nP(top): its standing bias",
+        ax.annotate(TXT.FIG_EVIDENCE["free_note"],
                     xy=(.98, .06), xycoords="axes fraction", fontsize=6.8,
                     ha="right", color="#6b7280")
 
@@ -430,15 +432,14 @@ def plot(out):
                             fontsize=6.6, ha="center", color=COL[ag],
                             fontweight="bold" if pv < .05 else "normal")
         ax.set_xticks(xs)
-        ax.set_xticklabels(["spawn\n(undefined)", "evidence\nends",
-                            "corridor\nmid", "at the\nwall"], fontsize=7.6)
-        ax.set_ylabel("|AUC − 0.5|  on the free door choice")
+        ax.set_xticklabels(TXT.FIG_EVIDENCE["phase_ticks"], fontsize=7.6)
+        ax.set_ylabel(TXT.FIG_EVIDENCE["phases_y"])
         ax.set_ylim(0, .62)
-        ax.set_title("(b) the belief decides — but only before the wall", loc="left")
+        ax.set_title(TXT.FIG_EVIDENCE["phases"], loc="left")
         if drawn:
             ax.legend(frameon=False, fontsize=7.2, loc="upper left")
         ax.grid(alpha=.25, lw=.5)
-        ax.annotate("dotted + band = shuffled-label null (mean ± sd)",
+        ax.annotate(TXT.FIG_EVIDENCE["phases_note"],
                     xy=(.97, .04), xycoords="axes fraction", fontsize=6.6,
                     ha="right", color="#6b7280",
                     bbox=dict(boxstyle="round,pad=.25", fc="white",
@@ -465,14 +466,13 @@ def plot(out):
                 bp["boxes"][0].set(facecolor=fc, edgecolor=COL[ag], lw=1.3)
             ax.plot([], [], color=COL[ag], lw=6, label=LBL[ag])
         ax.set_xticks([0, 1])
-        ax.set_xticklabels(["correct door", "WRONG door"])
-        ax.set_ylabel("evidence for the true type")
-        ax.set_title("(c) lakes + rocky — why the errors happen", loc="left")
+        ax.set_xticklabels(TXT.FIG_EVIDENCE["errors_ticks"])
+        ax.set_ylabel(TXT.FIG_EVIDENCE["errors_y"])
+        ax.set_title(TXT.FIG_EVIDENCE["errors"], loc="left")
         ax.legend(frameon=False, fontsize=7.4, loc="lower left")
         ax.grid(alpha=.25, lw=.5, axis="y")
 
-        fig.suptitle("What the agent saw versus what it chose — "
-                     "all 1 200 held-out maps per agent", y=1.03, fontsize=11)
+        fig.suptitle(TXT.FIG_EVIDENCE["title"], y=1.03, fontsize=11)
         fig.tight_layout()
         fig.savefig(out / "fig_evidence.png", bbox_inches="tight")
         plt.close(fig)

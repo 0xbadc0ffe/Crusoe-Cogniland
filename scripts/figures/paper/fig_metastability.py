@@ -30,7 +30,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-REPO = Path(__file__).resolve().parents[2]
+import text as TXT  # noqa: E402
+
+REPO = Path(__file__).resolve().parents[3]
 CATS = ("balanced", "lakes", "rocky")
 CCOL = {"balanced": "#94a3b8", "lakes": "#3b82f6", "rocky": "#a16207"}
 STORM = "#16a34a"
@@ -83,34 +85,34 @@ def main():
         for c in CATS:
             y = np.array([r.get(c, np.nan) for r in rows])
             ax.plot(x, y, color=CCOL[c], lw=1.0, alpha=.85, label=c)
-        ax.plot(x, ok, color=STORM, lw=2.2, label="all maps", zorder=5)
+        ax.plot(x, ok, color=STORM, lw=2.2, label=TXT.FIG_META["all_maps"], zorder=5)
         ax.axhline(2 / 3, color="#6b7280", ls="--", lw=1.0)
-        ax.annotate("constant-door ceiling (⅔)", xy=(x[-1], .645), fontsize=7,
+        ax.annotate(TXT.FIG_META["ceiling"], xy=(x[-1], .645), fontsize=7,
                     color="#6b7280", ha="right", va="top")
         ax.plot(x[best], ok[best], "*", color="#111827", ms=13, zorder=6)
-        ax.annotate(f"best of archive\n{ok[best]*100:.1f} %", (x[best], ok[best]),
+        ax.annotate(TXT.FIG_META["best"].format(pct=ok[best]*100), (x[best], ok[best]),
                     textcoords="offset points", xytext=(0, -32), fontsize=7.5,
                     ha="center", color="#111827")
         ax.plot(x[-1], ok[-1], "o", color="#111827", ms=6, mfc="white", zorder=6)
-        ax.annotate(f"end of training\n{ok[-1]*100:.1f} %", (x[-1], ok[-1]),
+        ax.annotate(TXT.FIG_META["final"].format(pct=ok[-1]*100), (x[-1], ok[-1]),
                     textcoords="offset points", xytext=(-4, -34), fontsize=7.5,
                     ha="right", color="#111827")
-        ax.set_xlabel("gradient step (thousands)")
-        ax.set_ylabel("held-out success (TRUE metric)")
-        ax.set_title("(a) every archived checkpoint, one run", loc="left")
+        ax.set_xlabel(TXT.FIG_META["x"])
+        ax.set_ylabel(TXT.FIG_META["y_success"])
+        ax.set_title(TXT.FIG_META["curves"], loc="left")
         ax.set_ylim(-.03, 1.05)
         ax.legend(frameon=False, fontsize=7.5, loc="lower left", ncol=2)
 
         ax = axes[1]
         ax.stackplot(x, ok, wrong, to, colors=["#22c55e", "#ef4444", "#f59e0b"],
-                     labels=["correct door", "wrong door", "timeout"], alpha=.9)
-        ax.set_xlabel("gradient step (thousands)")
-        ax.set_ylabel("share of episodes")
-        ax.set_title("(b) what the failures are, checkpoint by checkpoint", loc="left")
+                     labels=list(TXT.FIG_META["legend"].values()), alpha=.9)
+        ax.set_xlabel(TXT.FIG_META["x"])
+        ax.set_ylabel(TXT.FIG_META["y_share"])
+        ax.set_title(TXT.FIG_META["outcomes"], loc="left")
         ax.set_ylim(0, 1); ax.set_xlim(x[0], x[-1])
         ax.legend(frameon=False, fontsize=7.5, loc="lower left", ncol=3)
 
-        fig.suptitle("Door-binding is metastable — the same run, 25k gradient steps apart",
+        fig.suptitle(TXT.FIG_META["title"],
                      y=1.02, fontsize=11)
         fig.tight_layout()
         fig.savefig(out / "fig_metastability.png", bbox_inches="tight")

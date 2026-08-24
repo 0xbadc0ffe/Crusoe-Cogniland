@@ -27,9 +27,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Rectangle
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "figures"))
+
+import text as TXT  # noqa: E402
 
 from cogniland.bridge_tunnel.tiles import TILE_COLORS  # noqa: E402
 
@@ -119,12 +121,12 @@ def plot(dirpath, map_ids, maps_path):
                     # (1-(1-.16)**8 = .75); thinner strokes keep bundles legible
                     ax.plot(t[:, 1], t[:, 0], color=COL[agent], lw=.85,
                             alpha=.72, solid_capstyle="round", zorder=6)
-                ax.plot([], [], color=COL[agent], lw=2, label="one episode")
+                ax.plot([], [], color=COL[agent], lw=2, label=TXT.FIG_TRAJ["legend"])
                 ax.set_xticks([]); ax.set_yticks([])
-                ax.set_title(f"{LABEL[agent]} — {ok}/{len(runs)} reach the right door",
+                ax.set_title(TXT.FIG_TRAJ["panel"].format(agent=LABEL[agent], ok=ok, n=len(runs)),
                              loc="left", fontsize=8.5)
                 if c == 0:
-                    ax.set_ylabel(f"map {mid}\n({rec.category})", fontsize=8)
+                    ax.set_ylabel(TXT.FIG_TRAJ["row"].format(mid=mid, cat=rec.category), fontsize=8)
         fig.suptitle("24 stochastic episodes per panel — where runs agree the ink "
                      "stacks into a highway; single deviations stay faint but visible",
                      y=1.005)

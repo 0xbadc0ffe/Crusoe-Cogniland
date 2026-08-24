@@ -26,7 +26,9 @@ import numpy as np
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
+
+import text as TXT  # noqa: E402
 
 from cogniland.bridge_tunnel.env import BridgeTunnelEnv  # noqa: E402
 from cogniland.bridge_tunnel.map_pool import MapPool  # noqa: E402
@@ -104,17 +106,17 @@ def fig_observation(by_cat, out):
         ax0.add_patch(Rectangle((pos[1] - half - .5, pos[0] - half - .5), V, V,
                                 fill=False, edgecolor="white", lw=1.8, zorder=6))
         ax0.plot(pos[1], pos[0], "o", color="white", mec="black", ms=6, zorder=7)
-        ax0.set_title("(a) world state (privileged; never observed)", loc="left")
+        ax0.set_title(TXT.FIG03["world"], loc="left")
         ax0.set_xticks([]); ax0.set_yticks([])
 
         ax1 = fig.add_subplot(gs[1])
         crop = np.asarray(obs["minimap"])
         ax1.imshow(rgb(crop), interpolation="nearest")
         ax1.plot(half, half, "o", color="white", mec="black", ms=6)
-        ax1.set_title(f"(b) observation: {V}×{V} egocentric crop", loc="left")
+        ax1.set_title(TXT.FIG03["crop"].format(v=V), loc="left")
         ax1.set_xticks([]); ax1.set_yticks([])
         oob_frac = float((crop == OOB).mean())
-        ax1.set_xlabel(f"out-of-bounds padding: {oob_frac:.0%} of cells")
+        ax1.set_xlabel(TXT.FIG03["crop_x"].format(frac=f"{oob_frac:.0%}"))
 
         ax2 = fig.add_subplot(gs[2])
         sc = np.asarray(obs["scalars"], dtype=float)
@@ -122,8 +124,8 @@ def fig_observation(by_cat, out):
         ax2.barh(range(len(sc)), sc, color="#6366f1")
         ax2.set_yticks(range(len(sc))); ax2.set_yticklabels(names)
         ax2.invert_yaxis(); ax2.set_xlim(0, 1.05)
-        ax2.set_title("(c) observation: 5 scalars", loc="left")
-        ax2.set_xlabel("value")
+        ax2.set_title(TXT.FIG03["scalars"], loc="left")
+        ax2.set_xlabel(TXT.FIG03["scalars_x"])
 
         fig.suptitle("The agent is a POMDP observer: a symbolic local crop plus "
                      "heading and elapsed time — the category is never given directly",
@@ -162,21 +164,21 @@ def fig_reward(by_cat, out, ppo_ckpt):
         fig, axes = plt.subplots(1, 2, figsize=(10.2, 3.4),
                                  gridspec_kw=dict(width_ratios=[1.35, 1]))
         ax = axes[0]
-        ax.plot(steps, np.cumsum(rewards), color="#111827", lw=1.8, label="cumulative return")
+        ax.plot(steps, np.cumsum(rewards), color="#111827", lw=1.8, label=TXT.FIG04["legend"]["total"])
         ax.plot(steps, np.cumsum(slack), color="#ef4444", lw=1.2, ls="--",
-                label="cumulative slack ($-0.01\\,t$)")
+                label=TXT.FIG04["legend"]["slack"])
         ax.plot(steps, np.cumsum(shaped), color="#2563eb", lw=1.2, ls="-.",
-                label="cumulative shaping + bonus")
+                label=TXT.FIG04["legend"]["shaping"])
         ax.axhline(0, color="#9ca3af", lw=.6)
-        ax.set_xlabel("environment step"); ax.set_ylabel("reward")
-        ax.set_title("(a) return decomposition, near-optimal episode", loc="left")
+        ax.set_xlabel(TXT.FIG04["x"]); ax.set_ylabel(TXT.FIG04["y_cum"])
+        ax.set_title(TXT.FIG04["cumulative"], loc="left")
         ax.legend(frameon=False, fontsize=8)
 
         ax = axes[1]
         ax.plot(steps, rewards, color="#2563eb", lw=.9)
         ax.axhline(FORKWALL_KWARGS["slack_penalty"], color="#ef4444", lw=1.0, ls="--")
-        ax.set_xlabel("environment step"); ax.set_ylabel("per-step reward")
-        ax.set_title("(b) per-step reward (spike = +3 door bonus)", loc="left")
+        ax.set_xlabel(TXT.FIG04["x"]); ax.set_ylabel(TXT.FIG04["y_step"])
+        ax.set_title(TXT.FIG04["per_step"], loc="left")
         fig.tight_layout()
         fig.savefig(out / "fig_reward.png", bbox_inches="tight")
         plt.close(fig)
@@ -204,13 +206,13 @@ def fig_dataset(records, out, meta_path):
     with plt.rc_context(PLT_RC):
         fig, axes = plt.subplots(1, 3, figsize=(11.4, 3.0), sharey=True, sharex=True)
         for ax, cat in zip(axes, order):
-            ax.hist(water[cat], bins=bins, color=w_col, alpha=.80, label="water")
-            ax.hist(rock[cat], bins=bins, color=r_col, alpha=.80, label="rock")
+            ax.hist(water[cat], bins=bins, color=w_col, alpha=.80, label=TXT.FIG05["legend"]["water"])
+            ax.hist(rock[cat], bins=bins, color=r_col, alpha=.80, label=TXT.FIG05["legend"]["rock"])
             ax.axvline(np.mean(water[cat]), color=w_col, lw=1.4, ls="--")
             ax.axvline(np.mean(rock[cat]), color=r_col, lw=1.4, ls="--")
-            ax.set_title(f"{cat} coverage", loc="left")
-            ax.set_xlabel("% of map cells")
-        axes[0].set_ylabel("maps")
+            ax.set_title(TXT.FIG05["panel"].format(cat=cat), loc="left")
+            ax.set_xlabel(TXT.FIG05["x"])
+        axes[0].set_ylabel(TXT.FIG05["y"])
         axes[0].legend(frameon=False, fontsize=8)
         fig.suptitle("Each map type is a different pair of terrain fractions — that "
                      "difference is the only signal the agent can use", y=1.04)

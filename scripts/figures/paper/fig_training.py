@@ -22,7 +22,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-REPO = Path(__file__).resolve().parents[2]
+import text as TXT  # noqa: E402
+
+REPO = Path(__file__).resolve().parents[3]
 PLT_RC = {
     "figure.dpi": 130, "savefig.dpi": 130, "font.size": 8.5,
     "axes.titlesize": 9, "axes.labelsize": 8.5, "legend.fontsize": 7.5,
@@ -116,9 +118,9 @@ def fig_ppo(data, out):
             ax.set_title(title, loc="left")
         axes.flat[1].annotate("constant-door ceiling (⅔)", xy=(0.05, .60), fontsize=7,
                               color="#6b7280", va="top")
-        axes.flat[3].annotate("chance (⅓)", xy=(0.05, .30), fontsize=7,
+        axes.flat[3].annotate(TXT.FIG_TRAINING["chance"], xy=(0.05, .30), fontsize=7,
                               color="#6b7280", va="top")
-        fig.suptitle(f"PPO + GRU — released run ({name})", y=1.0)
+        fig.suptitle(TXT.FIG_TRAINING["ppo_title"].format(name=name), y=1.0)
         fig.tight_layout(rect=[0, 0, 1, .975])
         fig.savefig(out / "fig_ppo_training.png", bbox_inches="tight")
         plt.close(fig)
@@ -149,7 +151,7 @@ def fig_dreamer(data, out, pick="25M, batch_length 64"):
             ax.set_title(title, loc="left")
         axes.flat[0].annotate("constant-door ceiling (⅔)", xy=(0.05, .60), fontsize=7,
                               color="#6b7280", va="top")
-        fig.suptitle(f"DreamerV3 — released run ({pick})", y=1.0)
+        fig.suptitle(TXT.FIG_TRAINING["dreamer_title"].format(pick=pick), y=1.0)
         fig.tight_layout(rect=[0, 0, 1, .975])
         fig.savefig(out / "fig_dreamer_training.png", bbox_inches="tight")
         plt.close(fig)
@@ -206,8 +208,8 @@ def fig_storm(data, out, heldout_csv=None):
                 ax.text(.5, .5, "no data yet", ha="center", va="center",
                         transform=ax.transAxes, color="#9ca3af")
             ax.set_xlabel("environment frames (M)"); ax.set_ylabel(ylab)
-            ax.set_title(title + "   (1 sample / 200k frames)", loc="left")
-        fig.suptitle("STORM — released recipe (entropy 0.01, batch_length 128, context 128)",
+            ax.set_title(title + TXT.FIG_TRAINING["sparse_suffix"], loc="left")
+        fig.suptitle(TXT.FIG_TRAINING["storm_title"],
                      y=1.0)
         fig.tight_layout(rect=[0, 0, 1, .975])
         fig.savefig(out / "fig_storm_training.png", bbox_inches="tight")
@@ -226,7 +228,7 @@ def fig_compare(data, out, heldout):
         agg = band_by_arm(data["ppo"], "success", "ent 0.15 + anneal  ★released")
         if agg:
             g, m, lo, hi, n = agg
-            ax.plot(g / 1e6, smooth(m, 9), color=C["ppo"], lw=1.8, label="PPO+GRU")
+            ax.plot(g / 1e6, smooth(m, 9), color=C["ppo"], lw=1.8, label=TXT.FIG_COMPARE["legend"]["ppo"])
             ax.fill_between(g / 1e6, smooth(lo, 9), smooth(hi, 9), color=C["ppo"],
                             alpha=.15, lw=0)
         # Dreamer: released config (25M, bl64)
@@ -234,7 +236,7 @@ def fig_compare(data, out, heldout):
         if dr:
             x, y = xy(dr["series"], "episode/eval_success")
             ax.plot(x / 1e6, smooth(y, 15), color=C["dreamer"], lw=1.8,
-                    label="DreamerV3 25M")
+                    label=TXT.FIG_COMPARE["legend"]["dreamer"])
         # STORM: released recipe
         st = data.get("storm", {})
         if st:
@@ -250,14 +252,14 @@ def fig_compare(data, out, heldout):
                 # a few hundred, so it needs a proportionally wider window to be
                 # visually comparable rather than a green haze.
                 ax.plot(xs * per_ep / 1e6, smooth(ys, 501), color=C["storm"], lw=1.8,
-                        label="STORM")
+                        label=TXT.FIG_COMPARE["legend"]["storm"])
         ax.axhline(2 / 3, color="#6b7280", ls="--", lw=1.0)
-        ax.annotate("constant-door ceiling (⅔)", xy=(5.9, .655), fontsize=7,
+        ax.annotate(TXT.FIG_COMPARE["ceiling"], xy=(5.9, .655), fontsize=7,
                     color="#6b7280", ha="right", va="top",
                     bbox=dict(boxstyle="round,pad=.18", fc="white", alpha=.85, ec="none"))
-        ax.set_xlabel("environment frames (M)")
-        ax.set_ylabel("training success (proxy)")
-        ax.set_title("(a) training-time learning curves", loc="left")
+        ax.set_xlabel(TXT.FIG_COMPARE["x"])
+        ax.set_ylabel(TXT.FIG_COMPARE["y_curves"])
+        ax.set_title(TXT.FIG_COMPARE["curves"], loc="left")
         ax.set_ylim(0, 1.05); ax.legend(frameon=False, loc="lower right")
 
         # (b) unified held-out evaluation with Wilson 95% CIs
@@ -273,9 +275,8 @@ def fig_compare(data, out, heldout):
                yerr=[los, his], capsize=4, error_kw=dict(lw=1.1, ecolor="#374151"))
         for i, v in enumerate(vals):
             ax.text(i, v + his[i] + .003, f"{v*100:.1f}%", ha="center", fontsize=8)
-        ax.set_ylim(.94, 1.005); ax.set_ylabel("held-out success (TRUE metric)")
-        ax.set_title("(b) unified eval, all 1 200 test maps, all sampling\n"
-                     "(no pairwise difference significant)",
+        ax.set_ylim(.94, 1.005); ax.set_ylabel(TXT.FIG_COMPARE["y_eval"])
+        ax.set_title(TXT.FIG_COMPARE["eval"],
                      loc="left", fontsize=8.5)
 
         # (c) outcome decomposition of the residual error
@@ -290,11 +291,11 @@ def fig_compare(data, out, heldout):
             bottoms += vs
         for i, v in enumerate(bottoms):
             ax.text(i, v + .04, f"{v:.1f}%", ha="center", fontsize=8)
-        ax.set_ylabel("share of episodes (%)")
+        ax.set_ylabel(TXT.FIG_COMPARE["y_residual"])
         ax.legend(frameon=False, fontsize=7.5)
-        ax.set_title("(c) how the residual error is spent", loc="left")
+        ax.set_title(TXT.FIG_COMPARE["residual"], loc="left")
 
-        fig.suptitle("Three agents, one task: all clear the memoryless ⅔ ceiling", y=1.03)
+        fig.suptitle(TXT.FIG_COMPARE["title"], y=1.03)
         fig.tight_layout()
         fig.savefig(out / "fig_compare.png", bbox_inches="tight")
         plt.close(fig)

@@ -31,77 +31,77 @@ OUT = REPO / "paper/figures/forkwall_paper"
 CONDA_SH = "/cluster/software/anaconda3/etc/profile.d/conda.sh"
 
 # name -> (env, argv, [outputs], [extra inputs beyond the script itself])
-S = "scripts/figures"
+S = "scripts/figures/paper"     # one module per figure group
 TARGETS: dict[str, dict] = {
     # ── environment and task figures ────────────────────────────────────
-    "task": dict(env="crusoe", script=f"{S}/paper_task_figs.py",
+    "task": dict(env="crusoe", script=f"{S}/fig_task.py",
                  outputs=["fig_task_categories.png", "fig_task_anatomy.png"],
                  note="Fig 1-2  map types + anatomy of an episode"),
-    "env": dict(env="crusoe", script=f"{S}/paper_env_figs.py",
+    "env": dict(env="crusoe", script=f"{S}/fig_env.py",
                 outputs=["fig_reward.png", "fig_dataset.png"],
                 note="Fig 3-4  reward decomposition + dataset coverage"),
-    "mapgen": dict(env="crusoe", script=f"{S}/paper_mapgen_figs.py",
+    "mapgen": dict(env="crusoe", script=f"{S}/fig_mapgen.py",
                    outputs=["fig_noise_primer.png", "fig_noise_octaves.png",
                             "fig_warp.png", "fig_features.png",
                             "fig_quantile.png", "fig_pipeline.png"],
                    note="Fig 5-10 map-generation chapter"),
 
     # ── trajectory density (Fig 11): collect per agent, then plot ───────
-    "traj-ppo": dict(env="crusoe", script=f"{S}/paper_traj_density.py",
+    "traj-ppo": dict(env="crusoe", script=f"{S}/fig_trajectories.py",
                      args=["--agent", "ppo"], outputs=["traj_density_ppo.json"],
                      note="Fig 11 rollouts (PPO)"),
-    "traj-dreamer": dict(env="r2dreamer", script=f"{S}/paper_traj_density.py",
+    "traj-dreamer": dict(env="r2dreamer", script=f"{S}/fig_trajectories.py",
                          args=["--agent", "dreamer"],
                          outputs=["traj_density_dreamer.json"],
                          note="Fig 11 rollouts (Dreamer)"),
-    "traj-storm": dict(env="storm", script=f"{S}/paper_traj_density.py",
+    "traj-storm": dict(env="storm", script=f"{S}/fig_trajectories.py",
                        args=["--agent", "storm"],
                        outputs=["traj_density_storm.json"],
                        note="Fig 11 rollouts (STORM)"),
-    "traj-plot": dict(env="crusoe", script=f"{S}/paper_traj_density.py",
+    "traj-plot": dict(env="crusoe", script=f"{S}/fig_trajectories.py",
                       args=["--plot-only"], outputs=["fig_trajectories.png"],
                       inputs=["traj_density_ppo.json", "traj_density_dreamer.json",
                               "traj_density_storm.json"],
                       note="Fig 11 plate"),
 
     # ── imagined futures (Fig 12-13) ────────────────────────────────────
-    "dream-dreamer": dict(env="r2dreamer", script=f"{S}/paper_dreams.py",
+    "dream-dreamer": dict(env="r2dreamer", script=f"{S}/fig_dreams.py",
                           args=["--agent", "dreamer"],
                           outputs=["fig_dream_dreamer.png", "dreams_dreamer.json"],
                           note="Fig 12  DreamerV3 imagined observations"),
-    "dream-storm": dict(env="storm", script=f"{S}/paper_dreams.py",
+    "dream-storm": dict(env="storm", script=f"{S}/fig_dreams.py",
                         args=["--agent", "storm"],
                         outputs=["fig_dream_storm.png", "dreams_storm.json"],
                         note="Fig 13  STORM imagined observations"),
 
     # ── training telemetry (Fig 14-17) ──────────────────────────────────
-    "training-data": dict(env="crusoe", script=f"{S}/paper_training_data.py",
+    "training-data": dict(env="crusoe", script="scripts/figures/paper_training_data.py",
                           outputs=["training_data.json"],
                           note="re-read the wandb offline stores"),
-    "training": dict(env="crusoe", script=f"{S}/paper_training_figs.py",
+    "training": dict(env="crusoe", script=f"{S}/fig_training.py",
                      outputs=["fig_compare.png", "fig_ppo_training.png",
                               "fig_dreamer_training.png", "fig_storm_training.png"],
                      inputs=["training_data.json", "eval_all.json"],
                      note="Fig 14-17 per-agent training curves"),
 
     # ── checkpoint metastability (Fig 18) ───────────────────────────────
-    "metastability": dict(env="crusoe", script=f"{S}/paper_metastability.py",
+    "metastability": dict(env="crusoe", script=f"{S}/fig_metastability.py",
                           outputs=["fig_metastability.png", "storm_archive_eval.json"],
                           inputs=["storm_archive_eval.log"],
                           note="Fig 18  every archived STORM checkpoint"),
 
     # ── evidence integration (Fig 19) ───────────────────────────────────
-    "evidence-ppo": dict(env="crusoe", script=f"{S}/paper_evidence_stats.py",
+    "evidence-ppo": dict(env="crusoe", script=f"{S}/fig_evidence.py",
                          args=["--agent", "ppo"], outputs=["evidence_ppo.json"],
                          note="Fig 19 rollouts (PPO)"),
-    "evidence-dreamer": dict(env="r2dreamer", script=f"{S}/paper_evidence_stats.py",
+    "evidence-dreamer": dict(env="r2dreamer", script=f"{S}/fig_evidence.py",
                              args=["--agent", "dreamer"],
                              outputs=["evidence_dreamer.json"],
                              note="Fig 19 rollouts (Dreamer)"),
-    "evidence-storm": dict(env="storm", script=f"{S}/paper_evidence_stats.py",
+    "evidence-storm": dict(env="storm", script=f"{S}/fig_evidence.py",
                            args=["--agent", "storm"], outputs=["evidence_storm.json"],
                            note="Fig 19 rollouts (STORM)"),
-    "evidence-plot": dict(env="crusoe", script=f"{S}/paper_evidence_stats.py",
+    "evidence-plot": dict(env="crusoe", script=f"{S}/fig_evidence.py",
                           args=["--plot"],
                           outputs=["fig_evidence.png", "evidence_stats.json"],
                           inputs=["evidence_ppo.json", "evidence_dreamer.json",
@@ -109,10 +109,10 @@ TARGETS: dict[str, dict] = {
                           note="Fig 19 plate + statistics"),
 
     # ── tables and the final document ───────────────────────────────────
-    "tables": dict(env="crusoe", script=f"{S}/paper_results_table.py",
+    "tables": dict(env="crusoe", script="scripts/figures/paper_results_table.py",
                    outputs=[], inputs=["eval_all.json"],
                    note="Tables 4-5 written into the paper source"),
-    "build": dict(env="crusoe", script=f"{S}/build_paper.py",
+    "build": dict(env="crusoe", script="scripts/figures/build_paper.py",
                   outputs=[], note="inline everything -> paper/forkwall_paper.html"),
 }
 

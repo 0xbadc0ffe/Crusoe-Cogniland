@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 
 import opensimplex  # noqa: E402
@@ -38,6 +38,8 @@ from cogniland.bridge_tunnel.mapgen import (  # noqa: E402
     category_fracs, generate_commit_map,
 )
 from cogniland.bridge_tunnel.tiles import TILE_COLORS  # noqa: E402
+
+import text as TXT  # noqa: E402
 
 PLT_RC = {"figure.dpi": 130, "savefig.dpi": 130, "font.size": 8.5,
           "axes.titlesize": 9, "axes.labelsize": 8.5,
@@ -90,7 +92,7 @@ def fig_noise_primer(out):
         a.imshow(val, cmap="Greys_r", origin="lower", extent=[0, n, 0, n])
         a.scatter(*np.meshgrid(np.arange(n + 1), np.arange(n + 1)),
                   s=9, c="#e0b429", zorder=3)
-        a.set_title("(a) value noise — interpolate random\nvalues at lattice points", loc="left")
+        a.set_title(TXT.FIG_NOISE["title_a"], loc="left")
 
         a = ax[1]
         a.imshow(grad, cmap="Greys_r", origin="lower", extent=[0, n, 0, n])
@@ -118,7 +120,7 @@ def fig_noise_primer(out):
                        bbox=dict(boxstyle="round,pad=.12", fc="white", ec="none",
                                  alpha=.85))
         a.plot(px, py, "o", color="#14201a", ms=5.5, zorder=5)
-        a.annotate("sample point", (px, py), xytext=(1.02, -.20), fontsize=7.5,
+        a.annotate(TXT.FIG_NOISE["sample_point"], (px, py), xytext=(1.02, -.20), fontsize=7.5,
                    ha="right", color="#14201a",
                    arrowprops=dict(arrowstyle="-", color="#96a394", lw=.8))
         a.set_xticks([]); a.set_yticks([])
@@ -130,10 +132,10 @@ def fig_noise_primer(out):
         # the fade curve
         a = ax[3]
         t = np.linspace(0, 1, 200)
-        a.plot(t, t, color="#c3ccba", lw=1.2, ls="--", label="linear $t$")
+        a.plot(t, t, color="#c3ccba", lw=1.2, ls="--", label=TXT.FIG_NOISE["linear"])
         a.plot(t, fade(t), color="#2159cf", lw=2,
-               label="quintic $6t^5-15t^4+10t^3$")
-        a.set_xlabel("$t$"); a.set_ylabel("blend weight")
+               label=TXT.FIG_NOISE["quintic"])
+        a.set_xlabel(TXT.FIG_NOISE["x"]); a.set_ylabel(TXT.FIG_NOISE["y"])
         a.legend(frameon=False, fontsize=7.5, loc="upper left")
         a.set_title("(d) the ease curve — zero 1st and 2nd\nderivative at the "
                     "lattice, so seams vanish", loc="left")
@@ -162,18 +164,17 @@ def fig_noise_octaves(out):
                                loc="left", fontsize=8)
             ax[1, k].plot(f[H // 2], color="#2159cf", lw=1)
             ax[1, k].set_ylim(-1.15, 1.15)
-            ax[1, k].set_xlabel("column")
+            ax[1, k].set_xlabel(TXT.FIG_OCTAVES["x"])
             if k == 0:
-                ax[1, k].set_ylabel("value on\nthe centre row")
+                ax[1, k].set_ylabel(TXT.FIG_OCTAVES["y"])
         ax[0, 5].imshow(acc / tw, cmap=TERR)
-        ax[0, 5].set_title("Σ weighted octaves\n= fractal heightmap", loc="left",
+        ax[0, 5].set_title(TXT.FIG_OCTAVES["total"], loc="left",
                            fontsize=8, color="#15803d")
         ax[1, 5].plot((acc / tw)[H // 2], color="#15803d", lw=1.4)
-        ax[1, 5].set_ylim(-1.15, 1.15); ax[1, 5].set_xlabel("column")
+        ax[1, 5].set_ylim(-1.15, 1.15); ax[1, 5].set_xlabel(TXT.FIG_OCTAVES["x"])
         for a in ax[0]:
             a.set_xticks([]); a.set_yticks([])
-        fig.suptitle("Fractal (fBm) summation — each octave halves the wavelength "
-                     "and halves the amplitude; the sum has detail at every scale",
+        fig.suptitle(TXT.FIG_OCTAVES["title"],
                      y=1.02)
         fig.tight_layout()
         fig.savefig(out / "fig_noise_octaves.png", bbox_inches="tight")
@@ -199,16 +200,14 @@ def fig_warp(out):
                               np.clip(CC + aw * wc, 0, W - 1)], order=1, mode="reflect")
     with plt.rc_context(PLT_RC):
         fig, ax = plt.subplots(1, 4, figsize=(13.2, 2.5))
-        ax[0].imshow(h0, cmap=TERR); ax[0].set_title("(a) heightmap $h_0$", loc="left")
-        ax[1].imshow(wr, cmap="PuOr"); ax[1].set_title("(b) row-offset field", loc="left")
-        ax[2].imshow(wc, cmap="PuOr"); ax[2].set_title("(c) column-offset field", loc="left")
+        ax[0].imshow(h0, cmap=TERR); ax[0].set_title(TXT.FIG_WARP["a"], loc="left")
+        ax[1].imshow(wr, cmap="PuOr"); ax[1].set_title(TXT.FIG_WARP["b"], loc="left")
+        ax[2].imshow(wc, cmap="PuOr"); ax[2].set_title(TXT.FIG_WARP["c"], loc="left")
         ax[3].imshow(hw, cmap=TERR)
-        ax[3].set_title("(d) warped: $h_0(r+\\alpha w_r,\\; c+\\alpha w_c)$", loc="left")
+        ax[3].set_title(TXT.FIG_WARP["d"], loc="left")
         for a in ax:
             a.set_xticks([]); a.set_yticks([])
-        fig.suptitle("Domain warping — two more noise fields bend the coordinates "
-                     "before sampling ($\\alpha$ = 10 % of the map), turning round "
-                     "blobs into organic coastlines", y=1.06)
+        fig.suptitle(TXT.FIG_WARP["title"], y=1.06)
         fig.tight_layout()
         fig.savefig(out / "fig_warp.png", bbox_inches="tight")
         plt.close(fig)
@@ -230,8 +229,7 @@ def fig_features(out):
                 "(c) capsule — meandering ridge (sine wiggle)"]):
             a.imshow(f, cmap=TERR); a.set_title(t, loc="left")
             a.set_xticks([]); a.set_yticks([])
-        fig.suptitle("The three overlay primitives, added to (mountains) or "
-                     "subtracted from (lakes) the fractal heightmap with weight ±1.3",
+        fig.suptitle(TXT.FIG_FEATURES["title"],
                      y=1.1)
         fig.tight_layout()
         fig.savefig(out / "fig_features.png", bbox_inches="tight")
@@ -257,7 +255,7 @@ def fig_quantile(out):
             wf, rf = category_fracs(cat)
             a.axvline(np.quantile(hf, wf), color=col, lw=1.6)
             a.axvline(np.quantile(hf, 1 - rf), color=col, lw=1.6, ls="--")
-        a.set_xlabel("heightmap value"); a.set_ylabel("cells")
+        a.set_xlabel(TXT.FIG_QUANTILE["x"]); a.set_ylabel(TXT.FIG_QUANTILE["y"])
         a.set_title("(a) one heightmap, three pairs of cut points\n"
                     "solid = water level, dashed = rock level", loc="left")
 
@@ -269,10 +267,9 @@ def fig_quantile(out):
             a = fig.add_subplot(gs[k + 1])
             a.imshow(TILE_COLORS[terr], interpolation="nearest")
             a.set_xticks([]); a.set_yticks([])
-            a.set_title(f"({'bcd'[k]}) {cat}\nwater {wf:.1%} · rock {rf:.1%}", loc="left")
-        fig.suptitle("The category is a pair of quantiles, not a different world. "
-                     "The same heightmap thresholded three ways gives three "
-                     "categories with identical geometry.", y=1.04)
+            a.set_title(TXT.FIG_QUANTILE["panel"].format(letter="bcd"[k], cat=cat, wf=wf, rf=rf),
+                        loc="left")
+        fig.suptitle(TXT.FIG_QUANTILE["title"], y=1.04)
         fig.tight_layout()
         fig.savefig(out / "fig_quantile.png", bbox_inches="tight")
         plt.close(fig)
@@ -331,7 +328,7 @@ def fig_pipeline(out):
                 a.imshow(im, interpolation="nearest")
             a.set_title(title, loc="left")
             a.set_xticks([]); a.set_yticks([])
-        fig.suptitle(f"Six stages of one real map  (seed {seed}, category “{cat}”)", y=1.005)
+        fig.suptitle(TXT.FIG_PIPELINE["title"].format(seed=seed, cat=cat), y=1.005)
         fig.tight_layout()
         fig.savefig(out / "fig_pipeline.png", bbox_inches="tight")
         plt.close(fig)

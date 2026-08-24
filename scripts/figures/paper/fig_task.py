@@ -29,9 +29,11 @@ import pygame
 from matplotlib.lines import Line2D
 from matplotlib.patches import ConnectionPatch, Patch, Rectangle
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "figures"))
+
+import text as TXT  # noqa: E402
 
 from cogniland.bridge_tunnel import tiles as T  # noqa: E402
 from cogniland.bridge_tunnel.env import BridgeTunnelEnv  # noqa: E402
@@ -39,7 +41,7 @@ from paper_rollouts import FORKWALL_KWARGS, make_ppo  # noqa: E402
 from paper_rollouts_textured import BASE, FACE_SPRITE, OVERLAY, load_sprites  # noqa: E402
 
 CATS = ("rocky", "balanced", "lakes")
-CAT_DOOR = {"lakes": "bottom door", "rocky": "top door", "balanced": "either door"}
+CAT_DOOR = TXT.FIG01["door_for"]
 PLT_RC = {"figure.dpi": 140, "savefig.dpi": 140, "font.size": 9,
           "axes.titlesize": 9.5, "axes.labelsize": 9}
 
@@ -71,19 +73,19 @@ def fig_categories(by_cat, out):
                                            lw=2.2, zorder=6))
             ax.plot(rec.spawn[1], rec.spawn[0], "o", color="white", mec="black",
                     ms=6, zorder=7)
-            ax.set_title(f"{cat}   →   {CAT_DOOR[cat]}", loc="left")
+            ax.set_title(TXT.FIG01["panel"].format(cat=cat, door=CAT_DOOR[cat]), loc="left")
             ax.set_xticks([]); ax.set_yticks([])
         handles = [
-            Patch(facecolor=np.array(T.TILE_COLORS[T.WATER]) / 255, label="water"),
-            Patch(facecolor=np.array(T.TILE_COLORS[T.ROCK]) / 255, label="rock"),
-            Patch(facecolor=np.array(T.TILE_COLORS[T.TREE]) / 255, label="tree"),
-            Line2D([], [], color="#22c55e", lw=2, label="rewarded door"),
-            Line2D([], [], color="#ef4444", lw=2, label="decoy door"),
-            Line2D([], [], marker="o", color="white", mec="black", ls="", label="spawn"),
+            Patch(facecolor=np.array(T.TILE_COLORS[T.WATER]) / 255, label=TXT.FIG01["legend"]["water"]),
+            Patch(facecolor=np.array(T.TILE_COLORS[T.ROCK]) / 255, label=TXT.FIG01["legend"]["rock"]),
+            Patch(facecolor=np.array(T.TILE_COLORS[T.TREE]) / 255, label=TXT.FIG01["legend"]["tree"]),
+            Line2D([], [], color="#22c55e", lw=2, label=TXT.FIG01["legend"]["good"]),
+            Line2D([], [], color="#ef4444", lw=2, label=TXT.FIG01["legend"]["bad"]),
+            Line2D([], [], marker="o", color="white", mec="black", ls="", label=TXT.FIG01["legend"]["spawn"]),
         ]
         fig.legend(handles=handles, loc="lower center", ncol=6, frameon=False,
                    bbox_to_anchor=(.5, -.06), fontsize=8.5)
-        fig.suptitle("Cogniland map types", y=1.03, fontsize=11)
+        fig.suptitle(TXT.FIG01["title"], y=1.03, fontsize=11)
         fig.tight_layout(rect=[0, .02, 1, .97])
         fig.savefig(out / "fig_task_categories.png", bbox_inches="tight")
         plt.close(fig)
@@ -207,7 +209,7 @@ def fig_anatomy(by_cat, out, ppo_ckpt, shot_ts=(0, 50, "corridor"), rollout_seed
                          zorder=10, bbox=dict(boxstyle="round,pad=.25", fc="black",
                                               alpha=.72, ec="none"))
         axm.set_xticks([]); axm.set_yticks([])
-        axm.set_title("(a) the full map — one PPO episode (yellow)", loc="left")
+        axm.set_title(TXT.FIG02["map_panel"], loc="left")
 
         # three observations, wired back to where they were taken
         for k, (label, pos, img) in enumerate(shots[:3]):
@@ -224,7 +226,7 @@ def fig_anatomy(by_cat, out, ppo_ckpt, shot_ts=(0, 50, "corridor"), rollout_seed
             fig.add_artist(con)
             axm.plot(pos[1], pos[0], "o", color="#94a3b8", mec="black", ms=5, zorder=11)
 
-        fig.suptitle("Anatomy of an episode", y=.985, fontsize=12)
+        fig.suptitle(TXT.FIG02["title"], y=.985, fontsize=12)
         fig.text(.5, .958, "what the agent receives — a 21×21 egocentric crop "
                  "(Crafter tiles) plus heading and elapsed time; black = out of bounds",
                  ha="center", fontsize=8.5, color="#6d7a70")

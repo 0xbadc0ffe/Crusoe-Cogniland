@@ -33,9 +33,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pygame
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "figures"))
+
+import text as TXT  # noqa: E402
 
 from cogniland.bridge_tunnel import tiles as T  # noqa: E402
 from cogniland.bridge_tunnel.env import BridgeTunnelEnv  # noqa: E402
@@ -214,23 +216,23 @@ def make_fig(agent, real, truth, dream, out, context, stride=3):
     with plt.rc_context(rc):
         fig, ax = plt.subplots(2, ncol, figsize=(1.72 * ncol, 4.0))
         ax[0, 0].imshow(obs_rgb(real[-1], 3, sprites, 8), interpolation="nearest")
-        ax[0, 0].set_title(f"context\n(last of {context})", loc="left", fontsize=8)
+        ax[0, 0].set_title(TXT.FIG_DREAMS["context"].format(n=context), loc="left", fontsize=8)
         ax[1, 0].axis("off")
-        ax[1, 0].text(.5, .5, "the model sees\nnothing after\nthis frame",
+        ax[1, 0].text(.5, .5, TXT.FIG_DREAMS["cut"],
                       ha="center", va="center", fontsize=8, color="#6d7a70",
                       transform=ax[1, 0].transAxes)
         for k, i in enumerate(idx):
             ax[0, k + 1].imshow(obs_rgb(truth[i], 3, sprites, 8), interpolation="nearest")
-            ax[0, k + 1].set_title(f"+{i + 1}", loc="left", fontsize=8)
+            ax[0, k + 1].set_title(TXT.FIG_DREAMS["step"].format(i=i + 1), loc="left", fontsize=8)
             ax[1, k + 1].imshow(obs_rgb(dream[i], 3, sprites, 8), interpolation="nearest")
-            ax[1, k + 1].set_xlabel(f"{agree[i] * 100:.0f}% tiles", fontsize=7.5,
+            ax[1, k + 1].set_xlabel(TXT.FIG_DREAMS["agreement"].format(pct=agree[i] * 100), fontsize=7.5,
                                     color="#6d7a70")
         for a in ax.flat:
             a.set_xticks([]); a.set_yticks([])
-        ax[0, 0].set_ylabel("reality", fontsize=9)
-        ax[1, 1].set_ylabel("dream", fontsize=9)
-        fig.suptitle(f"{agent.upper()} — imagined futures from a real context "
-                     f"(no observations after the context frame)", y=1.0, fontsize=10)
+        ax[0, 0].set_ylabel(TXT.FIG_DREAMS["row_real"], fontsize=9)
+        ax[1, 1].set_ylabel(TXT.FIG_DREAMS["row_dream"], fontsize=9)
+        fig.suptitle(TXT.FIG_DREAMS["title"].format(AGENT=agent.upper()),
+                     y=1.0, fontsize=10)
         fig.tight_layout(rect=[0, 0, 1, .96])
         fig.savefig(out / f"fig_dream_{agent}.png", bbox_inches="tight")
         plt.close(fig)
