@@ -1093,6 +1093,53 @@ would flatter all three. Sampling is the mode all three were trained under, so i
 measures the same thing in every case — and it happens to be the mode where the two agents that
 depend on it are not artificially crippled.</p>
 
+<h3><span class="num">7.3</span>Balanced maps are a free probe of the belief</h3>
+
+<p>On <em>balanced</em> maps either door pays, so the choice carries no reward signal at all —
+nothing in training selects it. If it were arbitrary we would expect a coin flip, or a fixed habit.
+It is neither: <b>the door tracks the terrain the agent happened to walk past</b>, in all three
+agents.</p>
+
+<figure class="plate-wide">
+  <img src="{{FIG:fig_evidence.png}}" alt="Door choice against the water and rock tiles seen during the episode, for all three agents">
+  <figcaption><span class="tag">Figure 15</span><b>What the agent saw versus what it chose.</b>
+  Every map cell entering the 21×21 view is counted once, at the tile value it had when
+  <em>first</em> seen (the agent bridges and mines as it goes, so later values are contaminated).
+  (a) on balanced maps, P(top door) rises monotonically with the rock-minus-water surplus actually
+  observed — AUC 0.86 / 0.76 / 0.84 — even though both doors pay. Dotted lines are each agent's
+  standing bias. (b) the same free choice read off the agent's <em>internal</em> state instead:
+  projecting the carried state at the wall onto the lakes→rocky axis (a difference of means taken
+  from decisive maps only) predicts the balanced-map door at <b>AUC 0.97</b> for PPO and
+  <b>1.00</b> for Dreamer. (c) on decisive maps the wrong-door episodes are systematically the ones
+  where the agent saw <em>less</em> evidence for the true type.</figcaption>
+</figure>
+
+<p>Panel (b) is the load-bearing one. The lakes→rocky axis is estimated only from
+<em>decisive</em> maps, where the type is real and the reward depends on it. Projecting balanced
+episodes onto that axis then separates their door choice almost perfectly. So the agents do not
+have a separate coin-flip mechanism for the free case: they run the same evidence-integration
+circuit, land somewhere on the same belief axis, and read the door off it. A balanced map is not a
+map with no answer — it is a map where the agent forms an answer anyway and nothing punishes it.</p>
+
+<p>The standing biases differ in <em>direction</em>, and they predict the asymmetries of
+Section&nbsp;7.1. Dreamer leans bottom (P(top) = 0.287) and is the agent that underperforms on
+<em>rocky</em> maps, which need the top door (96.00 % vs 98.50 % on lakes). STORM leans top
+(0.780) and does better on rocky than lakes (99.25 % vs 98.00 %). PPO is the least biased (0.675)
+and the most symmetric (98.75 % vs 98.50 %). Three for three: <b>where an agent goes when the
+choice is free predicts which category it gets wrong when the choice matters.</b> That is a
+cheap diagnostic — it needs no probe, no labels and no gradient, just the free-choice split — and
+it recovers a residual constant-door bias that the aggregate success number hides completely.</p>
+
+<div class="note">
+  <span class="h">A consequence for the steering programme</span>
+  Section&nbsp;9 uses balanced maps as the control that isolates non-belief damage, on the
+  reasoning that <span class="belief">b</span> is irrelevant there. Figure 15 refines that: belief
+  is irrelevant to the <em>reward</em> on balanced maps, but it is still computed and still drives
+  the choice. So the control tests whether an intervention broke <em>navigation</em>, and the
+  balanced-map door distribution is a second, independent readout of whether it broke the
+  <em>belief</em> — one that is available even when no door is "wrong".
+</div>
+
 <!-- ══════════════════════════════════════════════════════════════ -->
 <h2><span class="num">8</span>What each agent needed</h2>
 
@@ -1115,7 +1162,7 @@ contingency has been discovered.</p>
 
 <figure class="plate-wide">
   <img src="{{FIG:fig_ppo_training.png}}" alt="PPO training curves across four exploration arms and three seeds">
-  <figcaption><span class="tag">Figure 15</span><b>PPO + GRU, released run.</b> (b) success
+  <figcaption><span class="tag">Figure 16</span><b>PPO + GRU, released run.</b> (b) success
   climbs past the ⅔ line only after the annealing schedule has had time to act. (d) the
   belief probe reaches ~0.85 — and in the arms that stay stuck at ⅔ (not plotted) it reaches the
   same value, which is the evidence that memory is not the bottleneck, use of memory is. (e) the
@@ -1137,7 +1184,7 @@ window; every configuration with a long enough window clears the ceiling.</p>
 
 <figure class="plate-wide">
   <img src="{{FIG:fig_dreamer_training.png}}" alt="DreamerV3 sweep over model size and batch length">
-  <figcaption><span class="tag">Figure 16</span><b>DreamerV3, released run</b> (25M,
+  <figcaption><span class="tag">Figure 17</span><b>DreamerV3, released run</b> (25M,
   <code>batch_length</code> 64). (a) the trainer's own eval metric crosses the ⅔ line at ~1M frames
   and saturates near 1.0. (d) the dynamics KL peaks while the world model is still fitting the
   terrain and then relaxes. (f) actor entropy collapses as the policy commits to a door
@@ -1162,7 +1209,7 @@ than PPO — and too much sampling noise actively prevents the policy from sharp
 
 <figure class="plate-wide">
   <img src="{{FIG:fig_storm_training.png}}" alt="STORM training curves for the winning configuration">
-  <figcaption><span class="tag">Figure 17</span><b>STORM, released recipe</b> (entropy 0.01,
+  <figcaption><span class="tag">Figure 18</span><b>STORM, released recipe</b> (entropy 0.01,
   <code>batch_length</code> 128, context 128), complete 6M-frame run: 33 443 episodes in 9 h 33 m
   on one GPU. Curves come from a faithful re-run of the released configuration — the original
   run's telemetry was lost in a repository cleanup, and the evaluated checkpoint in Table 4 comes
@@ -1177,8 +1224,8 @@ than PPO — and too much sampling noise actively prevents the policy from sharp
 
 <figure class="plate-wide">
   <img src="{{FIG:fig_metastability.png}}" alt="Held-out success of every archived checkpoint from one STORM run, with per-category breakdown and outcome decomposition">
-  <figcaption><span class="tag">Figure 18</span><b>Door-binding is metastable.</b> All 40 archived
-  checkpoints of the run in Figure 17, each evaluated through the same harness (300 held-out
+  <figcaption><span class="tag">Figure 19</span><b>Door-binding is metastable.</b> All 40 archived
+  checkpoints of the run in Figure 18, each evaluated through the same harness (300 held-out
   episodes, sampled actions). (a) up to ~275 k steps the run is parked in the constant-door basin
   — and the per-category lines show exactly which basin: <em>balanced</em> and <em>rocky</em> at
   100 %, <em>lakes</em> at <b>0 %</b>, i.e. always the top door, which is precisely the ⅔ policy.
@@ -1191,12 +1238,12 @@ than PPO — and too much sampling noise actively prevents the policy from sharp
 
 <div class="note">
   <span class="h">Why we archive and select</span>
-  Figure 18 is the argument for the checkpoint policy, and it is a much stronger argument than we
+  Figure 19 is the argument for the checkpoint policy, and it is a much stronger argument than we
   expected before measuring it. Within a single run, adjacent checkpoints 25 k gradient steps
   apart score <b>99.0 %</b> and <b>0.0 %</b>. Taking the end of training would have given
   <b>96.3 %</b> — 2.7 points below the best of the archive — and taking the checkpoint
   25 k steps earlier than that would have given a number in the seventies. None of this is
-  visible in the training curves of Figure 17, which show only a shallow dip at the same place,
+  visible in the training curves of Figure 18, which show only a shallow dip at the same place,
   because the trainer's own success proxy is computed on the maps the agent is training on.
   The practical rule: archive every 50 k steps, evaluate the archive with the real metric, and
   never report a world-model agent from its final checkpoint alone.
@@ -1345,12 +1392,12 @@ having, and neither was available before.</p>
   Table 4 cannot be attributed to architecture alone. Re-running Dreamer at
   <code>horizon = 100</code> would close it and is the first thing we would fix.</li>
   <li><b>Single seed per released agent.</b> Table 4 compares one checkpoint per method. The
-  seed-to-seed variance across the sweeps (Section 8) — and, as Figure 18 shows, the
+  seed-to-seed variance across the sweeps (Section 8) — and, as Figure 19 shows, the
   <em>within-run, checkpoint-to-checkpoint</em> variance — is larger than the between-agent
   differences, so the ranking in Table 4 should not be read as a ranking of methods.</li>
   <li><b>Checkpoint selection differs, and it matters more than we assumed.</b> STORM's
   checkpoint was selected on held-out data from an archive; PPO's and Dreamer's are
-  end-of-training. Figure 18 measures the size of that advantage on a full run: best-of-archive
+  end-of-training. Figure 19 measures the size of that advantage on a full run: best-of-archive
   99.0 % against 96.3 % at the end of training, so call it 2–3 points in STORM's favour, not one.
   Selecting the argmax on the test split and then reporting it is also optimistically biased.
   Both effects push the same way, and both apply to STORM alone.</li>
@@ -1371,6 +1418,11 @@ having, and neither was available before.</p>
 <p>Everything below runs from the repository root. The three pipelines use three separate
 environments and never import each other; they share only the environment package and the map
 dataset.</p>
+
+<p class="small">All of the below is wrapped by a single dispatcher —
+<code>python scripts/figures/make_figures.py --list</code> shows every figure target, which of the
+three environments it needs and whether it is stale; omit <code>--list</code> to rebuild what is
+out of date. The explicit commands are kept here because the dispatcher only calls them.</p>
 
 <pre># 0 · the shared dataset (deterministic)
 python scripts/bridge_tunnel/make_forkwall_dataset.py
@@ -1400,8 +1452,10 @@ PYTHONPATH=src python scripts/figures/paper_task_figs.py       # Fig 1-2
 PYTHONPATH=src python scripts/figures/paper_mapgen_figs.py     # Fig 5-10
 PYTHONPATH=src python scripts/figures/paper_traj_density.py    # Fig 11
 python scripts/figures/paper_dreams.py --agent {dreamer|storm} # Fig 12-13
-python scripts/figures/paper_training_figs.py                  # Fig 14-17
-python scripts/figures/paper_metastability.py                  # Fig 18
+python scripts/figures/paper_training_figs.py                  # Fig 14, 16-18
+python scripts/figures/paper_evidence_stats.py --agent {ppo|dreamer|storm}
+python scripts/figures/paper_evidence_stats.py --plot          # Fig 15
+python scripts/figures/paper_metastability.py                  # Fig 19
 python scripts/figures/paper_results_table.py                  # Tables 4-5
 python scripts/figures/build_paper.py                          # inline everything</pre>
 

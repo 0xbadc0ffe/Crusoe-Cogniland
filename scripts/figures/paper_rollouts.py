@@ -112,6 +112,9 @@ def make_ppo(ckpt_path, sampled=True):
                 a = logits.argmax(-1)
         h_prev[0] = h
         return int(a.item())
+
+    # expose the carried state so evidence-integration analyses can read it
+    act.get_state = lambda: h.detach().cpu().numpy().reshape(-1)
     return act, reset
 
 
@@ -221,6 +224,9 @@ def make_dreamer(ckpt_path, device="cuda", model_size="size25M", sampled=False):
             a, st[0] = agent.act(trans, st[0], eval=not sampled)
         first[0] = False
         return int(a.argmax(-1))
+
+    # the RSSM deterministic path is the only part carried across time
+    act.get_state = lambda: st[0]["deter"].detach().cpu().numpy().reshape(-1)
     return act, reset
 
 
