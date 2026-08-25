@@ -9,7 +9,7 @@
 Figure 2 absorbs what used to be a separate observation figure: the callouts
 *are* the agent's input at three moments of the same episode.
 
-Usage: PYTHONPATH=src python scripts/figures/paper_task_figs.py
+Usage: PYTHONPATH=src python scripts/figures/paper/fig_task.py
 """
 from __future__ import annotations
 

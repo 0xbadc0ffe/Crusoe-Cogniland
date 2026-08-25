@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reward and dataset figures for the Cogniland paper.
 
-Figures 1 and 2 live in paper_task_figs.py; this file must never write those
+Figures 1 and 2 live in fig_task.py; this file must never write those
 filenames (two writers = whichever ran last wins, silently).
 
 Generates (into --out, default paper/figures/forkwall_paper/):
@@ -10,7 +10,7 @@ Generates (into --out, default paper/figures/forkwall_paper/):
   fig_dataset.png           per-type water/rock coverage
 
 Usage:
-    PYTHONPATH=src python scripts/figures/paper_env_figs.py
+    PYTHONPATH=src python scripts/figures/paper/fig_env.py
 """
 from __future__ import annotations
 
@@ -236,7 +236,7 @@ def main():
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
 
     records, by_cat = load_records(args.maps)
-    # NB: figures 1 & 2 are owned by paper_task_figs.py -- do not write them here,
+    # NB: figures 1 & 2 are owned by fig_task.py -- do not write them here,
     # or whichever script runs last silently wins.
     obs_info = fig_observation(by_cat, out)
     rew_info = fig_reward(by_cat, out, args.ppo_ckpt)

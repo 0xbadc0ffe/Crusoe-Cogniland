@@ -3,33 +3,36 @@
   "agent": "PPO",
   "category": "rocky",
   "success": true,
-  "steps": 109,
-  "ret": 3.215,
+  "steps": 103,
+  "ret": 3.275,
   "builds": 0,
-  "mines": 2,
-  "frames": 139,
-  "map_id": 3
- },
- {
-  "agent": "PPO",
-  "category": "lakes",
-  "success": true,
-  "steps": 110,
-  "ret": 3.07,
-  "builds": 7,
-  "mines": 0,
-  "frames": 180,
-  "map_id": 16
+  "mines": 1,
+  "frames": 117,
+  "map_id": 3,
+  "seed": 0
  },
  {
   "agent": "PPO",
   "category": "balanced",
   "success": true,
-  "steps": 93,
-  "ret": 3.3,
+  "steps": 91,
+  "ret": 3.32,
   "builds": 0,
   "mines": 0,
-  "frames": 107,
-  "map_id": 7
+  "frames": 105,
+  "map_id": 7,
+  "seed": 0
+ },
+ {
+  "agent": "PPO",
+  "category": "lakes",
+  "success": true,
+  "steps": 120,
+  "ret": 2.97,
+  "builds": 6,
+  "mines": 0,
+  "frames": 134,
+  "map_id": 16,
+  "seed": 0
  }
 ]

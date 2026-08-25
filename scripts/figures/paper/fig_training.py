@@ -9,7 +9,7 @@
   fig_compare.png           all three on one axis: held-out success vs env frames
                             + sample-efficiency and wall-clock summary bars
 
-Usage: python scripts/figures/paper_training_figs.py
+Usage: python scripts/figures/paper/fig_training.py
 """
 from __future__ import annotations
 

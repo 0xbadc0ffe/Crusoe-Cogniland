@@ -12,10 +12,10 @@ water/rock difference, the agent is running its evidence-integration circuit
 even where the answer does not matter -- which makes balanced maps a free probe
 of the belief mechanism rather than a filler category.
 
-  collect:  PYTHONPATH=src python scripts/figures/paper_evidence_stats.py --agent ppo
+  collect:  PYTHONPATH=src python scripts/figures/paper/fig_evidence.py --agent ppo
             PYTHONPATH=src:r2dreamer_model ... --agent dreamer
             (from STORM_model/) PYTHONPATH=.:..:../src python ../scripts/... --agent storm
-  plot:     python scripts/figures/paper_evidence_stats.py --plot
+  plot:     python scripts/figures/paper/fig_evidence.py --plot
 """
 from __future__ import annotations
 

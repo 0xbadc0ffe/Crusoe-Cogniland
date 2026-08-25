@@ -16,7 +16,7 @@ Input is the log produced by looping true_eval_w.py over the archive:
       | grep -E "TRUE success|^balanced|^lakes|^rocky"
   done > storm_archive_eval.log
 
-Usage: python scripts/figures/paper_metastability.py
+Usage: python scripts/figures/paper/fig_metastability.py
 """
 from __future__ import annotations
 

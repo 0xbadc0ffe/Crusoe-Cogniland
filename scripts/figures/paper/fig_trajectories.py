@@ -7,11 +7,11 @@ sub-cell jittered so that coincident paths still visibly stack instead of
 collapsing into one hard stroke.
 
 Run once per agent (each needs its own interpreter, see paper_rollouts.py):
-  PYTHONPATH=src python scripts/figures/paper_traj_density.py --agent ppo
+  PYTHONPATH=src python scripts/figures/paper/fig_trajectories.py --agent ppo
   PYTHONPATH=src:r2dreamer_model  ... --agent dreamer
-  (from STORM_model/) PYTHONPATH=.:..:../src python ../scripts/figures/paper_traj_density.py --agent storm
+  (from STORM_model/) PYTHONPATH=.:..:../src python ../scripts/figures/paper/fig_trajectories.py --agent storm
 Then, with all three json files present:
-  python scripts/figures/paper_traj_density.py --plot-only
+  python scripts/figures/paper/fig_trajectories.py --plot-only
 """
 from __future__ import annotations
 

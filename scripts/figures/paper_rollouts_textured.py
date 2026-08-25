@@ -161,7 +161,15 @@ def draw_world(surf, wx, wy, env, rec, traj):
     pygame.draw.rect(surf, (60, 68, 58), (wx - 1, wy - 1, W * CELL + 2, H * CELL + 2), 1)
 
 
-def rollout(act, reset, rec, agent_name, out_mp4, fps=16, hold=0.9):
+def rollout(act, reset, rec, agent_name, out_mp4, fps=16, hold=0.9, seed=0):
+    # All three agents sample, so without an explicit seed these clips drift on
+    # every regeneration and the captions in the report stop matching them.
+    np.random.seed(seed)
+    try:
+        import torch
+        torch.manual_seed(seed)
+    except Exception:
+        pass
     env = BridgeTunnelEnv(seed=0, map_record=rec, **FORKWALL_KWARGS)
     obs, _ = env.reset()
     reset()
@@ -176,7 +184,7 @@ def rollout(act, reset, rec, agent_name, out_mp4, fps=16, hold=0.9):
     sw = PAD * 3 + ow + ww
     sh = max(oh, wh) + HUD_H + PAD * 2
     surf = pygame.Surface((sw, sh))
-    rng = np.random.default_rng(0)
+    rng = np.random.default_rng(seed)
 
     frames, traj, effects, ret = [], [env._pos], [], 0.0
     n_build = n_mine = 0
@@ -214,18 +222,21 @@ def rollout(act, reset, rec, agent_name, out_mp4, fps=16, hold=0.9):
             effects.append(Effect(cell, kind, rng))
             n_build += int(kind == "build")
             n_mine += int(kind == "mine")
-            # Hold the replay until the burst has fully played out, so tool use
-            # reads as an event instead of a one-frame flicker. Nothing else
-            # advances during the hold: the agent has already acted, and the
-            # next action is only requested once `effects` is empty.
-            while effects:
-                frames.append(compose(t))
-                for e in effects:
-                    e.t += 1
-                effects = [e for e in effects if e.alive()]
+
+        # Age the bursts *alongside* the replay instead of pausing for them. An
+        # earlier version blocked until each burst finished, which stalled the
+        # playback for half a second on every tool use and read as lag. The dust
+        # now settles at the cell it belongs to while the agent walks on.
+        for e in effects:
+            e.t += 1
+        effects = [e for e in effects if e.alive()]
+
         if term or trunc:
             for _ in range(int(fps * hold)):
                 frames.append(compose(t + 1))
+                for e in effects:
+                    e.t += 1
+                effects = [e for e in effects if e.alive()]
             break
 
     success = env._pos in (env._correct_cells or set())
@@ -241,6 +252,8 @@ def rollout(act, reset, rec, agent_name, out_mp4, fps=16, hold=0.9):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--agent", required=True, choices=["ppo", "dreamer", "storm"])
+    p.add_argument("--seed", type=int, default=0,
+                   help="policy seed; a timed-out clip retries with seed+1, +2, ...")
     p.add_argument("--maps", default=str(REPO / "data/bridge_tunnel/forkwall6k/test.pkl"))
     p.add_argument("--map-ids", default="0,5,7")
     p.add_argument("--out", default=str(REPO / "paper/figures/forkwall_paper"))
@@ -269,8 +282,16 @@ def main():
     for i in [int(x) for x in args.map_ids.split(",")]:
         rec = pool[i]
         mp4 = out / "videos_textured" / f"{args.agent}_obs_map{i}_{rec.category}.mp4"
-        row = rollout(act, reset, rec, args.agent.upper(), mp4)
+        # A timed-out episode is 800 steps = 50 s of unwatchable video and never
+        # illustrates anything. Re-roll it; genuine wrong-door failures are kept,
+        # because those are the interesting ones.
+        for sd in range(args.seed, args.seed + 12):
+            row = rollout(act, reset, rec, args.agent.upper(), mp4, seed=sd)
+            if row["steps"] < FORKWALL_KWARGS["max_steps"]:
+                break
+            print(f"   map {i}: timeout at seed {sd}, re-rolling")
         row["map_id"] = i
+        row["seed"] = sd
         rows.append(row)
         print(f"map {i:5d} {rec.category:9s} ok={row['success']!s:5s} steps={row['steps']:3d} "
               f"build={row['builds']} mine={row['mines']} -> {mp4.name}")

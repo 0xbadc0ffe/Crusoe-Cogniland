@@ -12,7 +12,7 @@ teaching figures and the real maps cannot drift apart.
   fig_quantile.png        how the same heightmap yields the three categories
   fig_features.png        the three overlay primitives (disk, massif, capsule)
 
-Usage: PYTHONPATH=src python scripts/figures/paper_mapgen_figs.py
+Usage: PYTHONPATH=src python scripts/figures/paper/fig_mapgen.py
 """
 from __future__ import annotations
 

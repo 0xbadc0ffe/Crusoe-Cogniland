@@ -781,42 +781,44 @@ only when cutting through is shorter.</p>
     <button role="tab" aria-selected="false" data-agent="storm-obs">STORM</button>
   </div>
 
+<!-- BEGIN:obs-videos -->
   <div class="vgrid" data-panel="ppo-obs">
-    <div class="vcard"><video src="{{VID:ppo_obs_map16_lakes.mp4}}" controls loop muted playsinline preload="metadata"></video>
-      <div class="vmeta"><span><b>map 16</b> · lakes · <b>builds a 7-plank bridge</b></span><span class="ok">✓ 110 steps</span></div></div>
     <div class="vcard"><video src="{{VID:ppo_obs_map3_rocky.mp4}}" controls loop muted playsinline preload="metadata"></video>
-      <div class="vmeta"><span><b>map 3</b> · rocky · mines 2</span><span class="ok">✓ 109 steps</span></div></div>
+      <div class="vmeta"><span><b>map 3</b> · rocky · mines 1</span><span class="ok">✓ 103 steps</span></div></div>
     <div class="vcard"><video src="{{VID:ppo_obs_map7_balanced.mp4}}" controls loop muted playsinline preload="metadata"></video>
-      <div class="vmeta"><span><b>map 7</b> · balanced · no tools</span><span class="ok">✓ 93 steps</span></div></div>
+      <div class="vmeta"><span><b>map 7</b> · balanced · no tools</span><span class="ok">✓ 91 steps</span></div></div>
+    <div class="vcard"><video src="{{VID:ppo_obs_map16_lakes.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 16</b> · lakes · <b>builds a 6-plank bridge</b></span><span class="ok">✓ 120 steps</span></div></div>
   </div>
-
   <div class="vgrid vhide" data-panel="dreamer-obs">
-    <div class="vcard"><video src="{{VID:dreamer_obs_map16_lakes.mp4}}" controls loop muted playsinline preload="metadata"></video>
-      <div class="vmeta"><span><b>map 16</b> · lakes · <b>builds a 7-plank bridge</b></span><span class="ok">✓ 81 steps</span></div></div>
     <div class="vcard"><video src="{{VID:dreamer_obs_map3_rocky.mp4}}" controls loop muted playsinline preload="metadata"></video>
-      <div class="vmeta"><span><b>map 3</b> · rocky · <b>mines 14</b></span><span style="color:var(--flag);font-weight:600">✗ wrong door, 88 steps</span></div></div>
+      <div class="vmeta"><span><b>map 3</b> · rocky · <b>mines 13</b></span><span class="ok">✓ 93 steps</span></div></div>
     <div class="vcard"><video src="{{VID:dreamer_obs_map7_balanced.mp4}}" controls loop muted playsinline preload="metadata"></video>
       <div class="vmeta"><span><b>map 7</b> · balanced · no tools</span><span class="ok">✓ 82 steps</span></div></div>
+    <div class="vcard"><video src="{{VID:dreamer_obs_map16_lakes.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 16</b> · lakes · <b>builds a 7-plank bridge</b></span><span class="ok">✓ 81 steps</span></div></div>
   </div>
-
   <div class="vgrid vhide" data-panel="storm-obs">
-    <div class="vcard"><video src="{{VID:storm_obs_map16_lakes.mp4}}" controls loop muted playsinline preload="metadata"></video>
-      <div class="vmeta"><span><b>map 16</b> · lakes · <b>builds a 7-plank bridge</b></span><span class="ok">✓ 131 steps</span></div></div>
     <div class="vcard"><video src="{{VID:storm_obs_map3_rocky.mp4}}" controls loop muted playsinline preload="metadata"></video>
       <div class="vmeta"><span><b>map 3</b> · rocky · mines 1</span><span class="ok">✓ 176 steps</span></div></div>
     <div class="vcard"><video src="{{VID:storm_obs_map7_balanced.mp4}}" controls loop muted playsinline preload="metadata"></video>
-      <div class="vmeta"><span><b>map 7</b> · balanced · no tools</span><span class="ok">✓ 105 steps</span></div></div>
+      <div class="vmeta"><span><b>map 7</b> · balanced · no tools</span><span class="ok">✓ 117 steps</span></div></div>
+    <div class="vcard"><video src="{{VID:storm_obs_map16_lakes.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>map 16</b> · lakes · <b>builds a 7-plank bridge</b></span><span class="ok">✓ 106 steps</span></div></div>
   </div>
+<!-- END:obs-videos -->
 </div>
 
 <div class="note warn">
-  <span class="h">A caught failure</span>
-  Dreamer's <b>map 3</b> clip is the one failure in this set, and it is instructive. On a rocky
-  map it tunnels straight through the ridge — 14 mine actions, the most aggressive tool use of
-  any clip — arrives at the fork fast (88 steps, the shortest run on that map), and then takes the
-  <em>wrong</em> door. Speed and tool skill are intact; the belief is what slipped. This is the
-  shape of essentially all residual error in Table 4: not lost agents, but confident agents
-  arriving at the fork with the wrong memory.
+  <span class="h">What a failure looks like, and why none is shown here</span>
+  These nine clips are seeded rollouts, and in this particular set all nine reach the correct
+  door — which is what a 98–99 % agent should mostly do. That makes them a poor illustration of
+  the failure mode, so it is worth stating rather than staging: the residual error in Table 4 is
+  almost entirely <em>wrong doors</em>, not lost or stuck agents. A failing episode looks like a
+  successful one until the final few steps — the agent tunnels or bridges competently, arrives at
+  the fork on time, and then turns the wrong way. Speed and tool use are intact; the belief is
+  what slipped. Section 7.3 quantifies this: wrong-door episodes are systematically the ones where
+  the agent saw less evidence for the true map type.
 </div>
 
 <figure class="plate-wide">
@@ -893,6 +895,22 @@ on its own dynamics, decoding every imagined latent back into a 21&times;21 obse
   slower decay than Dreamer's on this episode, consistent with attention re-reading the whole
   context at every imagined step rather than threading it through a single recurrent state.</figcaption>
 </figure>
+
+<div class="vwrap">
+  <div class="vgrid">
+    <div class="vcard"><video src="{{VID:dream_dreamer.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>DreamerV3</b> · 24 real steps, then 18 imagined</span><span class="ok">90 % → 56 %</span></div></div>
+    <div class="vcard"><video src="{{VID:dream_storm.mp4}}" controls loop muted playsinline preload="metadata"></video>
+      <div class="vmeta"><span><b>STORM</b> · 24 real steps, then 18 imagined</span><span class="ok">82 % → 63 %</span></div></div>
+  </div>
+  <p class="small"><b>Videos 28–29 · the same thing, moving.</b> Each clip opens as an ordinary
+  rollout with <em>both</em> panes showing the same real observation, step by step. At the cut the
+  right pane stops receiving observations and runs on the model's own dynamics alone. The two
+  panes therefore begin identical and drift apart in front of you — which is the one thing a row
+  of stills cannot show, since the interesting quantity is <em>when</em> the divergence starts and
+  how fast it grows. Watch the bridge appear in the right pane at roughly the moment it appears in
+  the left.</p>
+</div>
 
 <p>The detail worth pausing on: this is a <em>lakes</em> map, and in both dreams the agent
 imagines itself <b>laying a bridge across the water</b> &mdash; the brown plank line that grows

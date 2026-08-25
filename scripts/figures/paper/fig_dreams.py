@@ -13,8 +13,8 @@ Output per agent:
 The comparison is the point: the top row is what really happened, the bottom row
 is what the model believed would happen having last seen the context frame.
 
-  PYTHONPATH=src:r2dreamer_model python scripts/figures/paper_dreams.py --agent dreamer
-  (from STORM_model/) PYTHONPATH=.:..:../src python ../scripts/figures/paper_dreams.py --agent storm
+  PYTHONPATH=src:r2dreamer_model python scripts/figures/paper/fig_dreams.py --agent dreamer
+  (from STORM_model/) PYTHONPATH=.:..:../src python ../scripts/figures/paper/fig_dreams.py --agent storm
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ import text as TXT  # noqa: E402
 from cogniland.bridge_tunnel import tiles as T  # noqa: E402
 from cogniland.bridge_tunnel.env import BridgeTunnelEnv  # noqa: E402
 from paper_rollouts import FORKWALL_KWARGS  # noqa: E402
-from paper_task_figs import obs_rgb  # noqa: E402
+from fig_task import obs_rgb  # noqa: E402
 from paper_rollouts_textured import load_sprites  # noqa: E402
 
 VIEW, NTILE, NSCAL = 21, 9, 5
@@ -239,6 +239,75 @@ def make_fig(agent, real, truth, dream, out, context, stride=3):
     return agree
 
 
+def make_video(agent, real, truth, dream, agree, out, context, fps=4, tp=16):
+    """A rollout that turns into a dream.
+
+    The clip opens as an ordinary episode: both panes show the same real
+    observation, step by step. At the cut the right pane stops receiving
+    observations and runs on the model's own dynamics, so the two panes start
+    identical and visibly drift apart. That reads far better than a row of
+    stills, which cannot show the moment the divergence begins.
+    """
+    import imageio.v2 as imageio
+    pygame.init()
+    if pygame.display.get_surface() is None:
+        pygame.display.set_mode((1, 1))
+    sprites = load_sprites(tp)
+    V = real[-1].shape[0]
+    pane, pad, hud = V * tp, 12, 50
+    W, H = pad * 3 + pane * 2, hud + pane + 30
+    fnt = pygame.font.SysFont("dejavusans", 15)
+    fnt_s = pygame.font.SysFont("dejavusans", 11)
+    surf = pygame.Surface((W, H))
+    INK, DIM = (232, 236, 226), (140, 152, 138)
+    LIVE, DREAM = (110, 190, 130), (232, 170, 90)
+
+    def frame(img_l, img_r, title, sub, lab_r, col_r, flash=False):
+        surf.fill((14, 17, 14))
+        surf.blit(fnt.render(title, True, INK), (pad, 8))
+        surf.blit(fnt_s.render(sub, True, DIM), (pad, 30))
+        for x, im, col in ((pad, img_l, LIVE), (pad * 2 + pane, img_r, col_r)):
+            s2 = pygame.surfarray.make_surface(np.transpose(im, (1, 0, 2)))
+            surf.blit(s2, (x, hud))
+            pygame.draw.rect(surf, col, (x - 2, hud - 2, pane + 4, pane + 4),
+                             3 if flash else 1)
+        surf.blit(fnt_s.render("reality", True, LIVE), (pad, hud + pane + 7))
+        surf.blit(fnt_s.render(lab_r, True, col_r), (pad * 2 + pane, hud + pane + 7))
+        return np.transpose(pygame.surfarray.array3d(surf), (1, 0, 2)).copy()
+
+    frames = []
+    n = len(real)
+    # phase 1 -- an ordinary rollout, both panes fed the same observations
+    for t, obs in enumerate(real):
+        img = obs_rgb(obs, 3, sprites, tp)
+        frames.append(frame(img, img,
+                            f"{agent.upper()} — real rollout",
+                            f"step {t + 1} of {n} · the model is still observing",
+                            "model input", LIVE))
+    # the cut -- hold on the last real frame and say what is about to happen
+    img = obs_rgb(real[-1], 3, sprites, tp)
+    for k in range(fps * 2):
+        frames.append(frame(img, img, f"{agent.upper()} — observations stop here",
+                            "from now the right pane runs on the model's own dynamics",
+                            "imagination begins", DREAM, flash=(k // 2) % 2 == 0))
+    # phase 2 -- reality continues; the right pane is imagined
+    for i in range(len(dream)):
+        frames.append(frame(
+            obs_rgb(truth[i], 3, sprites, tp), obs_rgb(dream[i], 3, sprites, tp),
+            f"{agent.upper()} — dreaming, +{i + 1}",
+            f"no observations for {i + 1} step{'s' if i else ''} · "
+            f"tile agreement {agree[i] * 100:.0f}%",
+            "dream", DREAM))
+    frames += [frames[-1]] * (fps * 2)
+
+    mp4 = out / "videos_textured" / f"dream_{agent}.mp4"
+    mp4.parent.mkdir(parents=True, exist_ok=True)
+    imageio.mimwrite(mp4, frames, fps=fps, codec="libx264",
+                     output_params=["-pix_fmt", "yuv420p", "-crf", "24"],
+                     macro_block_size=1)
+    print(f"  wrote {mp4.name}  ({n} real + {len(dream)} imagined steps)")
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--agent", required=True, choices=["dreamer", "storm"])
@@ -265,6 +334,7 @@ def main():
         real, truth, dream = dream_storm(rec, a.storm_bundle, a.storm_step,
                                          a.context, a.horizon)
     agree = make_fig(a.agent, real, truth, dream, out, a.context)
+    make_video(a.agent, real, truth, dream, agree, out, a.context)
     (out / f"dreams_{a.agent}.json").write_text(json.dumps(
         {"map_id": a.map_id, "context": a.context, "agreement": agree}))
     print(f"{a.agent}: {len(dream)} imagined steps, tile agreement "

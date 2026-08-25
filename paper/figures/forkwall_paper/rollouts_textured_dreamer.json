@@ -2,24 +2,14 @@
  {
   "agent": "DREAMER",
   "category": "rocky",
-  "success": false,
-  "steps": 88,
-  "ret": 0.2,
-  "builds": 0,
-  "mines": 14,
-  "frames": 214,
-  "map_id": 3
- },
- {
-  "agent": "DREAMER",
-  "category": "lakes",
   "success": true,
-  "steps": 81,
-  "ret": 3.36,
-  "builds": 7,
-  "mines": 0,
-  "frames": 151,
-  "map_id": 16
+  "steps": 93,
+  "ret": 3.375,
+  "builds": 0,
+  "mines": 13,
+  "frames": 107,
+  "map_id": 3,
+  "seed": 0
  },
  {
   "agent": "DREAMER",
@@ -30,6 +20,19 @@
   "builds": 0,
   "mines": 0,
   "frames": 96,
-  "map_id": 7
+  "map_id": 7,
+  "seed": 0
+ },
+ {
+  "agent": "DREAMER",
+  "category": "lakes",
+  "success": true,
+  "steps": 81,
+  "ret": 3.36,
+  "builds": 7,
+  "mines": 0,
+  "frames": 95,
+  "map_id": 16,
+  "seed": 0
  }
 ]

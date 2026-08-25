@@ -109,6 +109,12 @@ TARGETS: dict[str, dict] = {
                           note="Fig 19 plate + statistics"),
 
     # ── tables and the final document ───────────────────────────────────
+    "video-captions": dict(env="crusoe", script="scripts/figures/paper_video_captions.py",
+                           outputs=[],
+                           inputs=["rollouts_textured_ppo.json",
+                                   "rollouts_textured_dreamer.json",
+                                   "rollouts_textured_storm.json"],
+                           note="§4.1 video captions, generated from the rollout JSONs"),
     "tables": dict(env="crusoe", script="scripts/figures/paper_results_table.py",
                    outputs=[], inputs=["eval_all.json"],
                    note="Tables 4-5 written into the paper source"),
