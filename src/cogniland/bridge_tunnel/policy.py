@@ -30,7 +30,7 @@ class PPOGRUPolicy(nn.Module):
     def __init__(self, obs_space, num_actions: int = 6, gru_hidden: int = 128,
                  embed_dim: int = 256, tile_embed_dim: int = 16,
                  num_tile_classes: int = NUM_TILES, obs_encoding: str = "embed",
-                 belief_classes: int = 0):
+                 belief_classes: int = 0, recurrent: bool = True):
         super().__init__()
         V, _ = obs_space["minimap"].shape
         n_scalars = obs_space["scalars"].shape[0]
@@ -55,12 +55,21 @@ class PPOGRUPolicy(nn.Module):
         self.embed = nn.Sequential(
             layer_init(nn.Linear(n_flat + n_scalars, embed_dim)), nn.ReLU(),
         )
-        self.gru = nn.GRU(embed_dim, gru_hidden, batch_first=False)
-        for name, p in self.gru.named_parameters():
-            if "weight" in name:
-                nn.init.orthogonal_(p, 1.0)
-            elif "bias" in name:
-                nn.init.constant_(p, 0.0)
+        # recurrent=False gives a memoryless control of matched head width: the
+        # GRU is replaced by a per-step linear+ReLU with no carried state, so the
+        # only difference from the recurrent agent is the memory itself.
+        self.recurrent = recurrent
+        if recurrent:
+            self.gru = nn.GRU(embed_dim, gru_hidden, batch_first=False)
+            for name, p in self.gru.named_parameters():
+                if "weight" in name:
+                    nn.init.orthogonal_(p, 1.0)
+                elif "bias" in name:
+                    nn.init.constant_(p, 0.0)
+            self.ff = None
+        else:
+            self.gru = None
+            self.ff = nn.Sequential(layer_init(nn.Linear(embed_dim, gru_hidden)), nn.ReLU())
         self.actor = layer_init(nn.Linear(gru_hidden, num_actions), std=0.01)
         self.critic = layer_init(nn.Linear(gru_hidden, 1), std=1.0)
         # auxiliary belief head: classifies the map category from the recurrent
@@ -91,6 +100,11 @@ class PPOGRUPolicy(nn.Module):
         T, B = obs_seq[any_key].shape[:2]
         flat = {k: v.flatten(0, 1) for k, v in obs_seq.items()}
         feat = self._encode(flat).reshape(T, B, -1)
+        if not self.recurrent:
+            # no carried state; the returned hidden is a placeholder of the
+            # right shape so callers need no special case
+            out = self.ff(feat.reshape(T * B, -1)).reshape(T, B, -1)
+            return out, hidden
         h = hidden
         outs = []
         for t in range(T):
@@ -133,10 +147,11 @@ class PPOGRUPolicy(nn.Module):
         else:
             n_tiles = int(sd["cnn.0.weight"].shape[1]) - 2; enc = "onehot"
         n_act = int(sd["actor.weight"].shape[0])
+        recurrent = "gru.weight_ih_l0" in sd
         bc = int(sd["belief.weight"].shape[0]) if "belief.weight" in sd else 0
         pol = cls(obs_space, num_actions=n_act, gru_hidden=a.get("gru_hidden", 128),
                   embed_dim=a.get("embed_dim", 256), num_tile_classes=n_tiles,
-                  obs_encoding=enc, belief_classes=bc).to(device)
+                  obs_encoding=enc, belief_classes=bc, recurrent=recurrent).to(device)
         pol.load_state_dict(sd); pol.eval()
         return pol
 

@@ -214,6 +214,10 @@ def main():
     parser.add_argument("--target-kl", type=float, default=None)
     # network
     parser.add_argument("--gru-hidden", type=int, default=128)
+    parser.add_argument("--no-recurrence", action="store_true",
+                        help="feed-forward memoryless control: replace the GRU with a "
+                             "per-step linear+ReLU of matched width. The navigation-only "
+                             "baseline for the terminal decision.")
     parser.add_argument("--embed-dim", type=int, default=256)
     # infra
     parser.add_argument("--seed", type=int, default=0)
@@ -287,6 +291,7 @@ def main():
         gru_hidden=args.gru_hidden, embed_dim=args.embed_dim,
         obs_encoding=args.obs_encoding,
         belief_classes=(3 if use_belief else 0),
+        recurrent=not args.no_recurrence,
     ).to(device)
     from cogniland.bridge_tunnel.mapgen import CATEGORIES   # ("balanced","lakes","rocky")
     BELIEF2I = {c: i for i, c in enumerate(CATEGORIES)}      # match jax env _CAT_TO_INT
