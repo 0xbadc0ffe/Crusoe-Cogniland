@@ -259,3 +259,9 @@ STORM_model/.venv/
 STORM_model/outputs/
 r2dreamer_model/runs/
 scripts/bridge_tunnel/slurm/logs/
+
+# large activation dumps: rebuild with scripts/mechinterp/build_belief_dataset.py
+activation_datasets/cogniland_belief/*.npy
+
+outputs/ppo_noaux/
+activation_datasets/cogniland_belief/_aux_backup/
