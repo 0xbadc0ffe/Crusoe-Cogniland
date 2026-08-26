@@ -166,6 +166,9 @@ class STORM2(ContinualAgent):
             'train': jax.jit(self._select_action_jit, static_argnums=(5,)),
             'eval': jax.jit(self._select_action_jit, static_argnums=(5,)),
         }
+        # the activation-dataset builder calls this every step; unjitted it costs
+        # a full transformer forward in Python and dominates the build
+        self._features_jit = jax.jit(self._features_core)
         self._train_step_jit = jax.jit(self._train_step_core)
 
     # ── init ─────────────────────────────────────────────────────────────
@@ -539,6 +542,53 @@ class STORM2(ContinualAgent):
         )
         return action_idx, AgentState(train_state=agent_state.train_state,
                                       runtime=new_runtime)
+
+    def features(self, agent_state, obs_dict, is_first=None):
+        """(z_flat, h, post_logits) for the CURRENT observation, without acting.
+
+        `_select_action_jit` computes all three and then discards them; the
+        activation-dataset builder needs them. This mirrors that code path
+        exactly rather than reconstructing the state afterwards, so the vectors
+        recorded are the ones the actor actually consumed.
+        """
+        params = agent_state.train_state.params
+        wm_state = agent_state.runtime.wm_state
+        batch_size = next(iter(obs_dict.values())).shape[0]
+        if wm_state is None or jax.tree.leaves(wm_state)[0].shape[0] != batch_size:
+            wm_state = self.initial_wm_state(batch_size)
+        if is_first is None:
+            is_first = jnp.zeros(batch_size, dtype=bool)
+        return self._features_jit(params, wm_state, obs_dict,
+                                  jnp.reshape(is_first, (batch_size,)))
+
+    def _features_core(self, params, wm_state, obs_dict, m):
+        wm_params = params.wm
+        batch_size = next(iter(obs_dict.values())).shape[0]
+        wm_state = Storm2State(
+            z_ctx=jnp.where(m[:, None, None], 0.0, wm_state.z_ctx),
+            a_ctx=jnp.where(m[:, None], 0, wm_state.a_ctx),
+            ctx_len=jnp.where(m, 0, wm_state.ctx_len),
+        )
+        obs_in = {}
+        for key, v in obs_dict.items():
+            if key in self.obs_space and len(self.obs_space[key]) == 3 and v.dtype == jnp.uint8:
+                v = v.astype(jnp.float32) / 255.0
+            obs_in[key] = v
+        embed = self._encode(wm_params, obs_in)
+        post_logits = self._post_logits(wm_params, embed)
+        _, z_flat = self._sample_z(post_logits, None)      # mode, not a sample
+
+        W = self.env_context
+        ctx_len = wm_state.ctx_len
+        causal = jnp.tril(jnp.ones((W, W), dtype=bool))
+        key_valid = jnp.arange(W)[None, None, :] < ctx_len[:, None, None]
+        mask = causal[None] & key_valid
+        feats = self._transformer_fwd(wm_params, wm_state.z_ctx, wm_state.a_ctx, mask)
+        last_idx = jnp.maximum(ctx_len - 1, 0)
+        h = jnp.take_along_axis(feats, last_idx[:, None, None].repeat(feats.shape[-1], -1),
+                                axis=1)[:, 0]
+        h = jnp.where((ctx_len > 0)[:, None], h, 0.0)
+        return z_flat, h, post_logits
 
     def select_action(self, state, obs, rng, is_first=None, prev_action=None,
                       training=False):

@@ -100,21 +100,46 @@ def make_ppo(ckpt_path, sampled=True):
         h = torch.zeros(1, 1, policy.gru_hidden)
         h_prev[0] = h
 
+    hook = [None]        # optional intervention on the GRU state, see set_hook
+    step = [0]
+
+    def set_hook(fn):
+        """fn(h_np, t, info) -> h_np, applied to the GRU state each step BEFORE
+        the action is chosen, so the intervention actually affects behaviour."""
+        hook[0] = fn
+        step[0] = 0
+
     def act(obs, done):
         nonlocal h
         with torch.no_grad():
             t = {k: torch.as_tensor(np.asarray(v))[None] for k, v in obs.items()}
-            a, _, _, _, h = policy.get_action_and_value(t, h, torch.zeros(1))
-            if not sampled:                       # greedy: argmax of the logits
+            if hook[0] is None:
+                a, _, _, _, h = policy.get_action_and_value(t, h, torch.zeros(1))
+                if not sampled:                   # greedy: argmax of the logits
+                    obs_seq = {k: v.unsqueeze(0) for k, v in t.items()}
+                    gru_out, _ = policy._gru_forward(obs_seq, torch.zeros(1, 1), h_prev[0])
+                    logits, _ = policy._heads(gru_out.squeeze(0))
+                    a = logits.argmax(-1)
+            else:
+                # split the forward pass so the edit lands between the GRU and
+                # the heads, and is carried forward by the recurrence
                 obs_seq = {k: v.unsqueeze(0) for k, v in t.items()}
-                gru_out, _ = policy._gru_forward(obs_seq, torch.zeros(1, 1), h_prev[0])
-                logits, _ = policy._heads(gru_out.squeeze(0))
-                a = logits.argmax(-1)
+                _, h_new = policy._gru_forward(obs_seq, torch.zeros(1, 1), h)
+                edited = hook[0](h_new.numpy().reshape(-1).astype(np.float32),
+                                 step[0], {})
+                h = torch.as_tensor(np.asarray(edited, dtype=np.float32)).reshape(h_new.shape)
+                logits, _ = policy._heads(h.squeeze(0))
+                a = (torch.distributions.Categorical(logits=logits).sample()
+                     if sampled else logits.argmax(-1))
+        step[0] += 1
         h_prev[0] = h
         return int(a.item())
+    act.set_hook = set_hook
 
     # expose the carried state so evidence-integration analyses can read it
     act.get_state = lambda: h.detach().cpu().numpy().reshape(-1)
+    # uniform accessor used by the activation-dataset builder
+    act.get_features = lambda: {"h": h.detach().cpu().numpy().reshape(-1).astype(np.float16)}
     return act, reset
 
 
@@ -145,6 +170,21 @@ def make_storm(bundle, step, env_context=128, sampled=True):
     rng = jax.random.PRNGKey(0)
     prev = jnp.zeros((1, agent.action_space))
     first = True
+    _last = [None]          # obs + is_first of the step about to be taken
+
+    def set_seed(sd):
+        """Reseed STORM's PRNG for the next episode.
+
+        Two traps here. STORM samples through its own JAX key, which numpy and
+        torch seeding do not touch; and `agent.act` reads that key from
+        `runtime.rng`, ignoring the one passed to `select_action`. So the key
+        that actually matters lives in the agent state and must be reset there,
+        otherwise it advances across episodes and no episode can be replayed on
+        its own."""
+        nonlocal state, rng
+        rng = jax.random.PRNGKey(int(sd))
+        state = state.replace(
+            runtime=state.runtime.replace(rng=jax.random.PRNGKey(int(sd))))
 
     def reset():
         nonlocal state, prev, first
@@ -162,12 +202,27 @@ def make_storm(bundle, step, env_context=128, sampled=True):
         vec = np.concatenate([oh.reshape(-1),
                               np.asarray(obs["scalars"], dtype=np.float32)])
         rng, ar = jax.random.split(rng)
+        obs_in = {"vector": jnp.asarray(vec)[None]}
+        # capture the state BEFORE acting: select_action appends z_t to the
+        # rolling context, so afterwards the transformer would see one token too
+        # many and h would not be the vector the actor actually consumed.
+        _last[0] = (state, obs_in, jnp.asarray([first]))
         a, state = agent.select_action(
-            state, {"vector": jnp.asarray(vec)[None]}, ar,
+            state, obs_in, ar,
             is_first=jnp.asarray([first]), prev_action=prev, training=sampled)
         prev = jax.nn.one_hot(a, agent.action_space)
         first = False
         return int(a[0])
+
+    def _feats():
+        """z and h exactly as the actor consumed them for the last action."""
+        st_before, obs_in, isf = _last[0]
+        z, h, _ = agent.features(st_before, obs_in, is_first=isf)
+        z = np.asarray(z).reshape(agent.stoch_dim, agent.classes)
+        return {"h": np.asarray(h).reshape(-1).astype(np.float16),
+                "stoch_idx": z.argmax(-1).astype(np.int8)}
+    act.get_features = _feats
+    act.set_seed = set_seed
     return act, reset
 
 
@@ -227,6 +282,13 @@ def make_dreamer(ckpt_path, device="cuda", model_size="size25M", sampled=False):
 
     # the RSSM deterministic path is the only part carried across time
     act.get_state = lambda: st[0]["deter"].detach().cpu().numpy().reshape(-1)
+
+    def _feats():
+        d = st[0]["deter"].detach().cpu().numpy().reshape(-1).astype(np.float16)
+        z = st[0]["stoch"].detach().cpu().numpy()          # (1, S, K) one-hot
+        # store the class index per slot: 32 int8 instead of 768 float16, lossless
+        return {"deter": d, "stoch_idx": z.reshape(-1, z.shape[-1]).argmax(-1).astype(np.int8)}
+    act.get_features = _feats
     return act, reset
 
 
