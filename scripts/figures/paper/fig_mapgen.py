@@ -278,33 +278,24 @@ def fig_quantile(out):
 # ── 6 · the whole pipeline on one real map ───────────────────────────────
 
 def fig_pipeline(out):
+    # All six stages come from ONE real map. generate_commit_map may resample
+    # (it bumps the seed on a failed winnability guard), so re-deriving the early
+    # stages from the requested seed would show a DIFFERENT map than the final
+    # one -- the bug this replaces. Instead we capture the intermediate arrays
+    # from the winning attempt, so every stage is the same map evolving.
     seed, cat = 4, "lakes"
-    wf, rf = category_fracs(cat)
-    sim_h = opensimplex.OpenSimplex(seed=seed * 7 + 11)
-    sim_wr = opensimplex.OpenSimplex(seed=seed * 7 + 12)
-    sim_wc = opensimplex.OpenSimplex(seed=seed * 7 + 13)
-    rng = np.random.default_rng(seed * 911 + 17)
-    base = max(6.0, max(H, W) / 4.5)
-    octs = {base: 1., base / 2: .5, base / 4: .25, base / 8: .125, base / 16: .0625}
-    h0 = _simplex_field_rect(sim_h, H, W, octs)
-    wr = _simplex_field_rect(sim_wr, H, W, {base: 1., base / 2: .5})
-    wc = _simplex_field_rect(sim_wc, H, W, {base: 1., base / 2: .5})
-    rr = np.arange(H, dtype=float)[:, None]; cc = np.arange(W, dtype=float)[None, :]
-    RR = np.broadcast_to(rr, (H, W)); CC = np.broadcast_to(cc, (H, W))
-    aw = max(H, W) * .10
-    hw = map_coordinates(h0, [np.clip(RR + aw * wr, 0, H - 1),
-                              np.clip(CC + aw * wc, 0, W - 1)], order=1, mode="reflect")
-    hov = hw.copy()
-    for _ in range(3):
-        r, c = rng.uniform(.14, .86) * H, rng.uniform(.14, .86) * W
-        hov -= 1.3 * _disk_field(rr, cc, r, c, 64 * .06, 2.0)
-    for _ in range(3):
-        r, c = rng.uniform(.14, .86) * H, rng.uniform(.14, .86) * W
-        hov += 1.3 * _massif_field(rr, cc, r, c, 64 * .05, 4, rng)
-    thr = np.zeros((H, W), int)
-    thr[hov < np.quantile(hov, wf)] = 1
-    thr[hov > np.quantile(hov, 1 - rf)] = 2
-    final = generate_commit_map(seed=seed, category=cat, **FORK_KW)
+    cap: dict = {}
+    final = generate_commit_map(seed=seed, category=cat, capture=cap, **FORK_KW)
+    h0, hw, hov, thr = cap["height0"], cap["warped"], cap["overlaid"], cap["tiles"]
+
+    # stage 5: the finished natural terrain with the fork gate stripped off,
+    # so it reads as "before the gate" against stage 6's "with the gate".
+    GRASS, TARGET, TREE = 0, 4, 6
+    stage5 = final.terrain.copy()
+    if final.wall_col is not None:
+        wc = int(final.wall_col)
+        stage5[:, wc] = np.where(stage5[:, wc] == TREE, GRASS, stage5[:, wc])
+    stage5[:, W - 1] = np.where(stage5[:, W - 1] == TARGET, GRASS, stage5[:, W - 1])
 
     panels = [(h0, "1 · fractal heightmap", "field"),
               (hw, "2 · domain-warped", "field"),
@@ -312,9 +303,6 @@ def fig_pipeline(out):
               (thr, "4 · quantile threshold → tiles", "tiles"),
               (None, "5 · fringes, edge bands, trees", "tiles"),
               (None, "6 · fork wall, passage, doors", "tiles")]
-    stage5 = final.terrain.copy()
-    stage5[:, 64 - 1 - 1] = np.where(stage5[:, 64 - 1 - 1] == 6, 0, stage5[:, 64 - 1 - 1])
-    stage5[:, 63] = np.where(stage5[:, 63] == 4, 0, stage5[:, 63])
 
     with plt.rc_context(PLT_RC):
         fig, ax = plt.subplots(2, 3, figsize=(13.6, 3.9))

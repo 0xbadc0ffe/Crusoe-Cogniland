@@ -101,6 +101,7 @@ def make_ppo(ckpt_path, sampled=True):
         h_prev[0] = h
 
     hook = [None]        # optional intervention on the GRU state, see set_hook
+    lbias = [None]       # optional per-step bias on the action logits
     step = [0]
 
     def set_hook(fn):
@@ -109,11 +110,18 @@ def make_ppo(ckpt_path, sampled=True):
         hook[0] = fn
         step[0] = 0
 
+    def set_logit_bias(fn):
+        """fn(t) -> (6,) array added to the action logits at step t, or None.
+        Composable with set_hook; the biased path reproduces the plain one
+        exactly when the bias is zero (same split forward, same sampling)."""
+        lbias[0] = fn
+        step[0] = 0
+
     def act(obs, done):
         nonlocal h
         with torch.no_grad():
             t = {k: torch.as_tensor(np.asarray(v))[None] for k, v in obs.items()}
-            if hook[0] is None:
+            if hook[0] is None and lbias[0] is None:
                 a, _, _, _, h = policy.get_action_and_value(t, h, torch.zeros(1))
                 if not sampled:                   # greedy: argmax of the logits
                     obs_seq = {k: v.unsqueeze(0) for k, v in t.items()}
@@ -125,16 +133,26 @@ def make_ppo(ckpt_path, sampled=True):
                 # the heads, and is carried forward by the recurrence
                 obs_seq = {k: v.unsqueeze(0) for k, v in t.items()}
                 _, h_new = policy._gru_forward(obs_seq, torch.zeros(1, 1), h)
-                edited = hook[0](h_new.numpy().reshape(-1).astype(np.float32),
-                                 step[0], {})
-                h = torch.as_tensor(np.asarray(edited, dtype=np.float32)).reshape(h_new.shape)
+                if hook[0] is not None:
+                    edited = hook[0](h_new.numpy().reshape(-1).astype(np.float32),
+                                     step[0], {})
+                    h = torch.as_tensor(np.asarray(edited, dtype=np.float32)).reshape(h_new.shape)
+                else:
+                    h = h_new
                 logits, _ = policy._heads(h.squeeze(0))
+                if lbias[0] is not None:
+                    b = lbias[0](step[0])
+                    if b is not None:
+                        logits = logits + torch.as_tensor(
+                            np.asarray(b, dtype=np.float32))[None]
                 a = (torch.distributions.Categorical(logits=logits).sample()
                      if sampled else logits.argmax(-1))
         step[0] += 1
         h_prev[0] = h
         return int(a.item())
     act.set_hook = set_hook
+    act.set_logit_bias = set_logit_bias
+    act.policy = policy      # exposed for gradient-based steering hooks
 
     # expose the carried state so evidence-integration analyses can read it
     act.get_state = lambda: h.detach().cpu().numpy().reshape(-1)
@@ -193,6 +211,46 @@ def make_storm(bundle, step, env_context=128, sampled=True):
         prev = jnp.zeros((1, agent.action_space))
         first = True
 
+    hook = [None]        # steering payload: dict(v=unit vec, gate=fn(t)->(on, c, rel))
+    step = [0]
+
+    def set_hook(payload):
+        """LLM-style per-step steering on STORM's h (the transformer output the
+        actor consumes). h is recomputed from the (z,a) window every step, so
+        the edit is re-applied each step, gated per step by the payload:
+        payload = {"v": (D,) unit direction,
+                   "gate": fn(t) -> (on: bool, c: float, rel: bool)}
+        where the h coordinate along v is set to c (rel=False) or displaced by
+        c (rel=True) whenever on. None clears (the plain jit path is used)."""
+        if payload is not None and callable(payload):
+            raise SystemExit("storm: set_hook takes a payload dict "
+                             "{'v', 'gate'}, not a raw h-editing function "
+                             "(h is recomputed inside jit each step)")
+        hook[0] = payload
+        step[0] = 0
+
+    slbias = [None]      # optional per-step actor-logit bias fn(t)->(A,) or None
+    _zero_v = np.zeros(int(agent.feat_dim), dtype=np.float32)
+
+    def set_logit_bias(fn):
+        """fn(t) -> (A,) added to the actor logits inside the steered jit.
+        Zero bias reproduces the plain path byte for byte (same Categorical
+        construction, same key). Composable with set_hook."""
+        slbias[0] = fn
+        step[0] = 0
+
+    key_mask = [None]    # fn(t) -> None | bool[W]: excise window tokens as keys
+
+    def set_key_mask(fn):
+        """Causal token-window ablation: fn(t) returns a bool keep-mask over
+        the W window positions (False = token excised in every layer/row), or
+        None for the plain path at that step. Mutually exclusive with
+        set_hook."""
+        if fn is not None and hook[0] is not None:
+            raise SystemExit("storm: set_key_mask and set_hook are exclusive")
+        key_mask[0] = fn
+        step[0] = 0
+
     def act(obs, done):
         nonlocal state, prev, rng, first
         view = int(np.asarray(obs["minimap"]).shape[0])
@@ -207,12 +265,35 @@ def make_storm(bundle, step, env_context=128, sampled=True):
         # rolling context, so afterwards the transformer would see one token too
         # many and h would not be the vector the actor actually consumed.
         _last[0] = (state, obs_in, jnp.asarray([first]))
-        a, state = agent.select_action(
-            state, obs_in, ar,
-            is_first=jnp.asarray([first]), prev_action=prev, training=sampled)
+        km = key_mask[0](step[0]) if key_mask[0] is not None else None
+        if hook[0] is not None or slbias[0] is not None:
+            if hook[0] is not None:
+                on, c, rel = hook[0]["gate"](step[0])
+                v = hook[0]["v"]
+            else:
+                on, c, rel, v = False, 0.0, False, _zero_v
+            lb = slbias[0](step[0]) if slbias[0] is not None else None
+            a, state = agent.act_steered(
+                state, obs_in, prev_action=prev, is_first=jnp.asarray([first]),
+                training=sampled, v=v, c=float(c),
+                on=bool(on), rel=bool(rel), lbias=lb)
+        elif km is not None:
+            a, state = agent.act_keymask(
+                state, obs_in, prev_action=prev, is_first=jnp.asarray([first]),
+                training=sampled, keep=np.asarray(km, bool)[None])
+        else:
+            a, state = agent.select_action(
+                state, obs_in, ar,
+                is_first=jnp.asarray([first]), prev_action=prev, training=sampled)
         prev = jax.nn.one_hot(a, agent.action_space)
         first = False
+        step[0] += 1
         return int(a[0])
+    act.set_hook = set_hook
+    act.set_logit_bias = set_logit_bias
+    act.agent = agent        # exposed for gradient-based steering hooks
+    act.last = _last         # (state, obs, is_first) BEFORE the last action:
+                             # the context an imagination rollout starts from
 
     def _feats():
         """z and h exactly as the actor consumed them for the last action."""
@@ -222,6 +303,16 @@ def make_storm(bundle, step, env_context=128, sampled=True):
         return {"h": np.asarray(h).reshape(-1).astype(np.float16),
                 "stoch_idx": z.argmax(-1).astype(np.int8)}
     act.get_features = _feats
+
+    def _attn():
+        """(attn [L,H,W,W] f32, ctx_len, h [512]) for the state the actor
+        consumed at the last action (same pre-act state as get_features)."""
+        st_before, obs_in, isf = _last[0]
+        _, h, attn, ctx_len = agent.attn_features(st_before, obs_in, is_first=isf)
+        return (np.asarray(attn)[:, 0], int(np.asarray(ctx_len).reshape(-1)[0]),
+                np.asarray(h).reshape(-1).astype(np.float32))
+    act.get_attn = _attn
+    act.set_key_mask = set_key_mask
     act.set_seed = set_seed
     return act, reset
 
@@ -261,10 +352,21 @@ def make_dreamer(ckpt_path, device="cuda", model_size="size25M", sampled=False):
     agent.eval()
     st = [agent.get_initial_state(1)]
     first = [True]
+    hook = [None]        # optional intervention on the carried deter state
+    step = [0]
 
     def reset():
         st[0] = agent.get_initial_state(1)
         first[0] = True
+        step[0] = 0
+
+    def set_hook(fn):
+        """fn(deter_np, t, info) -> deter_np, applied to the RSSM deterministic
+        state carried INTO step t, before the world-model update and the actor
+        read it — so the edit shapes both the posterior and the action, and is
+        carried forward by the recurrence. Mirrors the PPO hook contract."""
+        hook[0] = fn
+        step[0] = 0
 
     def act(obs, done):
         oh = np.zeros((view, view, n_tiles), dtype=np.float32)
@@ -275,10 +377,65 @@ def make_dreamer(ckpt_path, device="cuda", model_size="size25M", sampled=False):
         trans = TensorDict({
             "vector": torch.as_tensor(vec, device=device, dtype=torch.float32)[None],
             "is_first": torch.tensor([first[0]], device=device)}, batch_size=(1,))
+        if hook[0] is not None and not first[0]:
+            d = st[0]["deter"].detach().cpu().numpy().reshape(-1).astype(np.float32)
+            edited = np.asarray(hook[0](d, step[0], {}), dtype=np.float32)
+            st[0]["deter"] = torch.as_tensor(
+                edited, device=st[0]["deter"].device,
+                dtype=st[0]["deter"].dtype).reshape(st[0]["deter"].shape)
         with torch.no_grad():
             a, st[0] = agent.act(trans, st[0], eval=not sampled)
         first[0] = False
+        step[0] += 1
         return int(a.argmax(-1))
+    act.set_hook = set_hook
+
+    lbias = [None]
+
+    def set_logit_bias(fn):
+        """fn(t) -> (A,) numpy array added to the actor's logits at step t, or
+        None. Implemented by wrapping the frozen actor so the OneHotDist it
+        returns carries shifted logits; rsample is gumbel over .logits, so a
+        zero bias reproduces the plain path byte for byte (verified)."""
+        import types
+        # Dreamer is an nn.Module: plain attribute assignment of a function
+        # over a Module attribute raises, so go through object.__setattr__.
+        if not hasattr(agent, "_orig_frozen_actor"):
+            object.__setattr__(agent, "_orig_frozen_actor", agent._frozen_actor)
+        lbias[0] = fn
+        if fn is None:
+            object.__setattr__(agent, "_frozen_actor", agent._orig_frozen_actor)
+            return
+
+        class _Shifted:
+            def __init__(self, dist, b):
+                import torch as _t
+                self._d = dist
+                self.logits = dist.logits + _t.as_tensor(
+                    np.asarray(b, dtype=np.float32),
+                    device=dist.logits.device)[None]
+            @property
+            def mode(self):
+                import torch.nn.functional as F
+                import torch as _t
+                m = F.one_hot(_t.argmax(self.logits, -1), self.logits.shape[-1])
+                return m.detach() + self.logits - self.logits.detach()
+            def rsample(self, sample_shape=(), temperature=1.0):
+                import torch.nn.functional as F
+                return F.gumbel_softmax(self.logits, tau=temperature,
+                                        hard=True, dim=-1)
+
+        orig = agent._orig_frozen_actor
+
+        def patched(feat):
+            d = orig(feat)
+            b = lbias[0](step[0]) if lbias[0] is not None else None
+            return d if b is None else _Shifted(d, b)
+        object.__setattr__(agent, "_frozen_actor", patched)
+
+    act.set_logit_bias = set_logit_bias
+    act.agent = agent        # exposed for imagination-based (MPC) steering
+    act.state = st           # the live [TensorDict] cell, same reason
 
     # the RSSM deterministic path is the only part carried across time
     act.get_state = lambda: st[0]["deter"].detach().cpu().numpy().reshape(-1)

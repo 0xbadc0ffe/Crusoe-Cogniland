@@ -57,29 +57,47 @@ def episode_meta(agent, map_id, ds=DS):
     raise SystemExit(f"map_id {map_id} not in {agent}_episodes.csv")
 
 
-def replay(agent, map_id, hook=None, ds=DS, maps=None, device="cuda", seed=None):
+_AGENT_CACHE: dict = {}
+_MAPS_CACHE: dict = {}
+
+
+def _get_agent(agent, device):
+    """Construct each agent once and reuse it across replays. Safe because the
+    per-episode seeding (`np.random.seed` / `torch.manual_seed`) fully RESETS
+    the generators, so the post-seed RNG state is identical whether the
+    checkpoint was loaded just before or long before — the thing that matters
+    (and the reason construction must never happen AFTER seeding) is that no
+    RNG is consumed between the seed call and the rollout."""
+    key = (agent, device)
+    if key not in _AGENT_CACHE:
+        from paper_rollouts import make_dreamer, make_ppo, make_storm
+        c = CKPT[agent]
+        if agent == "ppo":
+            _AGENT_CACHE[key] = make_ppo(c["ckpt"], sampled=True)
+        elif agent == "storm":
+            _AGENT_CACHE[key] = make_storm(c["bundle"], c["step"], sampled=True)
+        else:
+            _AGENT_CACHE[key] = make_dreamer(c["ckpt"], device, c["size"], sampled=True)
+    return _AGENT_CACHE[key]
+
+
+def replay(agent, map_id, hook=None, ds=DS, maps=None, device="cuda", seed=None,
+           logit_bias=None):
     """Re-run one episode. `hook(feat, t, info) -> feat` intervenes on the
     carried state each step; return the input unchanged for a plain replay."""
     import pickle
     from cogniland.bridge_tunnel.env import BridgeTunnelEnv
-    from paper_rollouts import FORKWALL_KWARGS, make_dreamer, make_ppo, make_storm
+    from paper_rollouts import FORKWALL_KWARGS
 
     if seed is None:
         seed = int(episode_meta(agent, map_id, ds)["seed"])
     maps = maps or str(REPO / "data/bridge_tunnel/forkwall6k/test.pkl")
-    with open(maps, "rb") as fh:
-        rec = pickle.load(fh)[map_id]
+    if maps not in _MAPS_CACHE:
+        with open(maps, "rb") as fh:
+            _MAPS_CACHE[maps] = pickle.load(fh)
+    rec = _MAPS_CACHE[maps][map_id]
 
-    # Construct the agent BEFORE seeding, because the dataset builder does:
-    # loading a checkpoint consumes RNG, so seeding first leaves the generator
-    # in a different state and the replay silently diverges.
-    c = CKPT[agent]
-    if agent == "ppo":
-        act, reset = make_ppo(c["ckpt"], sampled=True)
-    elif agent == "storm":
-        act, reset = make_storm(c["bundle"], c["step"], sampled=True)
-    else:
-        act, reset = make_dreamer(c["ckpt"], device, c["size"], sampled=True)
+    act, reset = _get_agent(agent, device)
 
     np.random.seed(seed)
     try:
@@ -87,11 +105,21 @@ def replay(agent, map_id, hook=None, ds=DS, maps=None, device="cuda", seed=None)
         torch.manual_seed(seed)
     except Exception:
         pass
-    if hook is not None:
-        if not hasattr(act, "set_hook"):
-            raise SystemExit(f"{agent}: adapter has no set_hook(); steering "
-                             "is only wired for agents that expose it")
-        act.set_hook(hook)
+    if hook is not None and not hasattr(act, "set_hook"):
+        raise SystemExit(f"{agent}: adapter has no set_hook(); steering "
+                         "is only wired for agents that expose it")
+    if hasattr(act, "set_hook"):
+        act.set_hook(hook)      # ALWAYS set: the agent is cached across
+                                # replays, so a stale hook must be cleared
+                                # (set_hook(None) restores the plain path)
+    if hasattr(act, "set_logit_bias"):
+        act.set_logit_bias(None)    # same stale-state rule for the logit bias;
+                                    # campaigns that want one set it AFTER replay
+                                    # wiring via the logit_bias= argument
+    if logit_bias is not None:
+        if not hasattr(act, "set_logit_bias"):
+            raise SystemExit(f"{agent}: adapter has no set_logit_bias()")
+        act.set_logit_bias(logit_bias)
 
     if hasattr(act, "set_seed"):
         act.set_seed(seed)      # agents with their own PRNG (STORM)

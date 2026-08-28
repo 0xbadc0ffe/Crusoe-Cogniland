@@ -189,26 +189,19 @@ def analyse(rows):
         delta = (rock - water) / tot
         d = dict(n=len(sub), water_mean=float(water.mean()), rock_mean=float(rock.mean()),
                  delta_mean=float(delta.mean()), delta_sd=float(delta.std()))
-        if cat == "balanced":
-            # free choice: does the seen terrain still steer the door?
-            top = np.array([r["door"] == "top" for r in sub], float)
-            m = np.array([r["door"] in ("top", "bottom") for r in sub])
-            if m.sum() > 10 and 0 < top[m].sum() < m.sum():
-                w, b, mu, sd = logistic_fit(delta[m], top[m])
-                d.update(p_top=float(top[m].mean()),
-                         logit_w=float(w), auc=float(auc(delta[m], top[m])),
-                         spearman=spearman(delta[m], top[m]),
-                         curve=binned(delta[m], top[m]))
-        else:
-            # decisive: does mistaken evidence explain the wrong doors?
-            ok = np.array([r["correct"] for r in sub], float)
-            sign = +1.0 if cat == "rocky" else -1.0      # rocky->top, lakes->bottom
-            ev = sign * delta                            # evidence FOR the true type
-            d.update(p_correct=float(ok.mean()),
-                     ev_correct=float(ev[ok == 1].mean()),
-                     ev_wrong=float(ev[ok == 0].mean()) if (ok == 0).any() else None,
-                     auc=float(auc(ev, ok)), spearman=spearman(ev, ok),
-                     curve=binned(ev, ok))
+        # Uniform across biomes: does the seen rock-water surplus predict the top
+        # door? On balanced maps the choice is free, on lakes/rocky it is forced
+        # to bottom/top -- but the same evidence-integration curve should appear
+        # in every biome if the agent runs the circuit regardless of the reward.
+        top = np.array([r["door"] == "top" for r in sub], float)
+        m = np.array([r["door"] in ("top", "bottom") for r in sub])
+        d["p_correct"] = float(np.mean([r["correct"] for r in sub]))
+        if m.sum() > 10 and 0 < top[m].sum() < m.sum():
+            w, b, mu, sd = logistic_fit(delta[m], top[m])
+            d.update(p_top=float(top[m].mean()), logit_w=float(w),
+                     auc=float(auc(delta[m], top[m])),
+                     spearman=spearman(delta[m], top[m]),
+                     curve=binned(delta[m], top[m]))
         out[cat] = d
     return out
 
@@ -380,99 +373,32 @@ def plot(out):
           "axes.titlesize": 9.5, "axes.labelsize": 9}
     with plt.rc_context(rc):
         fig, axes = plt.subplots(1, 3, figsize=(13.2, 3.8))
-
-        # (a) balanced maps: the door is free -- does seen terrain still steer it?
-        ax = axes[0]
-        for ag in data:
-            st = stats[ag].get("balanced")
-            if not st or "curve" not in st:
-                continue
-            cur = np.array(st["curve"])
-            ax.plot(cur[:, 0], cur[:, 1], "o-", color=COL[ag], lw=1.7, ms=4.5,
-                    label=f"{LBL[ag]}   AUC {st['auc']:.2f}")
-            ax.axhline(st["p_top"], color=COL[ag], ls=":", lw=1, alpha=.7)
-        ax.axhline(.5, color="#9ca3af", ls="--", lw=1)
-        ax.set_title(TXT.FIG_EVIDENCE["free"], loc="left")
-        ax.set_xlabel(TXT.FIG_EVIDENCE["free_x"])
-        ax.set_ylabel(TXT.FIG_EVIDENCE["free_y"])
-        ax.set_ylim(-.02, 1.05)
-        ax.legend(frameon=False, fontsize=7.4, loc="upper left")
-        ax.grid(alpha=.25, lw=.5)
-        ax.annotate(TXT.FIG_EVIDENCE["free_note"],
-                    xy=(.98, .06), xycoords="axes fraction", fontsize=6.8,
-                    ha="right", color="#6b7280")
-
-        # (b) phase sweep. The story is the GAP between the real axis and the
-        #     shuffled-label null, so draw the null as a band and the effect on
-        #     top of it; decodability goes in as text since it is ~1 throughout.
-        ax = axes[1]
-        xs = np.arange(len(PHASES))
-        drawn = False
-        for ag in data:
-            sw = sweeps.get(ag) or {}
-            m = [i for i, ph in enumerate(PHASES)
-                 if sw.get(ph, {}).get("free_effect") is not None]
-            if not m:
-                continue
-            drawn = True
-            X = xs[m]
-            eff = np.array([sw[PHASES[i]]["free_effect"] for i in m])
-            nm = np.array([sw[PHASES[i]]["null_mean"] for i in m])
-            nsd = np.array([sw[PHASES[i]]["null_sd"] for i in m])
-            ax.fill_between(X, nm - nsd, nm + nsd, color=COL[ag], alpha=.13, lw=0)
-            ax.plot(X, nm, ls=":", color=COL[ag], lw=1.2)
-            ax.plot(X, eff, "o-", color=COL[ag], lw=2.0, ms=5.5,
-                    label=f"{LBL[ag]}")
-            dy = 8 if ag == "ppo" else -14
-            for i, x in zip(m, X):
-                pv = sw[PHASES[i]]["null_p"]
-                ax.annotate(f"p={pv:.3f}" if pv >= .001 else "p<0.001",
-                            (x, sw[PHASES[i]]["free_effect"]),
-                            textcoords="offset points", xytext=(0, dy),
-                            fontsize=6.6, ha="center", color=COL[ag],
-                            fontweight="bold" if pv < .05 else "normal")
-        ax.set_xticks(xs)
-        ax.set_xticklabels(TXT.FIG_EVIDENCE["phase_ticks"], fontsize=7.6)
-        ax.set_ylabel(TXT.FIG_EVIDENCE["phases_y"])
-        ax.set_ylim(0, .62)
-        ax.set_title(TXT.FIG_EVIDENCE["phases"], loc="left")
-        if drawn:
-            ax.legend(frameon=False, fontsize=7.2, loc="upper left")
-        ax.grid(alpha=.25, lw=.5)
-        ax.annotate(TXT.FIG_EVIDENCE["phases_note"],
-                    xy=(.97, .04), xycoords="axes fraction", fontsize=6.6,
-                    ha="right", color="#6b7280",
-                    bbox=dict(boxstyle="round,pad=.25", fc="white",
-                              alpha=.85, ec="none"))
-
-        # (c) decisive maps: near ceiling, so show the evidence DISTRIBUTION
-        ax = axes[2]
-        width, off = 0.26, {"ppo": -0.27, "dreamer": 0.0, "storm": 0.27}
-        for ag in data:
-            ev_ok, ev_bad = [], []
-            for r in data[ag]:
-                if r["cat"] == "balanced":
+        # The same evidence-integration curve, one panel per biome. P(top door)
+        # against the seen rock-water surplus. On balanced maps the door is free;
+        # on lakes / rocky it is forced -- but the curve should appear in all
+        # three if the agent runs the circuit regardless of the reward.
+        titles = {"balanced": "(a) balanced maps — door is free",
+                  "lakes": "(b) lakes maps — correct door is bottom",
+                  "rocky": "(c) rocky maps — correct door is top"}
+        for ax, cat in zip(axes, CATS):
+            for ag in data:
+                st = stats[ag].get(cat)
+                if not st or "curve" not in st:
                     continue
-                tot = max(r["water"] + r["rock"], 1)
-                sign = 1.0 if r["cat"] == "rocky" else -1.0
-                (ev_ok if r["correct"] else ev_bad).append(
-                    sign * (r["rock"] - r["water"]) / tot)
-            for j, (vals, fc) in enumerate(((ev_ok, COL[ag]), (ev_bad, "#ffffff"))):
-                if len(vals) < 2:
-                    continue
-                bp = ax.boxplot([vals], positions=[j + off[ag]], widths=width,
-                                patch_artist=True, showfliers=False,
-                                medianprops=dict(color="#111827", lw=1.2))
-                bp["boxes"][0].set(facecolor=fc, edgecolor=COL[ag], lw=1.3)
-            ax.plot([], [], color=COL[ag], lw=6, label=LBL[ag])
-        ax.set_xticks([0, 1])
-        ax.set_xticklabels(TXT.FIG_EVIDENCE["errors_ticks"])
-        ax.set_ylabel(TXT.FIG_EVIDENCE["errors_y"])
-        ax.set_title(TXT.FIG_EVIDENCE["errors"], loc="left")
-        ax.legend(frameon=False, fontsize=7.4, loc="lower left")
-        ax.grid(alpha=.25, lw=.5, axis="y")
-
-        fig.suptitle(TXT.FIG_EVIDENCE["title"], y=1.03, fontsize=11)
+                cur = np.array(st["curve"])
+                ax.plot(cur[:, 0], cur[:, 1], "o-", color=COL[ag], lw=1.7, ms=4.5,
+                        label=f"{LBL[ag]}   AUC {st['auc']:.2f}")
+                ax.axhline(st["p_top"], color=COL[ag], ls=":", lw=1, alpha=.6)
+            ax.axhline(.5, color="#9ca3af", ls="--", lw=1)
+            ax.set_title(titles[cat], loc="left")
+            ax.set_xlabel("seen rock − water surplus  (first-sight cells)")
+            if cat == "balanced":
+                ax.set_ylabel("P(agent takes the top door)")
+            ax.set_ylim(0, 1.02)
+            ax.legend(frameon=False, fontsize=7.4, loc="best")
+            ax.grid(alpha=.25, lw=.5)
+        fig.suptitle("The door choice tracks the seen rock−water surplus in every biome, "
+                     "even where the reward does not select it", y=1.03, fontsize=11)
         fig.tight_layout()
         fig.savefig(out / "fig_evidence.png", bbox_inches="tight")
         plt.close(fig)
