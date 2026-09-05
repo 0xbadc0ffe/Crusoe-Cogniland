@@ -10,7 +10,7 @@ Agent: `final_models/ppo/ppo_plain_noaux.pt`, the belief-free PPO+GRU. Maps: `da
 | 1 Activation dataset | `PYTHONPATH=src python scripts/mechinterp/build_belief_dataset.py --agent ppo` | `activation_datasets/cogniland_belief/ppo_*` | Fig. 3, Table 1 |
 | 2 Belief direction | `PYTHONPATH=src:scripts/mechinterp:scripts/mechinterp/belief_report python scripts/mechinterp/belief_report/steer_belief.py --agent ppo --export-axis` | `outputs/belief_report/steer_axis_ppo.npz` | Fig. 3c, Fig. 4, Table 1 |
 | 3 Probes | `python scripts/mechinterp/belief_report/probes.py` | `outputs/belief_report/probes.json` | Fig. 3a-b |
-| 4 Dose response | `PYTHONPATH=src:scripts/mechinterp:scripts/mechinterp/belief_report python scripts/mechinterp/belief_report/steer_alpha.py --agent ppo --n 100 --workers 24` | `outputs/belief_report/steer_alpha_ppo_corr2.json` | Fig. 4 |
+| 4 Dose response | `PYTHONPATH=src:scripts/mechinterp:scripts/mechinterp/belief_report python scripts/mechinterp/belief_report/steer_alpha.py --agent ppo --n 100 --workers 44 --alphas 0,0.1,...,2.0 --tag fine` (or `sbatch scripts/mechinterp/belief_report/steer_alpha_fine.sbatch`, ~2 min on 48 CPUs) | `outputs/belief_report/steer_alpha_ppo_corr2_fine.json` | Fig. 4 |
 | 5 Steering, all eligible maps | `sbatch scripts/mechinterp/behavior_steering/slurm/act11_all_eligible.sbatch` | `outputs/behavior_steering/act11/{rows,summary}_all_{balanced,lakes,rocky}.json` | Table 1 |
 | 6 Figures + table | `PYTHONPATH=src:scripts/mechinterp/belief_report python scripts/figures/paper/iab_appendix_figs.py belief steer table` | `paper/iab2026/paper/figures/fig_results_belief.png`, `fig_results_causal.png`, `tab_clamp_all_eligible.tex` | paper |
 

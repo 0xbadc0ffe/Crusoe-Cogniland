@@ -297,8 +297,12 @@ def fig_belief():
 
 
 # ────────────────────────────────────────────────────────── results: steer ──
-def fig_steer(site="corr2", xmax=2.0):
-    d = json.loads((REPO / f"outputs/belief_report/steer_alpha_ppo_{site}.json").read_text())
+def fig_steer(site="corr2", xmax=2.0, tag="fine"):
+    # `tag="fine"` is the 0.1-step dose ladder (steer_alpha.py --alphas ... --tag fine);
+    # falls back to the coarse ladder if the fine file has not been produced yet.
+    path = REPO / f"outputs/belief_report/steer_alpha_ppo_{site}_{tag}.json"
+    if not path.exists(): path = REPO / f"outputs/belief_report/steer_alpha_ppo_{site}.json"
+    d = json.loads(path.read_text())
     alphas = [x for x in d["alphas"] if x <= xmax + 1e-9]
     cols = [("lakes", [(+1, C_ROCKY, "pushed to rocky")], "lakes maps"),
             ("rocky", [(-1, C_LAKES, "pushed to lakes")], "rocky maps"),
@@ -319,15 +323,18 @@ def fig_steer(site="corr2", xmax=2.0):
         for ax, (cat, arms, title) in zip(axes, cols):
             for sgn, col, lab in arms:
                 x, y, e, to = curve(cat, sgn)
-                ax.errorbar(x, y, yerr=e, color=col, lw=1.8, ms=4.5, marker="o", capsize=2.5, elinewidth=1, label=lab)
+                dense = len(x) > 12
+                ax.errorbar(x, y, yerr=e, color=col, lw=1.8, ms=3.2 if dense else 4.5, marker="o",
+                            capsize=1.5 if dense else 2.5, elinewidth=1, label=lab)
                 bad = to > .2
                 if bad.any(): ax.plot(x[bad], y[bad], "x", color=INK, ms=9, mew=2, zorder=6)
             ax.axhline(.5, color="#d1d5db", lw=.8, zorder=0)
             ax.set_ylim(-.03, 1.03); ax.set_xlabel(r"steering strength $\alpha$")
+            ax.set_xticks(np.arange(0, xmax + 1e-9, 0.5)); ax.set_xticks(alphas, minor=True)
             ax.set_title(title, loc="left", color=INK); ax.legend(fontsize=7.5, loc="center right", frameon=False)
         axes[0].set_ylabel("P(top flag)")
         fig.tight_layout(); save(fig, "fig_results_causal.png")
-    print("  n maps per category:", d["n"], " site:", site)
+    print("  n maps per category:", d["n"], " site:", site, " file:", path.name, " alphas:", len(alphas))
 
 
 FIGS = dict(dataset=fig_dataset, bins=fig_bins, pca=fig_pca, belief=fig_belief, steer=fig_steer)
