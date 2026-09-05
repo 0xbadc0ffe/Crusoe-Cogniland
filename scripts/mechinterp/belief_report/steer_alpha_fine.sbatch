@@ -16,5 +16,7 @@ export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 KMP_WARNINGS=0
 export PYTHONPATH="$REPO/src:$REPO/scripts/mechinterp:$REPO/scripts/mechinterp/belief_report:${PYTHONPATH:-}"
 ALPHAS=$(python -c "print(','.join(f'{i/10:.1f}' for i in range(0, 21)))")
 echo "[job] $(date) host=$(hostname) alphas=$ALPHAS"
-srun python scripts/mechinterp/belief_report/steer_alpha.py --agent ppo --n 100 --workers 44 --site corr2 --alphas "$ALPHAS" --tag fine
+MODE="${MODE:-add}"; TAG="${TAG:-fine}"; EXTRA="${EXTRA:---control}"
+echo "[job] mode=$MODE tag=$TAG"
+srun python scripts/mechinterp/belief_report/steer_alpha.py --agent ppo --n 100 --workers 44 --site corr2 --alphas "$ALPHAS" --mode "$MODE" --tag "$TAG" $EXTRA
 echo "[job] $(date) done"

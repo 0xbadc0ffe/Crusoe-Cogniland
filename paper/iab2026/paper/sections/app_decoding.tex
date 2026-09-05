@@ -23,21 +23,23 @@ each fold so the whole pipeline is scored. Balanced maps are never used to fit
 $\mathbf{v}$.
 
 \paragraph{Causal test.}
-We write to the coordinate and leave every other direction untouched,
+We push the state along the direction and leave every other direction untouched,
 \begin{equation}
-\mathbf{h}' \;=\; \mathbf{h} + \big(b_{\lambda} - \mathbf{h}^{\top}\mathbf{v}\big)\,\mathbf{v},
+\mathbf{h}' \;=\; \mathbf{h} + s\,\alpha\,g\,\mathbf{v},
 \qquad
-b_{\lambda} \;=\; (1-\lambda)\,b^{\star}_{\text{own}} + \lambda\,b^{\star}_{\text{other}},
-\label{eq:set}
+g \;=\; b^{\star}_{\text{rocky}} - b^{\star}_{\text{lakes}},
+\label{eq:add}
 \end{equation}
-where $b^{\star}_{\text{own}}$ is the pole of the map's true category,
-$b^{\star}_{\text{other}}$ that of the other labelled category, and $\lambda$
-the dose: $\lambda=0$ writes the agent's own category, a null write that
-should change nothing, and $\lambda=1$ writes the opposite category. The write is applied once at corridor entry
-(transient) or at every step from entry (sustained). The outcome is the flag
-taken; on balanced maps we set $b_{\lambda}$ to each category's pole and report the top-flag rate.
-The control writes the same displacement $\lVert\mathbf{h}'-\mathbf{h}\rVert$
-along random unit directions on the same maps with the same timing.
+where $s=+1$ pushes toward rocky, $s=-1$ toward lakes, and $\alpha$ is the dose
+measured in pole-to-pole distances: $\alpha=0$ is the unsteered agent and
+$\alpha=1$ moves the coordinate $\mathbf{h}^{\top}\mathbf{v}$ by exactly the
+distance between the two class means ($g=11.2$ for the released agent). The
+write is applied once, at the first step of bin \textit{corr2}, on $100$
+held-out maps per category for $\alpha\in\{0,0.1,\dots,2\}$: lakes maps are
+pushed toward rocky, rocky maps toward lakes and balanced maps both ways. The
+outcome is the flag taken. The control applies a displacement of the same size,
+$\alpha g$, along a random unit direction drawn per episode with a random sign,
+on the same maps at the same step.
 
 \paragraph{Position bins and the geometry of the belief.}
 All per-bin analyses use the eight bins of Figure~\ref{fig:bins}: five over the

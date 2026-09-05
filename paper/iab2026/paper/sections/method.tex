@@ -68,15 +68,17 @@ In each bin we compare three readouts of $\mathbf{h}_t$: a logistic-regression p
 \paragraph{Belief causality.}
 \label{sec:causality}
 A direction may be decodable even if it is not used by the policy \citep{alain2017probes}. To test whether
-$\mathbf{v}$ influences the flag decision, we steer the agent along this direction and leave every other
+$\mathbf{v}$ influences the flag decision, we push the state along this direction and leave every other
 direction untouched,
-$\mathbf{h}'=\mathbf{h}+(b_{\lambda}-\mathbf{h}^{\top}\mathbf{v})\,\mathbf{v}$,
-setting it to a point between the map's own category and the other,
-$b_{\lambda}=(1-\lambda)\,b^{\star}_{\text{own}}+\lambda\,b^{\star}_{\text{other}}$,
-where $\lambda$ is the dose: $\lambda=0$ writes the agent's own category, a
-null write that should change nothing, and $\lambda=1$ writes the opposite
-category. The write is applied at corridor entry and
-the outcome is the decision $D$ as a function of $\lambda$. As a control we apply the same displacement along random directions.
+$\mathbf{h}'=\mathbf{h}+s\,\alpha\,g\,\mathbf{v}$,
+where $g=b^{\star}_{\text{rocky}}-b^{\star}_{\text{lakes}}$ is the distance between
+the two category poles, $s=+1$ pushes toward rocky and $s=-1$ toward lakes, and
+$\alpha$ is the dose: $\alpha=0$ is the unsteered agent and $\alpha=1$ moves the
+belief coordinate by one full pole-to-pole distance. The write is applied once at
+the entry of bin \textit{corr2}; lakes maps are pushed toward rocky, rocky maps
+toward lakes and balanced maps in both directions, and the outcome is the
+decision $D$ as a function of $\alpha$. As a control we apply a displacement of
+the same size, $\alpha g$, along random directions.
 
 \paragraph{Steering.}
 \label{sec:steering}

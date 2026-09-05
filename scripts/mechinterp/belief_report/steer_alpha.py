@@ -71,10 +71,48 @@ def add_hook(v, delta, t0):
     return hook
 
 
+def set_hook(v, target, t0):
+    """One write at t0: h' = h + (target - h.v) v  (coordinate SET, eq. set in the paper)."""
+    def hook(h, t, info):
+        return h + (target - float(h @ v)) * v if t == t0 else h
+    return hook
+
+
+def rand_hook(v, target, t0, seed, fixed=None):
+    """Control: the displacement the real write would apply, along a random unit
+    direction with a random sign (magnitude-matched, direction-free).
+    SET mode: |target - h.v| (state-dependent); ADD mode: the fixed |alpha*gap|."""
+    rng = np.random.default_rng(seed)
+    r = rng.standard_normal(len(v)).astype(np.float32); r /= np.linalg.norm(r)
+    sgn = 1.0 if rng.random() < 0.5 else -1.0
+    def hook(h, t, info):
+        if t != t0: return h
+        mag = abs(fixed) if fixed is not None else abs(target - float(h @ v))
+        return h + sgn * mag * r
+    return hook
+
+
+def balanced_pole(agent, v):
+    """Balanced class mean on the axis at the corr2 bin (train split), the 'own'
+    pole of balanced maps for the SET dose; same fit as steer_belief.export_axis."""
+    from data import load, split_maps, bin_states
+    X, df = load(agent); tr, _ = split_maps(df)
+    ids, cats, M = bin_states(X, df)[6]        # corr2 = CORR_BIN in steer_belief.py
+    m = np.isin(ids, tr) & (cats == "balanced")
+    return float((M[m] @ v).mean())
+
+
 def run_one(args):
-    agent, mid, t0, delta, v, device = args
+    agent, mid, t0, mode, v, val, seed, device = args
     from replay_episode import replay
-    hook = None if delta == 0.0 else add_hook(v, delta, t0)
+    if mode == "add":
+        hook = None if val == 0.0 else add_hook(v, val, t0)
+    elif mode == "set":
+        hook = set_hook(v, val, t0)
+    elif mode == "control":                     # SET-matched control
+        hook = rand_hook(v, val, t0, seed)
+    else:                                       # "control_add": fixed |alpha*gap|
+        hook = None if val == 0.0 else rand_hook(v, 0.0, t0, seed, fixed=val)
     r = replay(agent, mid, hook=hook, device=device)
     return dict(map_id=int(mid), door=r["door"], success=bool(r["success"]),
                 steps=int(r["steps"]))
@@ -89,6 +127,11 @@ def main():
     ap.add_argument("--alphas", default=None,
                     help="comma-separated doses (default: the coarse ladder in ALPHAS)")
     ap.add_argument("--tag", default="", help="suffix for the output file name")
+    ap.add_argument("--mode", default="add", choices=["add", "set"],
+                    help="add: h <- h + alpha*gap*v (alpha in class-mean gaps); "
+                         "set: h' = h + (b_lam - h.v) v with b_lam = (1-lam) b_own + lam b_other")
+    ap.add_argument("--control", action="store_true",
+                    help="also run the magnitude-matched random-direction control")
     ap.add_argument("--site", default="corr2",
                     choices=["corridor", "corr2", "wall"],
                     help="where the single write lands")
@@ -112,8 +155,33 @@ def main():
                 jobs.append((cat, sgn, al, int(mid), int(entry[mid])))
     print(f"{len(jobs)} episodes", flush=True)
 
-    payload = [(a.agent, mid, t0, sgn * al * gap, v, a.device)
-               for (_, sgn, al, mid, t0) in jobs]
+    if a.mode == "add":
+        payload = [(a.agent, mid, t0, "add", v, sgn * al * gap, 0, a.device)
+                   for (_, sgn, al, mid, t0) in jobs]
+        poles = None
+        if a.control:
+            payload += [(a.agent, mid, t0, "control_add", v, sgn * al * gap,
+                         1000003 * mid + int(round(al * 10)) * 7 + (sgn > 0), a.device)
+                        for (_, sgn, al, mid, t0) in jobs]
+            jobs = jobs + jobs
+    else:
+        z = np.load(axis_npz(a.agent))
+        poles = {"lakes": float(z["mu_lakes"]), "rocky": float(z["mu_rocky"]),
+                 "balanced": balanced_pole(a.agent, v)}
+        print(f"poles on the axis: lakes {poles['lakes']:.2f}  balanced {poles['balanced']:.2f}  "
+              f"rocky {poles['rocky']:.2f}", flush=True)
+        def target(cat, sgn, lam):
+            other = "rocky" if sgn > 0 else "lakes"
+            return (1 - lam) * poles[cat] + lam * poles[other]
+        payload = [(a.agent, mid, t0, "set", v, target(c, sgn, al), 0, a.device)
+                   for (c, sgn, al, mid, t0) in jobs]
+        if a.control:
+            payload += [(a.agent, mid, t0, "control", v, target(c, sgn, al),
+                         1000003 * mid + int(round(al * 10)) * 7 + (sgn > 0), a.device)
+                        for (c, sgn, al, mid, t0) in jobs]
+            jobs = jobs + jobs
+    kinds = ["steer"] * (len(jobs) // 2 if a.control else len(jobs))
+    kinds += ["control"] * (len(jobs) - len(kinds))
 
     if a.workers > 1:
         from concurrent.futures import ProcessPoolExecutor
@@ -122,17 +190,18 @@ def main():
     else:
         res = [run_one(p) for p in payload]
 
-    rows = [dict(cat=c, sign=int(s), alpha=float(al), **r)
-            for (c, s, al, _, _), r in zip(jobs, res)]
+    rows = [dict(cat=c, sign=int(s), alpha=float(al), kind=k, **r)
+            for (c, s, al, _, _), k, r in zip(jobs, kinds, res)]
     # the shared sham also belongs to the downward balanced curve
     rows += [dict(r, sign=-1) for r in rows
              if r["cat"] == "balanced" and r["alpha"] == 0.0]
 
     path = OUT / f"steer_alpha_{a.agent}_{a.site}{('_' + a.tag) if a.tag else ''}.json"
-    path.write_text(json.dumps(dict(agent=a.agent, site=a.site, gap=gap,
-                                    alphas=ALPHAS, n=a.n, rows=rows), indent=1))
+    path.write_text(json.dumps(dict(agent=a.agent, site=a.site, gap=gap, mode=a.mode,
+                                    poles=poles, alphas=ALPHAS, n=a.n, rows=rows), indent=1))
     print("wrote", path.name, flush=True)
-    summarise(rows)
+    for k in sorted({r["kind"] for r in rows}):
+        print(f"[{k}]"); summarise([r for r in rows if r["kind"] == k])
 
 
 def summarise(rows):
