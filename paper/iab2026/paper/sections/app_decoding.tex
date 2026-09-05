@@ -3,9 +3,10 @@ We index time by the agent's column relative to the passage and bin it into an
 evidence phase, a corridor phase and the passage. On states $\mathbf{h}_t$
 collected from held-out maps, split by map into $801$ maps for fitting and
 $399$ for testing, we train a logistic-regression probe and a one-hidden-layer
-MLP probe to predict the three-way category at each bin, against a
-shuffled-label null. The gap between the two probes measures how non-linear
-the code is.
+MLP probe to predict the category at each bin, against a shuffled-label null.
+Figure~\ref{fig:results_belief}a reports the rocky-against-lakes accuracy on
+the $266$ decisive test maps. The gap between the two probes measures how
+non-linear the code is.
 
 \paragraph{The single direction.}
 Let $\mu_{\mathrm r}$ and $\mu_{\mathrm l}$ be the means of $\mathbf{h}_t$ over
@@ -25,12 +26,12 @@ $\mathbf{v}$.
 \paragraph{Causal test.}
 We push the state along the direction and leave every other direction untouched,
 \begin{equation}
-\mathbf{h}' \;=\; \mathbf{h} + s\,\alpha\,g\,\mathbf{v},
+\mathbf{h}' \;=\; \mathbf{h} \pm \alpha\,g\,\mathbf{v},
 \qquad
 g \;=\; b^{\star}_{\text{rocky}} - b^{\star}_{\text{lakes}},
 \label{eq:add}
 \end{equation}
-where $s=+1$ pushes toward rocky, $s=-1$ toward lakes, and $\alpha$ is the dose
+where a positive edit pushes toward rocky, a negative edit toward lakes, and $\alpha$ is the dose
 measured in pole-to-pole distances: $\alpha=0$ is the unsteered agent and
 $\alpha=1$ moves the coordinate $\mathbf{h}^{\top}\mathbf{v}$ by exactly the
 distance between the two class means ($g=11.2$ for the released agent). The

@@ -4,7 +4,8 @@ or a plank actually placed, never in action presses, which repeat when the
 agent is blocked. On the held-out balanced maps used for steering, a
 tool-free route to a flag exists on every map (cost-to-go reachability with
 both tools disabled), so suppressing a tool never makes a map unsolvable,
-only costlier. Every steered episode is paired with the unsteered agent on
+only costlier; on lakes and rocky maps this is not enforced, and the timeout
+column of Table~\ref{tab:clamp_all} carries the cost. Every steered episode is paired with the unsteered agent on
 the same map and the same rollout seed; we report the per-map percentage
 change in the suppressed tool, summarised as the median over maps and the
 number of maps on which the count fell, together with the untouched tool's

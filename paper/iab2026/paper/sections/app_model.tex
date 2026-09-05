@@ -18,9 +18,9 @@ as a target, so any belief in $\mathbf{h}_t$ is learned from reward alone.
     \input{figures/model_diagram}
 \caption{\textbf{The agent.} The $21\times21$ tile view is one-hot encoded with
     two coordinate channels appended \citep{liu2018intriguing}, passed through
-    three layers of convolutions, concatenated with five scalars ('facing' variable one-hot(4) and time passed (1)).
+    three layers of convolutions, concatenated with five scalars (the facing direction as a one-hot of four and the elapsed time).
     This vector is projected to a
-    $256$-d embedding; The observation embedding is fed to a GRU with $128$-d hidden state $\mathbf{h}_t$. The Actor and Critic are just linear projections of $\mathbf{h}_t$}
+    $256$-d embedding, which is fed to a GRU with $128$-d hidden state $\mathbf{h}_t$. The actor and critic are linear projections of $\mathbf{h}_t$.}
     \label{fig:model}
 \end{figure}
 \begin{table}[h]

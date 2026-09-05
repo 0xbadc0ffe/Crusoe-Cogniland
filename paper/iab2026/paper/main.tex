@@ -37,7 +37,7 @@
 \maketitle
 
 \begin{abstract}
-Activation steering is spreading from language models to Reinforcement Learning (RL) agents, where it is proposed as a lightweight test-time behavioral intervention. Whether such edits are safe for recurrent RL agents, which carry their beliefs in their hidden state is an open question. We introduce Cogniland, a procedurally generated partially observable navigation task in which an agent must integrate evidence into a belief about a hidden map property. We find that \textbf{(i)} the belief is encoded as a single direction of the recurrent state. one single scalar matches the performance as a non-linear probe on the full state \textbf{(ii)} such belief is causal: editing the hidden state along this direction gradually shifts the model’s decision on a downstream task. \textbf{(iii)} Steering the agent to suppress a navigation skill corrupts the belief and thus degrades the final decision performance. We attribute the corruption to entanglement: behavioral skills and belief states are not separable in hidden state. Steering methods for stateful agents need careful evaluation across different tasks and capabilities.
+Activation steering is spreading from language models to Reinforcement Learning (RL) agents, where it is proposed as a lightweight test-time behavioral intervention. Whether such edits are safe for recurrent RL agents, which carry their beliefs in their hidden state, is an open question. We introduce Cogniland, a procedurally generated partially observable navigation task in which an agent must integrate evidence into a belief about a hidden map property. We find that \textbf{(i)} the belief is encoded as a single direction of the recurrent state: a single scalar matches the performance of a non-linear probe on the full state; \textbf{(ii)} the belief is causal: editing the hidden state along this direction gradually shifts the model's decision on a downstream task; \textbf{(iii)} steering the agent to suppress a navigation skill corrupts the belief and thus degrades the final decision performance. We attribute the corruption to entanglement: behavioral skills and belief states are not separable in hidden state. Steering methods for stateful agents need careful evaluation across different tasks and capabilities.
 \end{abstract}
 
 \input{sections/introduction}
@@ -55,7 +55,6 @@ Activation steering is spreading from language models to Reinforcement Learning 
 \bibliography{references}
 
 \appendix
-APPENDIX NOT REVIEWED
 
 \section{Measures and statistics}
 \label{app:measures}
@@ -76,6 +75,11 @@ APPENDIX NOT REVIEWED
 \section{Belief linearity}
 \label{app:belief-causality}
 \input{sections/app_decoding}
+\FloatBarrier
+
+\section{Steering algorithm}
+\label{app:steering-algorithm}
+\input{sections/app_steering}
 \FloatBarrier
 
 

@@ -1,8 +1,8 @@
-\begin{table}[t]
+\begin{table}[h!]
 \centering
 \small
 \setlength{\tabcolsep}{6pt}
-\caption{\textbf{Steering behavior corrupts the belief} Gated gradient clamp on maps where both tools are used at least once (138 balanced, 62 lakes, 61 rocky maps). \emph{\# bridges} and \emph{\# tunnels} are successful tool uses per episode, the lowest of each category in bold; \emph{timeout} is the ratio of episodes that didn't reach a flag. \emph{rocky flag} and \emph{lakes flag} show the agent's decision; $\hat b(\text{rocky})$ is the mean probability of the real map category based on belief readout. Failure modes are highlighted in red}
+\caption{\textbf{Steering behavior corrupts the belief} Gated gradient based steering on maps where both tools are used at least once. \emph{\# bridges} and \emph{\# tunnels} are successful tool uses per episode, the lowest of each category in bold; \emph{timeout} is the ratio of episodes that didn't reach a flag. \emph{rocky flag} and \emph{lakes flag} show the agent's decision; $\hat b(\text{rocky})$ is the mean probability of the rocky category read from the belief scalar by the logistic probe. Failure modes are highlighted in red.}
 \label{tab:clamp_all}
 \begin{tabular}{@{}llrrrrrr@{}}
 \toprule

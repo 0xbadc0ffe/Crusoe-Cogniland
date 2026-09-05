@@ -82,13 +82,13 @@ associated with an action $\bar a$, here \textsc{build} or \textsc{mine}, we
 drive its probability $\pi(\bar a\mid\mathbf{h})$ below a threshold $\theta$ by
 gradient steps in activation space:
 \begin{equation}
-\mathbf{h}\;\leftarrow\;\mathbf{h}-\alpha\,
+\mathbf{h}\;\leftarrow\;\mathbf{h}-\eta\,
 \frac{\nabla_{\mathbf{h}}\log \pi(\bar a\mid\mathbf{h})}{\lVert\nabla_{\mathbf{h}}\log \pi(\bar a\mid\mathbf{h})\rVert}
 \qquad\text{while } \pi(\bar a\mid\mathbf{h})>\theta.
 \label{eq:clamp}
 \end{equation}
 This is applied at every step and carried forward by the recurrence. Steps already
-below $\theta$ are left untouched, so $\theta$ sets the strength and $\alpha$
+below $\theta$ are left untouched, so $\theta$ sets the strength and $\eta$
 only the step size; a fixed steering vector is the unconditional, one-step
 special case (Appendix~\ref{app:steering-algorithm}). Behavior change is the
 reduction in successful uses of the suppressed tool relative to the unsteered
