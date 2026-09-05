@@ -1,5 +1,6 @@
 \section{Introduction}
-Activation steering changes what a model does by adding a vector to its hidden
+What happens to an agent's belief when we steer its behavior? Activation
+steering changes what a model does by adding a vector to its hidden
 activations at inference time, with no retraining
 \citep{turner2023actadd,rimsky2024caa,zou2023repe}. It is cheap, it needs only
 a few contrasting examples, and it is being proposed as a safety tool. The
@@ -9,11 +10,10 @@ agents, where it has been used to retarget a policy by editing its activations
 matters here: a recurrent agent in a partially observable world keeps its
 belief about the hidden state of the world in the same hidden vector that the
 steering edit modifies, and the recurrence carries the edit forward at every
-step.
+step. An edit aimed at a behavior may therefore land on the belief as well.
 
-We ask what a steering edit aimed at a behavior does to the belief. The
-question is hard to answer in a language model, where beliefs have no ground
-truth. We therefore build Cogniland, a procedurally generated navigation task
+The question is hard to answer in a language model, where beliefs have no
+ground truth. We therefore build Cogniland, a procedurally generated navigation task
 in which the belief is the hidden category of the map, the agent must
 integrate evidence about it and carry it across a memory corridor, and its
 skills, bridging water and tunnelling rock, can be counted. The belief shows
