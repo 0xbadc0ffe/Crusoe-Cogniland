@@ -337,7 +337,7 @@ def fig_steer(site="corr2", xmax=2.0, tag="finectrl", out="fig_results_causal.pn
                     xc, yc, ec, _ = curve(cat, sgn, "control")
                     ax.errorbar(xc, yc, yerr=ec, color="#9ca3af", lw=1.2, ls="--", ms=2.5, marker="o",
                                 capsize=1.2, elinewidth=.8, zorder=2,
-                                label="random direction, matched" if (sgn > 0 or cat != "balanced") else None)
+                                label="random direction" if (sgn > 0 or cat != "balanced") else None)
             ax.axhline(.5, color="#d1d5db", lw=.8, zorder=0)
             ax.set_ylim(-.03, 1.03); ax.set_xlabel(xlabel)
             ax.set_xticks(np.arange(0, xmax + 1e-9, 0.5)); ax.set_xticks(alphas, minor=True)
