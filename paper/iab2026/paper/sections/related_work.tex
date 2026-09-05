@@ -1,17 +1,4 @@
 \section{Related work}
-\paragraph{Activation steering.}
-Steering vectors add a fixed direction to the hidden activations of a language
-model at inference time to change its behavior
-\citep{turner2023actadd,rimsky2024caa,zou2023repe,li2023iti}. A single
-direction can control refusal \citep{arditi2024refusal}, and steering is
-proposed as a cheap safety tool. Its side effects are less studied. Steering
-vectors generalize unreliably across inputs \citep{tan2024reliability}, degrade
-general capabilities unless trained against it \citep{stickland2024sideeffects},
-break safety alignment even along random directions \citep{korznikov2025rogue},
-and can be used as an attack \citep{aidakhmetov2026steering}. All of this work
-is on language models; we ask the same question for a recurrent agent whose
-hidden state carries a belief.
-
 \paragraph{Interpreting and steering RL agents.}
 Probes and interventions have been used to read and edit what RL agents
 represent. \citet{mini2023maze} retarget a maze-solving policy by adding a
@@ -21,13 +8,10 @@ them changes its actions. Model-based agents carry their belief in a world
 model \citep{hafner2023dreamerv3}. These works read or steer one concept at a
 time; we measure what an edit aimed at one concept does to another.
 
-\paragraph{Linear representations.}
-Linear probes read features from hidden states \citep{alain2017probes}, and a
-decodable feature is not necessarily a used one, so a causal test is needed.
-The linear representation hypothesis says that features are directions
-\citep{park2024linear}, and toy models of superposition show how many features
-share one space and interfere \citep{elhage2022toy}. Our belief direction and
-its entanglement with skills are an instance of this in an RL agent. Gradient
-attacks on policies \citep{huang2017adversarial} are the closest relative of
-our steering method, which follows the gradient of the action probability in
-activation space.
+\paragraph{Failure modes of steering in LLMs.}
+In language models, steering vectors have side effects beyond the targeted
+behavior. They generalize unreliably across inputs \citep{tan2024reliability},
+degrade general capabilities \citep{stickland2024sideeffects}, break safety
+alignment even when the direction is random \citep{korznikov2025rogue}, and
+open an attack surface \citep{aidakhmetov2026steering}. We show a failure mode
+of the same kind in a recurrent RL agent: the edit lands on the belief.
