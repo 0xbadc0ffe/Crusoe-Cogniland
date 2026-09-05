@@ -37,7 +37,9 @@ distance between the two class means ($g=11.2$ for the released agent). The
 write is applied once, at the first step of bin \textit{corr2}, on $100$
 held-out maps per category for $\alpha\in\{0,0.1,\dots,2\}$: lakes maps are
 pushed toward rocky, rocky maps toward lakes and balanced maps both ways. The
-outcome is the flag taken. The control applies a displacement of the same size,
+outcome is the flag taken. Figure~\ref{fig:results_causal} shows $\alpha\le1$;
+between $1$ and $2$ every axis curve stays saturated and the random control
+drifts by at most $0.17$ (lakes maps at $\alpha=2$). The control applies a displacement of the same size,
 $\alpha g$, along a random unit direction drawn per episode with a random sign,
 on the same maps at the same step.
 

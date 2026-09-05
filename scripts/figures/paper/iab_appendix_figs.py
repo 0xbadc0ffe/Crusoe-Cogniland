@@ -297,7 +297,7 @@ def fig_belief():
 
 
 # ────────────────────────────────────────────────────────── results: steer ──
-def fig_steer(site="corr2", xmax=2.0, tag="finectrl", out="fig_results_causal.png",
+def fig_steer(site="corr2", xmax=1.0, tag="finectrl", out="fig_results_causal.png",
               xlabel=r"steering strength $\alpha$"):
     # `tag="finectrl"` is the 0.1-step dose ladder with the matched random-direction control
     # (steer_alpha.py --alphas 0,...,2 --control --tag finectrl);
@@ -340,8 +340,8 @@ def fig_steer(site="corr2", xmax=2.0, tag="finectrl", out="fig_results_causal.pn
                                 label="random direction" if (sgn > 0 or cat != "balanced") else None)
             ax.axhline(.5, color="#d1d5db", lw=.8, zorder=0)
             ax.set_ylim(-.03, 1.03); ax.set_xlabel(xlabel)
-            ax.set_xticks(np.arange(0, xmax + 1e-9, 0.5)); ax.set_xticks(alphas, minor=True)
-            ax.set_title(title, loc="left", color=INK); ax.legend(fontsize=7.5, loc="center right", frameon=False)
+            ax.set_xticks(np.arange(0, xmax + 1e-9, 0.2 if xmax <= 1 else 0.5)); ax.set_xticks(alphas, minor=True)
+            ax.set_title(title, loc="left", color=INK); ax.legend(fontsize=7.5, loc="best", frameon=False)
         axes[0].set_ylabel("P(top flag)")
         fig.tight_layout(); save(fig, out)
     print("  n maps per category:", d["n"], " site:", site, " file:", path.name, " alphas:", len(alphas))
