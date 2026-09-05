@@ -5,8 +5,8 @@
 Figure~\ref{fig:results_belief}a shows that accuracy rises with the evidence seen, from
 $83\%$ in the first bin to $99\%$ from the corridor onwards: the decoded belief matches the real map category at every stage of the map. It is surprising that the non-linear MLP probe generalizes \emph{worse} than a single 1D logistic probe: it trails the scalar by nine points in the first bin and never leads it by more than one. All the information relevant for the belief is present along a single direction in activation space. This is the picture drawn by the linear representation hypothesis \citep{park2024linear,elhage2022toy}: a concept learned through minimizing a general loss function is represented as a single direction.
 
-This direction is not fixed across the stages of an episode. Figure~\ref{fig:results_belief}b shows that
-neighbouring bins agree, with a cosine of $0.88$ between the two corridor bins, while the earliest and the last differ most with a similarity of $0.33$: it looks like the code drifts, perhaps as a rotation, as evidence accumulates over an episode. We therefore choose \textit{corr2} to fit the direction $\mathbf{v}$ where the belief is complete and the flags are not yet in view. Figure~\ref{fig:results_belief}c shows the logistic regression fit on $b_t=\mathbf{h}_t^{\top}\mathbf{v}$
+This direction is not fixed across the stages of an episode. Figure~\ref{fig:results_belief}b compares the weight vectors of the logistic probes fitted in each bin:
+neighbouring bins agree, with cosines of $0.5$--$0.9$ and the highest, $0.86$, between the last corridor bin and the passage, while bins far apart in the episode differ, down to $0.29$ between the first bin and the passage: it looks like the code drifts, perhaps as a rotation, as evidence accumulates over an episode. We therefore choose \textit{corr2} to fit the direction $\mathbf{v}$ where the belief is complete and the flags are not yet in view. Figure~\ref{fig:results_belief}c shows the logistic regression fit on $b_t=\mathbf{h}_t^{\top}\mathbf{v}$
 achieving $\mathbf{98.9\%}$ accuracy on the $266$ lakes and rocky maps not used for the fit. $57\%$ of balanced maps,
 never used to fit $\mathbf{v}$, are believed to be rocky while the remaining $43\%$ are more similar to lakes.
 
@@ -17,7 +17,7 @@ never used to fit $\mathbf{v}$, are believed to be rocky while the remaining $43
 bin: (i) a logistic-regression probe and (ii) an MLP probe on the full $128$-d state,
 and (iii) a logistic regression on the single scalar $b_t=\mathbf{h}_t^{\top}\mathbf{v}$,
 where $\mathbf{v}$ is the difference-of-means direction. The scalar matches the full-state probes everywhere, and all three reach
-$0.98$ or more from the corridor on. (b) Cosine between the directions $\mathbf{v}$ fitted in different bins.
+$0.98$ or more from the corridor on. (b) Cosine between the weight vectors of the logistic probes fitted on the raw states of different bins.
 (c) States projected on the belief direction per map category in bin \textit{corr2}; the curve is the logistic regression on this scalar, with $98.9\%$ held-out accuracy. $57\%$ of balanced maps are classified as rocky.}
 \label{fig:results_belief}
 \end{figure}

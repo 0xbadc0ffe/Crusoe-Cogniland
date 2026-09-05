@@ -242,13 +242,22 @@ def fig_belief():
     kd = [k for k in keys if k.startswith("dm") and k.endswith("acc2")][0]
     log = np.array([A[b]["logistic_acc2"] for b in bs]); ci = np.array([A[b]["logistic_ci2"] for b in bs])
     mlp = np.array([A[b]["mlp_acc2"] for b in bs]); dm = np.array([A[b][kd] for b in bs])
-    # per-bin single directions -> cosine matrix
+    # per-bin directions -> cosine matrix. Panel (b) uses the weight vector of a
+    # full-state logistic probe (rocky vs lakes) fitted on the RAW states of each bin
+    # (no standardisation: the scaler-mapped weights of the standardised probe are
+    # dominated by one near-constant unit, sigma ~ 6e-5). The difference-of-means
+    # directions are computed too and both matrices are saved in belief_stats.json.
+    from sklearn.linear_model import LogisticRegression
     X, df = D.load("ppo"); tr, _ = D.split_maps(df); bins = D.bin_states(X, df)
-    V = []
+    V, Wp = [], []
     for b in range(nb):
-        ids, cats, M = bins[b]; m = np.isin(ids, tr)
+        ids, cats, M = bins[b]; m = np.isin(ids, tr) & np.isin(cats, ["rocky", "lakes"])
         v, _ = D.fit_dm(M[m], cats[m]); V.append(v)
-    Cm = np.stack(V) @ np.stack(V).T
+        y = (cats[m] == "rocky").astype(int)
+        w = LogisticRegression(max_iter=5000, C=1.0).fit(M[m], y).coef_[0]; Wp.append(w / np.linalg.norm(w))
+    C_dm = np.stack(V) @ np.stack(V).T
+    C_probe = np.stack(Wp) @ np.stack(Wp).T
+    Cm = C_probe
     with plt.rc_context(RC):
         # explicit axes in inches so every panel keeps its natural proportions
         W, Hf = 15.2, 4.5
@@ -286,14 +295,16 @@ def fig_belief():
         ax.set_xticklabels(LABELS, rotation=40, ha="right", fontsize=7.4); ax.set_yticklabels(LABELS, fontsize=7.4)
         for sp in ax.spines.values():
             sp.set_visible(False)
-        ax.set_title("(b) cosine between the per-bin directions", loc="left", color=INK)
+        ax.set_title("(b) cosine between the per-bin probe weights", loc="left", color=INK)
         cb = fig.colorbar(im, cax=cax); cb.ax.tick_params(labelsize=7.5)
         st = _sigmoid_panel(axc, title_prefix="(c) ")
         save(fig, "fig_results_belief.png")
     off = Cm[~np.eye(nb, dtype=bool)]
     (OUTS[1] / "belief_stats.json").write_text(json.dumps(dict(
         bins=LABELS, logistic=log.tolist(), mlp=mlp.tolist(), single_direction=dm.tolist(),
-        cosine=Cm.round(4).tolist(), off_diag_mean=float(off.mean()), off_diag_min=float(off.min())), indent=1))
+        cosine=Cm.round(4).tolist(), off_diag_mean=float(off.mean()), off_diag_min=float(off.min()),
+        cosine_dm=C_dm.round(4).tolist(), cosine_probe=C_probe.round(4).tolist(),
+        probe_vs_dm_diag=[float(a @ b) for a, b in zip(Wp, V)]), indent=1))
 
 
 # ────────────────────────────────────────────────────────── results: steer ──
