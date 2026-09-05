@@ -3,7 +3,7 @@
 \subsection{Belief is represented as a single direction}
 \label{sec:res_belief}
 Figure~\ref{fig:results_belief}a shows that accuracy rises with the evidence seen, from
-$83\%$ in the first bin to $99\%$ from the corridor onwards, where the three readouts agree to within a point. It is surprising that the non-linear MLP probe generalizes \emph{worse} than a single 1D logistic probe: it trails the scalar by nine points in the first bin and never leads it by more than one. All the information relevant for the belief is present along a single direction in activation space. This is the picture drawn by the linear representation hypothesis \citep{park2024linear,elhage2022toy}: a concept learned through minimizing a general loss function is represented as a single direction.
+$83\%$ in the first bin to $99\%$ from the corridor onwards: the decoded belief matches the real map category at every stage of the map. It is surprising that the non-linear MLP probe generalizes \emph{worse} than a single 1D logistic probe: it trails the scalar by nine points in the first bin and never leads it by more than one. All the information relevant for the belief is present along a single direction in activation space. This is the picture drawn by the linear representation hypothesis \citep{park2024linear,elhage2022toy}: a concept learned through minimizing a general loss function is represented as a single direction.
 
 This direction is not fixed across the stages of an episode. Figure~\ref{fig:results_belief}b shows that
 neighbouring bins agree, with a cosine of $0.88$ between the two corridor bins, while the earliest and the last differ most with a similarity of $0.33$: it looks like the code drifts, perhaps as a rotation, as evidence accumulates over an episode. We therefore choose \textit{corr2} to fit the direction $\mathbf{v}$ where the belief is complete and the flags are not yet in view. Figure~\ref{fig:results_belief}c shows the logistic regression fit on $b_t=\mathbf{h}_t^{\top}\mathbf{v}$
@@ -45,7 +45,7 @@ agent. On balanced maps the steering works in both directions. Dashed grey: the 
 
 \subsection{Behavioral steering corrupts the belief}
 \label{sec:res_steer}
-We select the held-out maps on which the unsteered agent uses both tools at least once ($138$ balanced, $62$ lakes and $61$ rocky maps), six rollouts each, and apply the gated clamp with thresholds and release windows chosen on training maps and frozen (Appendix~\ref{app:steering-algorithm}).
+We select maps on which the unsteered agent uses both tools at least once, six rollouts each. %with the thresholds and release windows chosen on training maps and frozen ($\theta=5\cdot10^{-3}$ and an $8$-step window for \textsc{build}, $\theta=10^{-3}$ and $5$ steps for \textsc{mine}). 
 The behavior changes as intended. Suppressing \textsc{build} lowers bridging on $47/62$ lakes maps (median $-21\%$ per map), $53/61$ rocky maps ($-88\%$) and $112/138$ balanced maps ($-45\%$); suppressing \textsc{mine} lowers tunnelling on $45/62$, $51/61$ and $94/138$ maps. The untouched tool moves little, and we show minimal degradation in navigation skills: timeouts stay at or below $6\%$, except when
 tunnelling is suppressed on rocky maps ($14\%$). The intervention is, after all, a gradient based attack on the action
 distribution \citep{huang2017adversarial}, and at the action head it does exactly what it is asked.
