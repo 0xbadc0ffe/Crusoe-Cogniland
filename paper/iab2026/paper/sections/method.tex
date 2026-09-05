@@ -1,7 +1,3 @@
-% ---------------------------------------------------------------------------
-% Method (concise). Details live in the appendix files sections/app_*.tex.
-% Earlier versions: sections/method_prev*.tex.
-% ---------------------------------------------------------------------------
 \section{Methodology}
 \label{sec:method}
 
@@ -70,20 +66,18 @@ In each bin we compare three readouts of $\mathbf{h}_t$: a logistic-regression p
 A direction may be decodable even if it is not used by the policy \citep{alain2017probes}. To test whether
 $\mathbf{v}$ influences the flag decision, we push the state along this direction and leave every other
 direction untouched,
-$\mathbf{h}'=\mathbf{h}+s\,\alpha\,g\,\mathbf{v}$,
+$\mathbf{h}'=\mathbf{h}\pm \alpha\,g\,\mathbf{v}$,
 where $g=b^{\star}_{\text{rocky}}-b^{\star}_{\text{lakes}}$ is the distance between
-the two category poles, $s=+1$ pushes toward rocky and $s=-1$ toward lakes, and
-$\alpha$ is the dose: $\alpha=0$ is the unsteered agent and $\alpha=1$ moves the
+the two category poles, a positive edit pushes toward rocky and a negative edit toward lakes. $\alpha=0$ is the unsteered agent and $\alpha=1$ moves the
 belief coordinate by one full pole-to-pole distance. The write is applied once at
 the entry of bin \textit{corr2}; lakes maps are pushed toward rocky, rocky maps
 toward lakes and balanced maps in both directions, and the outcome is the
 decision $D$ as a function of $\alpha$. As a control we apply a displacement of
 the same size, $\alpha g$, along random directions.
 
-\paragraph{Steering.}
+\paragraph{Activation Steering.}
 \label{sec:steering}
-Activation steering edits $\mathbf{h}_t$ directly, as popular steering methods
-do \citep{turner2023actadd,rimsky2024caa,zou2023repe}. To suppress the skill
+Interventions edit $\mathbf{h}_t$ directly, as popular steering methods do \citep{turner2023actadd,rimsky2024caa,zou2023repe}. To suppress the skill
 associated with an action $\bar a$, here \textsc{build} or \textsc{mine}, we
 drive its probability $\pi(\bar a\mid\mathbf{h})$ below a threshold $\theta$ by
 gradient steps in activation space:

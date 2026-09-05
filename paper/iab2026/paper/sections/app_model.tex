@@ -12,6 +12,7 @@ five scalars are projected to a $256$-d embedding, and a single-layer GRU with a
 $128$-d state carries the only memory. Two linear heads read the state. There is
 no other head and no other loss: the map category is never given to the network
 as a target, so any belief in $\mathbf{h}_t$ is learned from reward alone.
+
 \begin{figure}[h]
     \centering
     \input{figures/model_diagram}
@@ -22,7 +23,7 @@ as a target, so any belief in $\mathbf{h}_t$ is learned from reward alone.
     $256$-d embedding; The observation embedding is fed to a GRU with $128$-d hidden state $\mathbf{h}_t$. The Actor and Critic are just linear projections of $\mathbf{h}_t$}
     \label{fig:model}
 \end{figure}
-\begin{table}[t]
+\begin{table}[h]
 \centering
 \small
 \caption{\textbf{Architecture of the PPO+GRU agent.} The two coordinate
@@ -60,7 +61,20 @@ task, so the recipe is not fragile in that knob. An otherwise equal agent
 trained with an auxiliary category head scores the same held out, so
 supervising the belief buys nothing.
 
-\begin{table}[t]
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/training_curves.png}
+\caption{\textbf{Training curves, mean $\pm$ one standard deviation over five
+seeds.} Return per episode, success on all maps, and success on the decisive
+lakes and rocky maps, against environment steps. The feed-forward control
+plateaus at the constant-flag optimum: two thirds of maps overall and chance
+on the decisive ones. The recurrent agent's band is wide early and late
+because one of its five seeds collapses to the same constant flag; the others
+reach near-perfect success.}
+\label{fig:training}
+\end{figure}
+
+\begin{table}[h]
 \centering
 \small
 \caption{\textbf{Training hyperparameters.} Identical for the recurrent agent
@@ -106,7 +120,7 @@ right on all balanced maps and on one of the two decisive categories, at
 chance on the decisive maps as a whole. The gap between the two agents is
 therefore the memory itself, the belief integrated across the corridor.
 
-\begin{table}[t]
+\begin{table}[h]
 \centering
 \small
 \caption{\textbf{Held-out results of every seed}, $1{,}200$ test maps, one
@@ -144,15 +158,4 @@ mean $\pm$ std & 66.4 $\pm$ 0.1 & 49.9 $\pm$ 0.1 & 99.6 $\pm$ 0.3 & 19.9 $\pm$ 3
 \end{table}
 
 
-\begin{figure}[t]
-\centering
-\includegraphics[width=\linewidth]{figures/training_curves.png}
-\caption{\textbf{Training curves, mean $\pm$ one standard deviation over five
-seeds.} Return per episode, success on all maps, and success on the decisive
-lakes and rocky maps, against environment steps. The feed-forward control
-plateaus at the constant-flag optimum: two thirds of maps overall and chance
-on the decisive ones. The recurrent agent's band is wide early and late
-because one of its five seeds collapses to the same constant flag; the others
-reach near-perfect success.}
-\label{fig:training}
-\end{figure}
+

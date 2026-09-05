@@ -2,7 +2,7 @@
 \centering
 \small
 \setlength{\tabcolsep}{6pt}
-\caption{\textbf{Behaviour steering on every eligible held-out map.} Gated gradient clamp at the frozen operating points, six sampled rollouts per map and regime with identical seeds; a map is eligible when two unsteered rollouts used both tools (138 balanced, 62 lakes, 61 rocky maps). \emph{\# bridges} and \emph{\# tunnels} are successful tool uses per episode, the lowest of each category in bold; \emph{timeout}, \emph{rocky flag} and \emph{lakes flag} are shares of episodes and sum to one; $\hat b(\text{rocky})$ is the mean probability that the map is rocky under the logistic probe on the single belief scalar $\hat b$. On lakes maps the rocky flag pays nothing and on rocky maps the lakes flag pays nothing; those cells are in red.}
+\caption{\textbf{Steering behavior corrupts the belief} Gated gradient clamp on maps where both tools are used at least once (138 balanced, 62 lakes, 61 rocky maps). \emph{\# bridges} and \emph{\# tunnels} are successful tool uses per episode, the lowest of each category in bold; \emph{timeout} is the ratio of episodes that didn't reach a flag. \emph{rocky flag} and \emph{lakes flag} show the agent's decision; $\hat b(\text{rocky})$ is the mean probability of the real map category based on belief readout. Failure modes are highlighted in red}
 \label{tab:clamp_all}
 \begin{tabular}{@{}llrrrrrr@{}}
 \toprule
