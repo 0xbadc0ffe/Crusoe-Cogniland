@@ -257,7 +257,7 @@ def fig_belief():
         w = LogisticRegression(max_iter=5000, C=1.0).fit(M[m], y).coef_[0]; Wp.append(w / np.linalg.norm(w))
     C_dm = np.stack(V) @ np.stack(V).T
     C_probe = np.stack(Wp) @ np.stack(Wp).T
-    Cm = C_probe
+    Cm = C_dm            # panel (b) shows the difference-of-means directions; the probe matrix is kept in belief_stats.json
     with plt.rc_context(RC):
         # explicit axes in inches so every panel keeps its natural proportions
         W, Hf = 15.2, 4.5
@@ -295,7 +295,7 @@ def fig_belief():
         ax.set_xticklabels(LABELS, rotation=40, ha="right", fontsize=7.4); ax.set_yticklabels(LABELS, fontsize=7.4)
         for sp in ax.spines.values():
             sp.set_visible(False)
-        ax.set_title("(b) cosine between the per-bin probe weights", loc="left", color=INK)
+        ax.set_title("(b) cosine between the per-bin directions", loc="left", color=INK)
         cb = fig.colorbar(im, cax=cax); cb.ax.tick_params(labelsize=7.5)
         st = _sigmoid_panel(axc, title_prefix="(c) ")
         save(fig, "fig_results_belief.png")
