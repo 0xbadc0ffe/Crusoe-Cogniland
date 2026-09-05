@@ -1,0 +1,26 @@
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{6pt}
+\caption{\textbf{Behaviour steering on every eligible held-out map.} Gated gradient clamp at the frozen operating points, six sampled rollouts per map and regime with identical seeds; a map is eligible when two unsteered rollouts used both tools (138 balanced, 62 lakes, 61 rocky maps). \emph{\# bridges} and \emph{\# tunnels} are successful tool uses per episode, the lowest of each category in bold; \emph{timeout}, \emph{rocky flag} and \emph{lakes flag} are shares of episodes and sum to one; $\hat b(\text{rocky})$ is the mean probability that the map is rocky under the logistic probe on the single belief scalar $\hat b$. On lakes maps the rocky flag pays nothing and on rocky maps the lakes flag pays nothing; those cells are in red.}
+\label{tab:clamp_all}
+\begin{tabular}{@{}llrrrrrr@{}}
+\toprule
+& & & & \multicolumn{3}{c}{share of episodes} & \\
+\cmidrule(lr){5-7}
+Category & Regime & \# bridges & \# tunnels & timeout & rocky flag & lakes flag & $\hat b(\text{rocky})$ \\
+\midrule
+balanced & unsteered & 4.21 & 4.94 & 0.00 & 0.60 & 0.40 & 0.61 \\
+ & suppress bridge & \textbf{2.61} & 4.79 & 0.01 & 0.97 & 0.02 & 0.97 \\
+ & suppress tunnel & 4.12 & \textbf{3.83} & 0.06 & 0.19 & 0.75 & 0.23 \\
+\midrule
+lakes & unsteered & 6.04 & 1.92 & 0.00 & 0.01 & 0.99 & 0.03 \\
+ & suppress bridge & \textbf{4.66} & 1.94 & 0.05 & \textcolor{red}{\textbf{0.74}} & 0.22 & 0.79 \\
+ & suppress tunnel & 6.25 & \textbf{1.31} & 0.00 & 0.00 & 1.00 & 0.02 \\
+\midrule
+rocky & unsteered & 1.98 & 6.86 & 0.00 & 0.96 & 0.04 & 0.96 \\
+ & suppress bridge & \textbf{0.96} & 7.03 & 0.00 & 1.00 & 0.00 & 0.99 \\
+ & suppress tunnel & 2.02 & \textbf{5.42} & 0.14 & 0.43 & \textcolor{red}{\textbf{0.43}} & 0.50 \\
+\bottomrule
+\end{tabular}
+\end{table}

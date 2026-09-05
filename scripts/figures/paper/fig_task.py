@@ -110,7 +110,38 @@ def obs_rgb(crop, facing, sprites, tp):
     return np.transpose(pygame.surfarray.array3d(surf), (1, 0, 2)).copy()
 
 
-def fig_anatomy(by_cat, out, ppo_ckpt, shot_ts=(0, 50, "corridor"), rollout_seed=2):
+def rock_to_lake(terrain, min_size=8, seed_cell=None):
+    """Cosmetic edit for the anatomy figure: recolour the bottom-left rock massif
+    as a lake (rock -> water, its dirt fringe -> sand). Returns the edited terrain
+    and the mask of changed cells. The episode is NOT re-run on the edited map;
+    the trajectory and observations come from the real map and only the changed
+    cells are repainted, so the figure shows a lake where the agent saw rock."""
+    from scipy import ndimage
+    H, W = terrain.shape
+    lab, n = ndimage.label(terrain == T.ROCK, structure=np.ones((3, 3), bool))
+    comps = []
+    for k in range(1, n + 1):
+        rr, cc = np.where(lab == k)
+        comps.append((k, rr.mean(), cc.mean(), len(rr)))
+    if seed_cell is not None:                            # the massif containing this cell
+        k = int(lab[seed_cell])
+        assert k > 0, f"{seed_cell} is not a rock cell"
+    else:
+        cand = [c for c in comps if c[1] > H / 2 and c[3] >= min_size]
+        k = min(cand, key=lambda c: c[2])[0]             # leftmost of the bottom half
+    mask = lab == k
+    rr, cc = np.where(mask)
+    print(f"  rock->lake: component {k}, {int(mask.sum())} cells, rows {rr.min()}-{rr.max()} "
+          f"cols {cc.min()}-{cc.max()}")
+    t2 = terrain.copy()
+    t2[mask] = T.WATER
+    ring = ndimage.binary_dilation(mask, structure=np.ones((3, 3), bool)) & ~mask
+    t2[ring & (terrain == T.DIRT)] = T.SAND
+    return t2, t2 != terrain
+
+
+def fig_anatomy(by_cat, out, ppo_ckpt, shot_ts=(0, 50, "corridor"), rollout_seed=2,
+                lake_from_rock=True, lake_seed=None, fname="fig_task_anatomy.png"):
     pygame.init(); pygame.display.set_mode((1, 1))
     sprites = load_sprites(10)
 
@@ -170,13 +201,42 @@ def fig_anatomy(by_cat, out, ppo_ckpt, shot_ts=(0, 50, "corridor"), rollout_seed
             return int(np.argmin([abs(e["pos"][1] - mid_col) for e in log]))
         return min(int(spec), len(log) - 1)
 
+    Hm, Wm = rec.terrain.shape
+    terr_show = rec.terrain
+    if lake_from_rock:
+        terr_show, changed = rock_to_lake(rec.terrain, seed_cell=lake_seed)
+
+    def patch_crop(crop, pos):
+        """Repaint the changed map cells inside an egocentric crop (agent at centre)."""
+        if not lake_from_rock:
+            return crop
+        V = crop.shape[0]; h = V // 2
+        out = crop.copy()
+        n = 0
+        for i in range(V):
+            r = pos[0] - h + i
+            if not 0 <= r < Hm:
+                continue
+            for j in range(V):
+                c = pos[1] - h + j
+                if 0 <= c < Wm and changed[r, c]:
+                    out[i, j] = terr_show[r, c]; n += 1
+        print(f"  crop at {tuple(int(x) for x in pos)}: {n} cells repainted")
+        return out
+
+    # sanity: the t=0 crop must be the centred, unrotated slice of the real map
+    e0 = log[0]; V = e0["crop"].shape[0]; h = V // 2
+    for i in range(V):
+        for j in range(V):
+            r, c = e0["pos"][0] - h + i, e0["pos"][1] - h + j
+            if 0 <= r < Hm and 0 <= c < Wm:
+                assert int(e0["crop"][i, j]) == int(rec.terrain[r, c]), "crop is not a centred slice"
+
     shots = []
     for spec in shot_ts:
         e = log[resolve(spec)]
         shots.append((f"t = {e['t']} · {label_for(e['pos'])}", e["pos"],
-                      obs_rgb(e["crop"], e["facing"], sprites, 10)))
-
-    Hm, Wm = rec.terrain.shape
+                      obs_rgb(patch_crop(e["crop"], e["pos"]), e["facing"], sprites, 10)))
     top_r = rec.top_goal_cells[0][0]
 
     with plt.rc_context(PLT_RC):
@@ -185,7 +245,7 @@ def fig_anatomy(by_cat, out, ppo_ckpt, shot_ts=(0, 50, "corridor"), rollout_seed
                               top=.925, bottom=.02, left=.02, right=.98)
 
         axm = fig.add_subplot(gs[0, :])
-        axm.imshow(T.TILE_COLORS[rec.terrain], interpolation="nearest")
+        axm.imshow(T.TILE_COLORS[terr_show], interpolation="nearest")
         axm.add_patch(Rectangle((mem_lo - .5, -.5), wall - mem_lo, Hm,
                                 facecolor="black", alpha=.20, zorder=3))
         axm.plot(traj[:, 1], traj[:, 0], color="#fde68a", lw=1.8, zorder=6)
@@ -196,15 +256,10 @@ def fig_anatomy(by_cat, out, ppo_ckpt, shot_ts=(0, 50, "corridor"), rollout_seed
                 axm.add_patch(Rectangle((c - .5, r - .5), 1, 1, fill=False,
                                         edgecolor="#22c55e" if good else "#ef4444",
                                         lw=2.2, zorder=8))
-        if rec.passage_cells:
-            pr = [c[0] for c in rec.passage_cells]
-            axm.add_patch(Rectangle((pass_col - .5, min(pr) - .5), 1, len(pr),
-                                    fill=False, edgecolor="#38bdf8", lw=1.8, zorder=8))
         for x, y, txt, col in (
                 (mem_lo / 2, 2.4, "1 · evidence\n(terrain reveals the type)", "white"),
-                ((mem_lo + wall) / 2, 2.4, "2 · memory corridor\n(16 columns, no evidence)", "white"),
-                (pass_col - 5.5, Hm - 2.6, "3 · passage", "#38bdf8"),
-                (Wm - 7.0, top_r - 2.6, "4 · door choice", "white")):
+                ((mem_lo + wall) / 2, 2.4, "2 · memory corridor\n(no evidence)", "white"),
+                (Wm - 7.0, top_r - 2.6, "3 · flag choice", "white")):
             axm.annotate(txt, (x, y), color=col, fontsize=8, ha="center", va="center",
                          zorder=10, bbox=dict(boxstyle="round,pad=.25", fc="black",
                                               alpha=.72, ec="none"))
@@ -226,11 +281,7 @@ def fig_anatomy(by_cat, out, ppo_ckpt, shot_ts=(0, 50, "corridor"), rollout_seed
             fig.add_artist(con)
             axm.plot(pos[1], pos[0], "o", color="#94a3b8", mec="black", ms=5, zorder=11)
 
-        fig.suptitle(TXT.FIG02["title"], y=.985, fontsize=12)
-        fig.text(.5, .958, "what the agent receives — a 21×21 egocentric crop "
-                 "(Crafter tiles) plus heading and elapsed time; black = out of bounds",
-                 ha="center", fontsize=8.5, color="#6d7a70")
-        fig.savefig(out / "fig_task_anatomy.png", bbox_inches="tight")
+        fig.savefig(out / fname, bbox_inches="tight")
         plt.close(fig)
 
 
@@ -243,11 +294,23 @@ def main():
                    help='timesteps of the three Figure 2 callouts; the literal '
                         '"corridor" resolves to the midpoint of the memory corridor')
     p.add_argument("--rollout-seed", type=int, default=2)
+    p.add_argument("--no-lake-from-rock", action="store_true",
+                   help="do not recolour a rock massif as a lake in the anatomy figure")
+    p.add_argument("--lake-seed", default="14,12",
+                   help="'row,col' of a rock cell: recolour the massif containing it; "
+                        "'auto' picks the leftmost massif of the bottom half. The default "
+                        "is inside the big left mountain of the figure map, the one whose "
+                        "western edge fills the right side of the t=0 observation")
+    p.add_argument("--anatomy-name", default="fig_task_anatomy.png")
     a = p.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     _, by_cat = load_by_cat(a.maps)
     fig_categories(by_cat, out)
-    fig_anatomy(by_cat, out, a.ppo_ckpt, tuple(a.shots), a.rollout_seed)
+    seed_cell = (None if a.lake_seed in (None, "auto")
+                 else tuple(int(x) for x in a.lake_seed.split(",")))
+    fig_anatomy(by_cat, out, a.ppo_ckpt, tuple(a.shots), a.rollout_seed,
+                lake_from_rock=not a.no_lake_from_rock, lake_seed=seed_cell,
+                fname=a.anatomy_name)
     print("wrote task figures ->", out)
 
 

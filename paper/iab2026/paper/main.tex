@@ -1,0 +1,141 @@
+\documentclass{article}
+
+% Submission: no options (anonymized, line numbers).
+% Camera-ready: \usepackage[main, final]{neurips_2026}
+% Preprint:     \usepackage[preprint]{neurips_2026}
+\usepackage{neurips_2026}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{amsmath}        % equation environments (patched for line numbers)
+\usepackage{graphicx}       % \includegraphics
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{xcolor}         % colors
+\usepackage{amssymb}
+\usepackage{tikz}
+\usepackage{enumitem}
+\usepackage{placeins}
+\usetikzlibrary{arrows.meta,positioning}
+\usepackage{svg}
+\graphicspath{{../../figures/}}
+
+\title{Activation Steering Corrupts Agent Beliefs}
+
+\author{%
+  Anonymous Author(s) \\
+  Anonymous Affiliation \\
+  \texttt{anonymous@example.com} \\
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Activation steering is spreading from language models to Reinforcement Learning (RL) agents, where it is proposed as a lightweight test-time behavioral intervention. Whether such edits are safe for recurrent RL agents, which carry their beliefs in their hidden state is an open question. We introduce Cogniland, a procedurally generated partially observable navigation task in which an agent must integrate evidence into a belief about a hidden map property. We find that \textbf{(i)} the belief is encoded as a single direction of the recurrent state. one single scalar matches the performance as a non-linear probe on the full state \textbf{(ii)} such belief is causal: editing the hidden state along this direction gradually shifts the model’s decision on a downstream task. \textbf{(iii)} Steering the agent to suppress a navigation skill corrupts the belief and thus degrades the final decision performance. We attribute the corruption to entanglement: behavioral skills and belief states are not separable in hidden state. Steering methods for stateful agents need careful evaluation across different tasks and capabilities.
+\end{abstract}
+
+\input{sections/introduction}
+
+
+\input{sections/method}
+
+\section{Results}
+
+\subsection{Beliefs induce decision making}
+% show that a sigle direction recovers the ground-truth belief just as well as linear/ non linear probes on the full hidden state. Causality
+
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_results_belief.png}
+\caption{\textbf{One direction reads the belief as well as a probe on the
+full state.} (a) Held-out accuracy for rocky against lakes in every position
+bin: a logistic-regression probe and an MLP probe on the full $128$-d state,
+and a logistic regression on the single scalar $b_t=\mathbf{h}_t^{\top}\mathbf{v}$,
+with $\mathbf{v}$ the difference of class means fitted per bin on training
+maps. The scalar matches the full-state probes everywhere, and all three reach
+$0.98$ or more from the corridor on. (b) Cosine between the single directions
+fitted in different bins. The evidence-phase directions agree with each other
+and with the corridor's; the direction at the passage is only partly aligned
+with the earlier ones, so the code rotates once the decision is being executed.
+(c) The belief scalar in the last corridor bin, one point per held-out map on the
+row of its true category; the curve is the logistic regression on this scalar,
+fitted on the fit split of lakes and rocky maps and scored at $0.989$ on the
+rest, the dashed line its decision boundary. Balanced maps, never used to fit
+$\mathbf{v}$ or the curve, do not sit in between: they split into the same two
+clusters, $57\%$ on the rocky side.}
+\label{fig:results_belief}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_results_causal.png}
+\caption{\textbf{Writing to the direction moves the decision.} One write of
+$\mathbf{h}\leftarrow\mathbf{h}+\alpha\mathbf{v}$ at the entry of the last
+corridor bin, where $\mathbf{v}$ is fitted, on $100$ held-out maps per
+category; the flag taken is recorded, error bars are one binomial standard
+deviation. A push toward rocky sends lakes maps to the top flag and a push
+toward lakes sends rocky maps to the bottom flag, with a sigmoidal dose
+response that saturates by $\alpha\approx1$; $\alpha=0$ is the unsteered
+agent. On balanced maps, where both flags pay, the same write chooses the flag
+outright in either direction.}
+\label{fig:results_causal}
+\end{figure}
+
+\subsection{Behavioral steering corrupts the belief}
+%show that steering changes behavior as intended, and that the decoded belief degrades as a function of steering strength.
+
+\input{figures/tab_clamp_all_eligible}
+
+\section{Related work}
+% Activation Steering Compromises LLM Safety https://arxiv.org/abs/2509.22067
+% Steering Vectors are an Adversarial Attack Surface https://arxiv.org/abs/2606.05958
+
+\section{Discussion}
+
+\subsection{Limitations}
+
+\subsection{Future directions}
+% belief-preserving steering, World Models, LLMs
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\appendix
+APPENDIX NOT REVIEWED
+
+\section{Measures and statistics}
+\label{app:measures}
+\input{sections/app_measures}
+\FloatBarrier
+
+\section{Procedural generation of maps}
+\label{app:map-generation}
+\input{sections/app_task}
+\FloatBarrier
+
+\input{sections/app_model}
+\FloatBarrier
+
+\input{sections/app_dataset}
+\FloatBarrier
+
+\section{Belief linearity and causality}
+\label{app:belief-causality}
+\input{sections/app_decoding}
+\FloatBarrier
+
+\section{Steering algorithm}
+\label{app:steering-algorithm}
+\input{sections/app_steering}
+\FloatBarrier
+
+\newpage
+
+\end{document}

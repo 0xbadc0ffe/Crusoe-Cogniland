@@ -1,0 +1,30 @@
+\paragraph{Behaviour.}
+Behaviour is counted in \emph{successful} tool events, a rock actually removed
+or a plank actually placed, never in action presses, which repeat when the
+agent is blocked. On the held-out balanced maps used for steering, a
+tool-free route to a flag exists on every map (cost-to-go reachability with
+both tools disabled), so suppressing a tool never makes a map unsolvable,
+only costlier. Every steered episode is paired with the unsteered agent on
+the same map and the same rollout seed; we report the per-map percentage
+change in the suppressed tool, summarised as the median over maps and the
+number of maps on which the count fell, together with the untouched tool's
+count. Task outcome is the true flag metric, whether the final cell is a
+rewarding flag, never a positive return, since a fast wrong-flag episode
+collects more shaping than it loses in slack. Failures are split into timeouts
+and wrong flags; on balanced maps we also record the top-flag rate.
+
+\paragraph{Belief corruption.}
+The belief shift of an episode is $\Delta\hat b=\hat b_{\text{steered}}-\hat b_{\text{unsteered}}$, paired per map. Its scale is set by a \emph{seed-only
+null}, the unsteered agent re-run with fresh rollout seeds on the same maps,
+whose per-map $|\Delta\hat b|$ is the noise floor, so shifts are reported in
+floors. We also report the crossing rate, the fraction of steered episodes
+whose belief crosses the midpoint $m$, and the per-map shift of the chosen
+flag against the same null. A \emph{null edit} sets $\theta=1$, a threshold that can
+never be exceeded, so the clamp never fires and the trajectory is
+byte-identical to the unsteered one. A \emph{matched random
+direction} re-runs every episode applying the per-step displacement
+magnitudes recorded from the real edit along directions that carry no
+information, redrawn at every step or drawn once and held for the episode.
+Significance is a paired sign-flip permutation test over maps with $20{,}000$
+draws, and every quantity reported as within its floor comes with a
+percentile bootstrap interval over maps.

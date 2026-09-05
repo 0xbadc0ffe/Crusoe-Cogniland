@@ -1,0 +1,63 @@
+\section{Activation dataset}
+\label{app:dataset}
+All belief analyses run on one activation dataset: the released agent plays
+each of the $1{,}200$ held-out maps exactly once with sampled actions, and
+every timestep is recorded. Episodes are seeded as $1000 + \text{map id}$, and
+a replay under the same seed reproduces the stored trajectory action for action,
+which is what lets a steered re-run be diffed against its baseline step by
+step. The PPO half holds $106{,}473$ steps. Per step we store the $128$-d GRU
+state the actor consumed (float16, $27$\,MB) and the variables of
+Table~\ref{tab:steps}; per episode, the summary of Table~\ref{tab:episodes}.
+The same protocol was recorded for two world-model agents on the same maps and
+seeds; this paper uses only the PPO agent.
+
+\begin{table}[t]
+\centering
+\small
+\caption{\textbf{Variables logged at every timestep.} Positions are grid
+coordinates with the origin at the top-left corner. ``Seen'' counts are taken
+at first sight: a cell contributes once, when it first enters the $21\times21$
+view.}
+\label{tab:steps}
+\begin{tabular}{@{}lp{9.6cm}@{}}
+\toprule
+Variable & Description \\
+\midrule
+\texttt{ep}, \texttt{map\_id} & Episode index and index of the map in the held-out pool (equal, one episode per map) \\
+\texttt{category} & The map's hidden category: lakes, rocky or balanced \\
+\texttt{t} & Timestep within the episode \\
+\texttt{row}, \texttt{col} & Agent position before acting \\
+\texttt{facing} & Facing direction (up, down, left, right) \\
+\texttt{action} & Action taken: four moves, \textsc{build}, \textsc{mine} \\
+\texttt{reward} & Reward received for this step (Equation~\ref{eq:reward}) \\
+\texttt{ret} & Cumulative return up to and including this step \\
+\texttt{water\_seen}, \texttt{rock\_seen} & Cumulative number of water and rock cells seen so far, the evidence available to the agent \\
+\texttt{water\_now}, \texttt{rock\_now} & Number of water and rock cells in the current view \\
+\texttt{phase} & \emph{evidence} (before the corridor), \emph{corridor}, or \emph{past\_wall} (at or beyond the passage) \\
+\texttt{col\_rel\_wall} & Column relative to the passage (negative before it); the time axis of every binned analysis \\
+$\mathbf{h}_t$ & The GRU state that produced the action, stored separately as a $128$-d vector \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\small
+\caption{\textbf{Variables logged per episode.}}
+\label{tab:episodes}
+\begin{tabular}{@{}lp{9.6cm}@{}}
+\toprule
+Variable & Description \\
+\midrule
+\texttt{correct\_target} & The rewarding flag: top, bottom or either \\
+\texttt{seed} & Rollout seed, $1000 + \texttt{map\_id}$ \\
+\texttt{steps} & Episode length \\
+\texttt{success} & Whether the final cell is a rewarding flag (the true flag metric) \\
+\texttt{door} & Flag entered: top, bottom or none (timeout) \\
+\texttt{final\_row}, \texttt{final\_col} & Final position \\
+\texttt{ret} & Episode return \\
+\texttt{builds}, \texttt{mines} & Successful bridge placements and rock removals, the behaviour counts $\phi$ \\
+\texttt{water\_seen}, \texttt{rock\_seen} & Total water and rock cells seen over the episode \\
+\bottomrule
+\end{tabular}
+\end{table}

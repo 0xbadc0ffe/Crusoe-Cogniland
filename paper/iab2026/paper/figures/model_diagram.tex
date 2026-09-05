@@ -1,0 +1,33 @@
+% PPO+GRU agent. Included from sections/method.tex.
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\scriptsize,
+  box/.style={draw, rounded corners=2pt, fill=gray!8, minimum height=10mm,
+              inner sep=3pt, align=center},
+  arr/.style={-{Latex[length=2mm]}, thick},
+  node distance=5mm and 5mm]
+  \node[box] (obs) {egocentric\\view};
+  \node[box, right=of obs] (enc) {one-hot\\$+$ CoordConv};
+  \node[box, right=of enc] (cnn) {$3\times$ convolution};
+  \node[circle, draw, inner sep=1pt, right=6mm of cnn] (cat) {$\oplus$};
+  \node[box, right=6mm of cat] (mlp) {Linear ReLU\\$7205\to256$};
+  \node[box, right=of mlp, fill=gray!25, thick] (gru) {GRU\\$\mathbf{h}_t\in\mathbb{R}^{128}$};
+  \node[below=5mm of cat] (sc) {scalars};
+  \coordinate[right=9mm of gru] (split);
+  \node[box, above right=2.5mm and 7mm of split] (actor) {Linear Actor\\$\pi$};
+  \node[box, below right=2.5mm and 7mm of split] (critic) {Linear Critic\\$V$};
+  \node[right=3mm of actor] (acts) {$6$ actions};
+  \draw[arr] (obs) -- (enc);
+  \draw[arr] (enc) -- (cnn);
+  \draw[arr] (cnn) -- (cat);
+  \draw[arr] (cat) -- (mlp);
+  \draw[arr] (sc) -- (cat);
+  \draw[arr] (mlp) -- (gru);
+  \draw[thick] (gru) -- (split) node[midway, above] {$\mathbf{h}_t$};
+  \draw[arr] (split) |- (actor);
+  \draw[arr] (split) |- (critic);
+  \draw[arr] (actor) -- (acts);
+  \fill (split) circle (1pt);
+  \draw[arr, dashed] (split) ++(-4.5mm,0) -- ++(0,-10mm) -| (gru.south)
+        node[pos=0.25, below] {$\mathbf{h}_{t-1}$};
+\end{tikzpicture}}

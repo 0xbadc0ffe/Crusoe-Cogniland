@@ -1,0 +1,158 @@
+\section{Model, training and the feed-forward control}
+\label{app:model}
+
+\paragraph{Architecture.}
+
+
+Table~\ref{tab:arch} lists the network layer by layer. The tile crop is one-hot
+over nine tile types with two coordinate channels appended, the CoordConv
+construction of \citet{liu2018intriguing}; three valid $3\times3$
+convolutions reduce it to $15\times15\times32$, the flattened features and the
+five scalars are projected to a $256$-d embedding, and a single-layer GRU with a
+$128$-d state carries the only memory. Two linear heads read the state. There is
+no other head and no other loss: the map category is never given to the network
+as a target, so any belief in $\mathbf{h}_t$ is learned from reward alone.
+\begin{figure}[h]
+    \centering
+    \input{figures/model_diagram}
+\caption{\textbf{The agent.} The $21\times21$ tile view is one-hot encoded with
+    two coordinate channels appended \citep{liu2018intriguing}, passed through
+    three layers of convolutions, concatenated with five scalars ('facing' variable one-hot(4) and time passed (1)).
+    This vector is projected to a
+    $256$-d embedding; The observation embedding is fed to a GRU with $128$-d hidden state $\mathbf{h}_t$. The Actor and Critic are just linear projections of $\mathbf{h}_t$}
+    \label{fig:model}
+\end{figure}
+\begin{table}[t]
+\centering
+\small
+\caption{\textbf{Architecture of the PPO+GRU agent.} The two coordinate
+channels follow \citet{liu2018intriguing}. Weights are initialised
+orthogonally, the actor with gain $0.01$. $2{,}015{,}559$ parameters in total.}
+\label{tab:arch}
+\begin{tabular}{@{}llrr@{}}
+\toprule
+Layer & Detail & Output & Parameters \\
+\midrule
+Input & $21\times21$ crop, one-hot $9$ tiles $+\,2$ CoordConv channels & $21\times21\times11$ & -- \\
+Conv 1 & $3\times3$, valid, ReLU & $19\times19\times32$ & $3{,}200$ \\
+Conv 2 & $3\times3$, valid, ReLU & $17\times17\times32$ & $9{,}248$ \\
+Conv 3 & $3\times3$, valid, ReLU & $15\times15\times32$ & $9{,}248$ \\
+Embedding & flatten $(7{,}200)$ $\oplus$ $5$ scalars $\to$ linear, ReLU & $256$ & $1{,}844{,}736$ \\
+GRU & single layer, state $\mathbf{h}_t$ & $128$ & $148{,}224$ \\
+Actor & linear, categorical over $6$ actions & $6$ & $774$ \\
+Critic & linear & $1$ & $129$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Training.}
+Table~\ref{tab:hparams} gives every hyperparameter. The loss is the clipped
+PPO objective with a value term and an entropy bonus \citep{schulman2017ppo},
+advantages from generalised advantage estimation \citep{schulman2016gae}, and
+backpropagation through time over each $128$-step rollout. The entropy
+coefficient starts at $0.15$ and is annealed linearly to zero. This schedule is
+what makes the plain reward solvable: with a small entropy bonus the policy
+settles on a constant flag, which already pays on two thirds of maps, and
+never learns to use the category. The released agent is the best of five
+belief-free seeds at entropy $0.15$; four solved the task and one collapsed
+to the constant flag (Figure~\ref{fig:training}, Table~\ref{tab:seeds}). Runs at entropy $0.10$ and $0.20$ also solved the
+task, so the recipe is not fragile in that knob. An otherwise equal agent
+trained with an auxiliary category head scores the same held out, so
+supervising the belief buys nothing.
+
+\begin{table}[t]
+\centering
+\small
+\caption{\textbf{Training hyperparameters.} Identical for the recurrent agent
+and the feed-forward control.}
+\label{tab:hparams}
+\begin{tabular}{@{}lr@{}}
+\toprule
+Hyperparameter & Value \\
+\midrule
+Environment steps & $6\times10^6$ \\
+Parallel environments $\times$ rollout length & $32\times128$ \\
+Minibatches per update $\times$ epochs & $4\times4$ \\
+Optimiser, learning rate & Adam, $3\times10^{-4}$, constant \\
+Discount $\gamma$, GAE $\lambda$ & $0.99$, $0.95$ \\
+Clip $\epsilon$ & $0.2$ \\
+Value coefficient & $0.5$ \\
+Entropy coefficient & $0.15 \to 0$, linear over training \\
+Gradient-norm clip & $0.5$ \\
+Observation encoding & one-hot tiles, $21\times21$ view \\
+Map pool & $4{,}800$ training maps, categories sampled uniformly \\
+Evaluation & sampled actions, $1{,}200$ held-out maps \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Compute.}
+Each run used one NVIDIA RTX~3090 of a shared SLURM cluster, with the $32$
+environments stepped on the CPU, at about $2{,}450$ environment steps per
+second for the recurrent agent and $8{,}000$ for the feed-forward control:
+roughly $40$ minutes for a recurrent run and $13$ minutes for a feed-forward
+run of $6$\,M steps. The whole sweep of twelve runs fits in a few GPU-hours.
+
+\paragraph{Feed-forward control.}
+To separate navigation from memory we train the same network with the GRU
+replaced by a per-step linear layer with ReLU of the same width, so the agent
+sees exactly the same input and has exactly the same heads but no carried
+state. Five seeds with the same schedule as the recurrent agent, $6$\,M steps
+each; all converge within the first million steps (Figure~\ref{fig:training}). Table~\ref{tab:seeds} gives the held-out result
+of every seed of both agents. The feed-forward agent learns navigation: it
+reaches a flag on every map and crosses water and rock as needed. What it
+cannot do is choose the flag: each seed settles on one constant flag, so it is
+right on all balanced maps and on one of the two decisive categories, at
+chance on the decisive maps as a whole. The gap between the two agents is
+therefore the memory itself, the belief integrated across the corridor.
+
+\begin{table}[t]
+\centering
+\small
+\caption{\textbf{Held-out results of every seed}, $1{,}200$ test maps, one
+sampled rollout per map; both agents trained for $6$\,M steps with identical
+hyperparameters. \emph{Decisive} is success on lakes and rocky maps,
+where chance is $50\%$; \emph{top} is the share of balanced maps exited by the
+top flag. Every feed-forward seed reaches a flag on essentially every map but
+always the same one, so it scores $100\%$ on balanced maps, $100\%$ on one
+decisive category and $0\%$ on the other. Four of five recurrent seeds solve
+the task; seed~1 fell into the same constant-flag optimum. $^\dagger$The
+released agent. Evaluations sample actions, so repeated runs of one checkpoint
+differ by a few tenths of a point.}
+\label{tab:seeds}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+& Overall & Decisive & Balanced & Lakes & Rocky & Top (balanced) \\
+\midrule
+\multicolumn{7}{@{}l}{\emph{GRU (recurrent)}} \\
+seed 1 & 66.4 & 49.8 & 99.8 & 99.5 & 0.0 & 0.0 \\
+seed 2$^\dagger$ & 98.8 & 98.2 & 100.0 & 98.5 & 98.0 & 57.2 \\
+seed 3 & 97.8 & 97.0 & 99.2 & 94.2 & 99.8 & 64.0 \\
+seed 4 & 98.5 & 97.8 & 100.0 & 97.5 & 98.0 & 41.2 \\
+seed 5 & 97.2 & 96.1 & 99.5 & 98.2 & 94.0 & 71.0 \\
+mean $\pm$ std & 91.8 $\pm$ 12.7 & 87.8 $\pm$ 19.0 & 99.7 $\pm$ 0.3 & 97.6 $\pm$ 1.8 & 78.0 $\pm$ 39.0 & 46.7 $\pm$ 25.3 \\
+\addlinespace
+\multicolumn{7}{@{}l}{\emph{Feed-forward control}} \\
+seed 1 & 66.5 & 49.9 & 99.8 & 99.8 & 0.0 & 0.0 \\
+seed 2 & 66.5 & 49.9 & 99.8 & 0.0 & 99.8 & 99.8 \\
+seed 3 & 66.2 & 49.9 & 99.0 & 0.0 & 99.8 & 99.0 \\
+seed 4 & 66.5 & 49.9 & 99.8 & 0.0 & 99.8 & 99.8 \\
+seed 5 & 66.4 & 49.8 & 99.8 & 0.0 & 99.5 & 99.8 \\
+mean $\pm$ std & 66.4 $\pm$ 0.1 & 49.9 $\pm$ 0.1 & 99.6 $\pm$ 0.3 & 19.9 $\pm$ 39.9 & 79.8 $\pm$ 39.9 & 79.7 $\pm$ 39.8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/training_curves.png}
+\caption{\textbf{Training curves, mean $\pm$ one standard deviation over five
+seeds.} Return per episode, success on all maps, and success on the decisive
+lakes and rocky maps, against environment steps. The feed-forward control
+plateaus at the constant-flag optimum: two thirds of maps overall and chance
+on the decisive ones. The recurrent agent's band is wide early and late
+because one of its five seeds collapses to the same constant flag; the others
+reach near-perfect success.}
+\label{fig:training}
+\end{figure}

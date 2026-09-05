@@ -1,0 +1,21 @@
+\paragraph{Gradient clamp.}
+The edit \eqref{eq:clamp} is applied to the post-GRU state, so it feeds the
+heads at the current step and is carried forward by the recurrence. Because
+the actor is linear in $\mathbf{h}$ the gradient is available in closed form,
+$\nabla_{\mathbf{h}}\log p_{\mathcal{A}} = \sum_{a\in\mathcal{A}}\tfrac{\pi(a)}{p_{\mathcal{A}}}\mathbf{W}_a
+- \sum_{a}\pi(a)\mathbf{W}_a$ for actor rows $\mathbf{W}_a$. We use
+$\alpha=0.5$ and an iteration budget of $25$ ($80$ in the strength sweep);
+the post-edit probability is recorded and met $\theta$ on every episode
+reported. The commands are $\mathcal{A}=\{\textsc{build}\}$ (no bridging) and
+$\mathcal{A}=\{\textsc{mine}\}$ (no tunnelling). A gated variant releases the clamp
+once the agent has made no progress on the cost-to-go for a fixed number of
+steps and re-arms it when progress resumes; where used, the window is stated.
+Thresholds and windows are chosen on balanced training maps and frozen
+before any held-out map is run.
+
+\paragraph{Fixed steering vector.}
+The unconditional form adds $\alpha\,\mathbf{u}$ at every step for a unit
+direction $\mathbf{u}$ fitted offline as the difference of state means between
+steps where the tool was used and steps where it was not, or as the actor's
+own gradient for the target action, $\mathbf{h}\leftarrow\mathbf{h}+\eta\,
+\nabla_{\mathbf{h}}\log\pi(a\mid\mathbf{h})$.

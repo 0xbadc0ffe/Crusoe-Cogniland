@@ -1,0 +1,38 @@
+{
+ "_rule": {
+  "guard_success": 0.9,
+  "guard_timeout": 0.05,
+  "eps": 0.001,
+  "note": "fit on TRAIN balanced maps; frozen before test; strongest = lowest theta, then largest window"
+ },
+ "baseline_fit": {
+  "n": 60,
+  "success": 0.983,
+  "mines": 3.0,
+  "builds": 1.68
+ },
+ "sup_mine": {
+  "theta": 0.001,
+  "window": 5,
+  "qualified": true,
+  "fit_success": 0.967,
+  "fit_timeout": 0.033,
+  "rule": "strongest inside the guard rails"
+ },
+ "sup_build": {
+  "theta": 0.005,
+  "window": 8,
+  "qualified": true,
+  "fit_success": 0.95,
+  "fit_timeout": 0.05,
+  "rule": "strongest inside the guard rails"
+ },
+ "sup_both": {
+  "theta": 0.02,
+  "window": 12,
+  "qualified": true,
+  "fit_success": 0.967,
+  "fit_timeout": 0.033,
+  "rule": "strongest inside the guard rails"
+ }
+}
