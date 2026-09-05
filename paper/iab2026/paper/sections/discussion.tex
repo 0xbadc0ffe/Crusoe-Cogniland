@@ -34,13 +34,11 @@ gradient of the action head has a component along the belief direction.
 \subsection{Future directions}
 The first question is whether a steering method can leave the belief
 untouched. Two options are to project the steering step onto the directions
-orthogonal to the belief, or to steer a model-based agent through its plan
-instead of its hidden state \citep{hafner2023dreamerv3}. Both keep the belief
-fixed by design; whether they can still change the behavior is an open
-question. The same test, decode the belief, check that it is causal, then
-measure how much a steering method moves it, can be run on the world-model
-agents trained on this task and on language-model agents, whose hidden states
-also carry beliefs about the user and the task that safety steering
-\citep{zou2023repe} may be changing without anyone noticing. Cogniland gives
-ground-truth beliefs for this test. Extending it to richer beliefs, longer
-episodes and more skills would show how general the result is.
+orthogonal to the belief, or to steer a model-based agent through imagination
+\citep{hafner2023dreamerv3}. The same question applies to language models and
+to vision-language-action (VLA) models, whose hidden states also carry
+beliefs about the user, the task and the scene that steering may corrupt in
+the same way. Cogniland gives ground-truth beliefs for this test. Extending
+this to richer beliefs, longer episodes, and a broader range of skills could
+provide further insights into the relationship between cognitive and motor
+tasks in agents.
