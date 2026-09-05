@@ -1,44 +1,46 @@
 \section{Discussion}
-We built a task in which an agent's belief about a hidden variable is the
-ground truth and its skills are separately countable, and used it to audit
-activation steering on a recurrent agent. The belief is a single direction of
-the hidden state, a scalar reads it as well as a non-linear probe, and writing
-to it moves the flag decision with a clean dose response and no cost to
-navigation. Steering a skill through the same state is not clean: suppressing
-the tool a map calls for shifts the belief by close to a pole-to-pole distance
-and flips the decision in $74\%$ of lakes and $43\%$ of rocky episodes, while
-the untouched tool and the other category are left alone. The edit does what
-it is asked at the action head and something else in the belief, and on
-balanced maps the return would never have shown it. Steering methods for
-stateful agents should therefore be evaluated on what they change beyond the
-target behavior, not only on whether the target behavior changed.
+We built a task where the agent's belief about a hidden variable is known
+exactly and where its skills can be counted, and we used it to test
+activation steering on a recurrent agent. Three things came out. First, the
+belief is stored along a single direction of the hidden state: one scalar
+predicts the category as well as a non-linear probe on the full state.
+Second, this direction is causal: writing to it changes which flag the agent
+picks, with a smooth dose response, and the agent still navigates the map
+normally. Third, steering a skill through the same hidden state also changes
+the belief. When we suppress the tool that the map category needs, the belief
+moves almost all the way to the other category and the agent picks the wrong
+flag in $74\%$ of lakes and $43\%$ of rocky episodes. The other tool and the
+other category are not affected. The intervention works at the action head,
+but it also rewrites the belief, and on balanced maps the reward would never
+reveal this. Steering methods for stateful agents should be judged on
+everything they change, not only on the behavior they were meant to change.
 
 \subsection{Limitations}
-All results come from one agent, one architecture and one task: a PPO-trained
-GRU with a $128$-d state on a three-category map. Whether belief and skill are
-entangled in the same way in larger recurrent states, in transformer policies
-or in world-model agents is untested. The belief is read from one direction
-fitted in one bin, and that direction drifts along the episode (cosine down to
-$0.33$), so corruption is measured at one point of the episode and the write
-of Section~\ref{sec:res_causal} is a single write. We study one family of
-interventions, gradient steps on the action log-probability, of which a fixed
-steering vector is the one-step case; learned or contrastive vectors
-\citep{turner2023actadd,rimsky2024caa} were not run. The effect sizes hold for
-the eligible maps, where both tools are used, and for one operating point per
-tool; we did not sweep the strength. Finally, entanglement is inferred from
-the directional pattern of the leak, not from a mechanistic account of why the
+All results come from one agent, one architecture and one task: a GRU with a
+$128$-d state trained with PPO on a map with three categories. We do not know
+whether belief and skills are entangled in the same way in larger recurrent
+networks, in transformer policies or in world-model agents. We read the belief
+from one direction fitted in one bin, and this direction changes along the
+episode (cosine down to $0.33$), so we measure corruption at one point of the
+episode only, and the write in Section~\ref{sec:res_causal} is applied once.
+We test one family of interventions, gradient steps on the action
+log-probability; a fixed steering vector is a special case of it, but learned
+or contrastive vectors \citep{turner2023actadd,rimsky2024caa} were not
+tested. The numbers hold for the maps where both tools are used and for one
+strength setting per tool; we did not sweep the strength. Finally, we infer
+entanglement from the direction of the leak; we do not explain why the
 gradient of the action head has a component along the belief direction.
 
 \subsection{Future directions}
-The immediate question is whether a belief-preserving edit exists. Projecting
-the steering step onto the complement of the belief direction, or steering a
-model-based agent through its plan rather than its state
-\citep{hafner2023dreamerv3}, keeps the belief by construction; whether
-behavior can still be changed under that constraint is open. The same audit,
-decode the belief, verify that it is causal, then measure how far a steering
-method moves it, applies to the world-model agents trained on this task and
-to language-model agents, whose residual stream carries beliefs about the
-user and the task that safety steering \citep{zou2023repe} may be corrupting
-unseen. Cogniland provides ground-truth beliefs for that audit; extending it
-to richer beliefs, longer horizons and more skills would show how far the
-result carries.
+The first question is whether a steering method can leave the belief
+untouched. Two options are to project the steering step onto the directions
+orthogonal to the belief, or to steer a model-based agent through its plan
+instead of its hidden state \citep{hafner2023dreamerv3}. Both keep the belief
+fixed by design; whether they can still change the behavior is an open
+question. The same test, decode the belief, check that it is causal, then
+measure how much a steering method moves it, can be run on the world-model
+agents trained on this task and on language-model agents, whose hidden states
+also carry beliefs about the user and the task that safety steering
+\citep{zou2023repe} may be changing without anyone noticing. Cogniland gives
+ground-truth beliefs for this test. Extending it to richer beliefs, longer
+episodes and more skills would show how general the result is.
