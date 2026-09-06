@@ -27,23 +27,23 @@ uniformly during training.
 The task is a Partially Observable Markov Decision Process (POMDP) with hidden
 variable $c\in\{\text{lakes},\text{rocky},\text{balanced}\}$, observations
 $o_t$ and actions $a_t$. Three quantities are defined per episode.
-\emph{Belief:} $\beta_t = P(c\mid o_{1:t})$, the agent's estimate of which
-kind of map it is on. A well-calibrated belief is necessary to achieve high reward: a
-Bayes-optimal agent walks to the flag of the most probable category
-$\arg\max_c \beta_t(c)$, and on balanced maps either flag is optimal.
+\emph{Belief:} the agent's estimate of which kind of map it is on,
+$P(c\mid o_{1:t})$. A well-calibrated belief is necessary to achieve high reward: a
+Bayes-optimal agent walks to the flag of the most probable category,
+and on balanced maps either flag is optimal.
 The agent carries and updates its belief through the recurrent state
-$\mathbf{h}_t$.
-\emph{Behavior:} $\phi = (n_{\textsc{build}}, n_{\textsc{mine}})$, the
-number of times the agent bridged water and tunnelled rock. Obstacles can be crossed with a tool or walked around (Appendix~\ref{app:measures}).
+$\mathbf{h}_t$; we read it out as a scalar $\hat b$ (Section~\ref{sec:decoding}).
+\emph{Behavior:} the number of times the agent bridged water and tunnelled
+rock. Obstacles can be crossed with a tool or walked around (Appendix~\ref{app:measures}).
 \emph{Decision:} $D\in\{\text{top},\text{bottom}\}$, the flag the agent
 walks into. On lakes and rocky maps one flag pays nothing, so a wrong $D$
 shows in the return; on balanced maps both pay, so $D$ is a free choice the
 return cannot see.
 A steering intervention $\mathcal{I}$ edits the hidden state $\mathbf{h}_t$ to
-change the behavior $\phi$, for instance to suppress \textsc{mine} so that the
-agent walks around mountains instead. Ideally the intervention $\mathcal{I}$ leaves the belief $\beta$,
+change the behavior, for instance to suppress \textsc{mine} so that the
+agent walks around mountains instead. Ideally the intervention $\mathcal{I}$ leaves the belief,
 and hence the final decision $D$, untouched. We measure \emph{belief corruption} as the change
-in the decoded belief and in the final decision $D$ that $\mathcal{I}$ causes.
+in $\hat b$ and in the final decision $D$ that $\mathcal{I}$ causes.
 
 \paragraph{Model.}
 \label{sec:model}
