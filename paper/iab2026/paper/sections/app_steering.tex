@@ -1,24 +1,32 @@
-\paragraph{Gradient clamp.}
-The edit \eqref{eq:clamp} is applied to the post-GRU state, so it feeds the
-heads at the current step and is carried forward by the recurrence. Because
-the actor is linear in $\mathbf{h}$ the gradient is available in closed form,
-$\nabla_{\mathbf{h}}\log p_{\mathcal{A}} = \sum_{a\in\mathcal{A}}\tfrac{\pi(a)}{p_{\mathcal{A}}}\mathbf{W}_a
-- \sum_{a}\pi(a)\mathbf{W}_a$ for actor rows $\mathbf{W}_a$. We use
-$\eta=0.5$ and an iteration budget of $25$ ($80$ in the strength sweep);
-the post-edit probability is recorded and met $\theta$ on every episode
-reported. The commands are $\mathcal{A}=\{\textsc{build}\}$ (no bridging) and
-$\mathcal{A}=\{\textsc{mine}\}$ (no tunnelling). A gated variant releases the clamp
-once the agent has made no progress on the cost-to-go for a fixed number of
-steps and re-arms it when progress resumes. Thresholds and windows are chosen
-on balanced training maps as the strongest setting that keeps success above
-$0.9$ and timeouts below $0.05$ there, and are frozen before any held-out map
-is run: $\theta=5\cdot10^{-3}$ with an $8$-step window for \textsc{build},
-$\theta=10^{-3}$ with a $5$-step window for \textsc{mine}
-(Table~\ref{tab:clamp_all}).
+Figure~\ref{fig:steering_grid} shows the steering of Section~\ref{sec:res_steer}
+on held-out maps of each category, three maps per category drawn at random
+from the eligible set. Each row is one map, labelled by its generation seed;
+the three panels are the unsteered agent, the agent with \textsc{build}
+suppressed and the agent with \textsc{mine} suppressed, with the same six
+rollout seeds in every panel. The gradient clamp \eqref{eq:clamp} runs with
+$\eta=0.5$ and at most $25$ steps per timestep, and a gate releases it once the
+agent has made no progress toward the flags for a fixed number of steps and
+re-arms it when progress resumes. The thresholds and windows were chosen on
+balanced training maps as the strongest setting that kept success above
+$0.9$ and timeouts below $0.05$, and were frozen before any held-out map was
+run: $\theta=5\cdot10^{-3}$ with an $8$-step window for \textsc{build},
+$\theta=10^{-3}$ with a $5$-step window for \textsc{mine}. The panel label
+gives the share of rollouts that took the top flag and the mean number of
+tunnels and bridges per rollout. On lakes maps the top flag is the wrong one:
+suppressing bridging sends the rollouts there. On rocky maps the top flag is
+the right one: suppressing tunnelling takes it away. On balanced maps either
+flag is rewarded, and the suppressed tool decides which one the agent picks.
 
-\paragraph{Fixed steering vector.}
-The unconditional form adds $\eta\,\mathbf{u}$ at every step for a unit
-direction $\mathbf{u}$ fitted offline as the difference of state means between
-steps where the tool was used and steps where it was not, or as the actor's
-own gradient for the target action, $\mathbf{h}\leftarrow\mathbf{h}+\eta\,
-\nabla_{\mathbf{h}}\log\pi(a\mid\mathbf{h})$.
+\begin{figure}[p]
+\centering
+\includegraphics[height=0.84\textheight]{figures/fig_steering_grid.png}
+\caption{\textbf{Steering on held-out maps of each category.} One row per
+map, labelled by its generation seed; six stochastic rollouts overlaid per
+panel, one colour each, identical seeds across the three arms. The red and
+blue boxes at the right edge are the top and bottom flags, the white dot the
+spawn. Panel labels: share of rollouts that took the top flag, and mean tool
+uses per rollout. Suppressing the tool that the map's category needs (bridging
+on lakes maps, tunnelling on rocky maps) moves the rollouts to the other
+category's flag; suppressing the other tool leaves the flag unchanged.}
+\label{fig:steering_grid}
+\end{figure}
