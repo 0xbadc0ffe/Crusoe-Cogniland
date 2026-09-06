@@ -28,9 +28,9 @@ PALETTE = ["#dc2626", "#f97316", "#facc15", "#ec4899", "#7c3aed", "#f8fafc"]
 
 def label(rs, mn, bd, seed):
     n = len(rs); top = sum(r["door"] == "top" for r in rs); to = sum(r["timeout"] for r in rs)
-    l2 = f"top flag {100 * top / n:.0f}%" + (f"   timeouts {to}/{n}" if to else "")
-    l3 = f"{mn:.1f}$\\times$tunnel   {bd:.1f}$\\times$bridge"
-    return f"seed {seed}\n{l2}\n{l3}"
+    l1 = f"seed {seed}   top flag {100 * top / n:.0f}%" + (f"   TO {to}/{n}" if to else "")
+    l2 = f"{mn:.1f}$\\times$tunnel   {bd:.1f}$\\times$bridge"
+    return f"{l1}\n{l2}"
 
 
 def main():
@@ -39,6 +39,7 @@ def main():
     ap.add_argument("--layout", choices=["stack", "wide"], default="stack")
     ap.add_argument("--seed", type=int, default=0, help="rng seed for the map sample")
     ap.add_argument("--markers", action="store_true", help="draw tool-event glyphs")
+    ap.add_argument("--palette", choices=["warm", "turbo"], default="warm", help="rollout colours")
     a = ap.parse_args()
 
     import matplotlib; matplotlib.use("Agg")
@@ -46,7 +47,7 @@ def main():
     from matplotlib import gridspec
     import grid_fig
     from grid_fig import _draw_panel, RC
-    grid_fig.PALETTE = PALETTE
+    grid_fig.PALETTE = PALETTE if a.palette == "warm" else [matplotlib.colors.to_hex(matplotlib.colormaps["turbo"](x)) for x in np.linspace(0.05, 0.95, 6)]
     from cogniland.bridge_tunnel import tiles as T
 
     pool = pickle.load(open(POOL, "rb"))
@@ -66,7 +67,7 @@ def main():
             outer = gridspec.GridSpec(3, 1, figure=fig, hspace=0.12)
             for bi, (cat, flag, pick, rows) in enumerate(blocks):
                 inner = gridspec.GridSpecFromSubplotSpec(len(pick) + 1, 3, subplot_spec=outer[bi], wspace=0.06,
-                                                         hspace=0.75, height_ratios=[0.6] + [1] * len(pick))
+                                                         hspace=0.62, height_ratios=[0.6] + [1] * len(pick))
                 for j, (tag, col) in enumerate(ARMS):          # header row: block title + arm names
                     hx = fig.add_subplot(inner[0, j]); hx.axis("off")
                     hx.text(.5, .0, tag, transform=hx.transAxes, ha="center", va="bottom", fontsize=9.5, weight="bold", color=col)
@@ -81,11 +82,15 @@ def main():
                         ax.set_title(label(rs, mn, bd, pool[mid].seed), fontsize=6.6, loc="left", pad=2.5, color=INK, linespacing=1.15)
         else:
             pw, ph = 2.2, 1.1
-            fig = plt.figure(figsize=(9 * pw + 2 * 0.6, a.per_cat * (ph + 0.42) + 1.1))
-            outer = gridspec.GridSpec(1, 3, figure=fig, wspace=0.10)
+            fig = plt.figure(figsize=(9 * pw + 2 * 0.6, a.per_cat * (ph + 0.34) + 0.6))
+            outer = gridspec.GridSpec(1, 3, figure=fig, wspace=0.10, top=0.965, bottom=0.005, left=0.01, right=0.99)
+            fig.suptitle("PPO+GRU on held-out maps, six stochastic rollouts each, identical seeds across the three arms.  "
+                         "Gated gradient clamp at the frozen operating points."
+                         + ("  X = tunnelled block, open square = placed bridge." if a.markers else ""),
+                         y=0.995, fontsize=11)
             for bi, (cat, flag, pick, rows) in enumerate(blocks):
                 inner = gridspec.GridSpecFromSubplotSpec(len(pick) + 1, 3, subplot_spec=outer[bi], wspace=0.06,
-                                                         hspace=0.75, height_ratios=[0.6] + [1] * len(pick))
+                                                         hspace=0.62, height_ratios=[0.6] + [1] * len(pick))
                 for j, (tag, col) in enumerate(ARMS):
                     hx = fig.add_subplot(inner[0, j]); hx.axis("off")
                     hx.text(.5, .0, tag, transform=hx.transAxes, ha="center", va="bottom", fontsize=9.5, weight="bold", color=col)

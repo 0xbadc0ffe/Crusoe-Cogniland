@@ -1,7 +1,7 @@
 Figure~\ref{fig:steering_grid} shows the steering of Section~\ref{sec:res_steer}
-on held-out maps of each category, three maps per category drawn at random
-from the eligible set. Each row is one map, labelled by its generation seed;
-the three panels are the unsteered agent, the agent with \textsc{build}
+on held-out maps of each category, twelve maps per category drawn at random
+from the eligible set. Each row of a block is one map, labelled by its
+generation seed; the three panels are the unsteered agent, the agent with \textsc{build}
 suppressed and the agent with \textsc{mine} suppressed, with the same six
 rollout seeds in every panel. The gradient clamp \eqref{eq:clamp} runs with
 $\eta=0.5$ and at most $25$ steps per timestep, and a gate releases it once the
@@ -12,17 +12,20 @@ $0.9$ and timeouts below $0.05$, and were frozen before any held-out map was
 run: $\theta=5\cdot10^{-3}$ with an $8$-step window for \textsc{build},
 $\theta=10^{-3}$ with a $5$-step window for \textsc{mine}. The panel label
 gives the share of rollouts that took the top flag and the mean number of
-tunnels and bridges per rollout. On lakes maps the top flag is the wrong one:
+tunnels and bridges per rollout; a cross marks a tunnelled block and an open
+square a placed bridge, sized by how many rollouts used that cell. On lakes maps the top flag is the wrong one:
 suppressing bridging sends the rollouts there. On rocky maps the top flag is
 the right one: suppressing tunnelling takes it away. On balanced maps either
 flag is rewarded, and the suppressed tool decides which one the agent picks.
 
 \begin{figure}[p]
 \centering
-\includegraphics[height=0.84\textheight]{figures/fig_steering_grid.png}
-\caption{\textbf{Steering on held-out maps of each category.} One row per
-map, labelled by its generation seed; six stochastic rollouts overlaid per
-panel, one colour each, identical seeds across the three arms. The red and
+\includegraphics[width=\linewidth]{figures/fig_steering_grid_wide.png}
+\caption{\textbf{Steering on held-out maps of each category.} Three blocks, one per category (lakes, balanced, rocky), twelve maps each;
+within a block one row per map, labelled by its generation seed, and one
+panel per arm. Six stochastic rollouts overlaid per panel, one colour each,
+identical seeds across the three arms; crosses are tunnelled blocks, open
+squares placed bridges. The red and
 blue boxes at the right edge are the top and bottom flags, the white dot the
 spawn. Panel labels: share of rollouts that took the top flag, and mean tool
 uses per rollout. Suppressing the tool that the map's category needs (bridging
