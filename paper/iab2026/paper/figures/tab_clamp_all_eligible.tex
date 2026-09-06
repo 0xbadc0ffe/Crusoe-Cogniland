@@ -2,7 +2,18 @@
 \centering
 \small
 \setlength{\tabcolsep}{6pt}
-\caption{\textbf{Steering behavior corrupts the belief} Gated gradient based steering on maps where both tools are used at least once. \emph{\# bridges} and \emph{\# tunnels} are successful tool uses per episode, the lowest of each category in bold; \emph{timeout} is the ratio of episodes that didn't reach a flag. \emph{rocky flag} and \emph{lakes flag} show the agent's decision; $\hat b(\text{rocky})$ is the mean probability of the rocky category read from the belief scalar by the logistic probe. Failure modes are highlighted in red.}
+\caption{\textbf{Steering behavior corrupts the belief.} Gated gradient
+steering on held-out maps where both tools are used at least once ($138$
+balanced, $62$ lakes, $61$ rocky maps; six rollouts each). \emph{\# bridges}
+and \emph{\# tunnels} are successful tool uses per episode, the lowest of
+each category in bold; \emph{timeout} is the share of episodes that did not
+reach a flag; \emph{rocky flag} and \emph{lakes flag} are the agent's
+decision; $\hat b(\text{rocky})$ is the mean probability of the rocky category
+read from the belief scalar by the logistic probe. Suppressing bridging on
+lakes maps raises $\hat b(\text{rocky})$ from $0.03$ to $0.79$ and sends
+$74\%$ of episodes to the rocky flag ($1\%$ unsteered); suppressing tunnelling
+on rocky maps lowers it from $0.96$ to $0.50$ and sends $43\%$ to the lakes
+flag ($4\%$ unsteered). Failure modes in red.}
 \label{tab:clamp_all}
 \begin{tabular}{@{}llrrrrrr@{}}
 \toprule

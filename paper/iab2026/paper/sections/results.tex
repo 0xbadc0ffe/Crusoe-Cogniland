@@ -60,16 +60,27 @@ stays within three steps of the unsteered agent's at every dose.}
 
 \subsection{Behavioral steering corrupts the belief}
 \label{sec:res_steer}
-We select maps on which the unsteered agent uses both tools at least once, six rollouts each. %with the thresholds and release windows chosen on training maps and frozen ($\theta=5\cdot10^{-3}$ and an $8$-step window for \textsc{build}, $\theta=10^{-3}$ and $5$ steps for \textsc{mine}). 
-The behavior changes as intended. Suppressing \textsc{build} lowers bridging on $47/62$ lakes maps (median $-21\%$ per map), $53/61$ rocky maps ($-88\%$) and $112/138$ balanced maps ($-45\%$); suppressing \textsc{mine} lowers tunnelling on $45/62$, $51/61$ and $94/138$ maps. The untouched tool moves little, and we show minimal degradation in navigation skills: timeouts stay at or below $6\%$, except when
-tunnelling is suppressed on rocky maps ($14\%$). The intervention is, after all, a gradient based attack on the action
-distribution \citep{huang2017adversarial}, and at the action head it does exactly what it is asked.
+We steer the agent on the held-out maps where the unsteered agent uses both
+tools at least once, six rollouts per map, and suppress one tool at a time
+(Table~\ref{tab:clamp_all}). The behavior changes as intended: the suppressed
+tool is used less on most maps, the other tool is barely affected, and the
+agent still reaches a flag in nearly all episodes. Walking around a mountain
+instead of tunnelling through it is costlier, so timeouts rise a little on
+rocky maps, but navigation itself is intact. The intervention is a
+gradient-based attack on the action distribution \citep{huang2017adversarial},
+and at the action head it does exactly what it is asked.
 
-Steering actions corrupts the belief of the model. By suppressing tools we shift the belief $\hat b$ toward the ``other'' category, and the flag decision follows. On lakes maps without bridging, $\hat b(\text{rocky})$ rises
-from $0.03$ to $0.79$ and $74\%$ of episodes end at the rocky flag, against
-$1\%$ unsteered; on rocky maps without tunnelling, $\hat b(\text{rocky})$
-falls from $0.96$ to $0.50$ and $43\%$ end at the lakes flag, against $4\%$. On balanced maps the choice is captured almost completely: $97\%$ top after suppressing
-\textsc{build} and $75\%$ bottom after suppressing \textsc{mine}, from
-$60/40$ unsteered.
+It also does something it was not asked to do. Suppressing the tool that the
+map's category needs moves the belief toward the other category, and the flag
+decision follows. A lakes map on which the agent cannot bridge is read as a
+rocky map: the belief readout crosses to the rocky side and most episodes end
+at the rocky flag, which gives no reward. A rocky map on which the agent
+cannot tunnel goes the same way in reverse, with the belief landing on the
+boundary and almost half of the episodes at the lakes flag. On balanced maps,
+where the reward cannot tell, the free choice is captured almost completely
+by whichever tool is suppressed. The effect is one-directional: suppressing
+the other tool, tunnelling on lakes maps or bridging on rocky maps, leaves
+belief and flag where they were. An edit aimed at a skill lands on the
+belief; the two are not separable directions of the hidden state.
 
 \input{figures/tab_clamp_all_eligible}
