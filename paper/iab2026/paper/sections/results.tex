@@ -24,22 +24,37 @@ $0.98$ or more from the corridor on. (b) Cosine between the directions $\mathbf{
 
 \subsection{The final decision depends on the belief}
 \label{sec:res_causal}
-Figure~\ref{fig:results_causal} shows the flag chosen as a function of the steering dose $\alpha$. On lakes maps the unsteered agent takes the top flag in $2\%$
-of episodes; pushing the belief toward rocky smoothly raises the probability of the top flag. Rocky maps mirror the effect; \textbf{the dose response is sigmoidal}. On balanced maps, the same write selects the respective flag in either direction, from $0.62$ top to
-$1.00$ or to $0$. As a control, we apply a displacement of the same size $\alpha g$ along a random direction, with close to no effect (top-flag rate $0.02$--$0.04$ on lakes, $1.00$ on rocky, $0.62$--$0.67$ on balanced maps). Navigation skills do not degrade under the intervention:
-\textbf{every} steered episode reaches a flag, and the episode length stays within three steps of the unsteered agent's at every dose. The belief direction is
-thus a clean handle on a high-level flag decision.
+Figure~\ref{fig:results_causal} shows which flag the agent chooses as a
+function of the steering dose $\alpha$. Pushing the belief of a lakes map
+toward rocky smoothly raises the probability of the top flag, until the agent
+takes it every time; pushing a rocky map toward lakes does the mirror image.
+The response is sigmoidal: small doses do nothing, then the decision flips
+over a narrow range of $\alpha$, and by one pole-to-pole distance it has
+saturated. On balanced maps, where the unsteered agent has a mild preference
+for the top flag, the same write selects either flag on demand. The effect
+belongs to the direction and not to the size of the edit: a displacement of
+the same size along a random direction leaves the decision where the
+unsteered agent put it. The write also costs nothing in navigation. Every
+steered episode still reaches a flag, and the episodes are as long as the
+unsteered ones. The belief direction is thus a clean handle on a high-level
+decision: writing to it changes what the agent decides and nothing about how
+it moves.
 
 \begin{figure}[h!]
 \centering
-\includegraphics[width=\linewidth]{figures/fig_results_causal.png}
-\caption{\textbf{The belief direction moves the decision.} One write of $\mathbf{h}\leftarrow\mathbf{h}\pm\alpha g\mathbf{v}$ at the entry of the last
+\includegraphics[width=0.7\linewidth]{figures/fig_results_causal.png}
+\caption{\textbf{The belief direction moves the decision.} One write of
+$\mathbf{h}\leftarrow\mathbf{h}\pm\alpha g\mathbf{v}$ at the entry of the last
 corridor bin, where $\mathbf{v}$ is fitted, on $100$ held-out maps per
-category for $\alpha\in\{0,0.1,\dots,1\}$; the flag taken is recorded, error bars are one binomial standard
-deviation. A push toward rocky sends lakes maps to the top flag and a push
-toward lakes sends rocky maps to the bottom flag, with a sigmoidal dose
-response that saturates by $\alpha\approx1$; $\alpha=0$ is the unsteered
-agent. On balanced maps the steering works in both directions. Dashed grey: the control, a displacement of the same size $\alpha g$ along a random direction.}
+category for $\alpha\in\{0,0.1,\dots,1\}$; the flag taken is recorded, error
+bars are one binomial standard deviation, $\alpha=0$ is the unsteered agent.
+Lakes maps go from $2\%$ top flag to $100\%$ between $\alpha=0.4$ and $0.8$;
+rocky maps from $100\%$ to $0$ between $0.5$ and $0.9$; balanced maps from
+$62\%$ top to $100\%$ or to $0$ by $\alpha=0.9$. Dashed grey: the control, a
+displacement of the same size $\alpha g$ along a random direction, stays
+within $0.02$--$0.04$ on lakes, at $1.00$ on rocky and within $0.62$--$0.67$
+on balanced maps. Every steered episode reaches a flag, and episode length
+stays within three steps of the unsteered agent's at every dose.}
 \label{fig:results_causal}
 \end{figure}
 
