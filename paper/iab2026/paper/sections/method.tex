@@ -36,9 +36,10 @@ $\mathbf{h}_t$; we read it out as a scalar $\hat b$ (Section~\ref{sec:decoding})
 \emph{Behavior:} the number of times the agent bridged water and tunnelled
 rock. Obstacles can be crossed with a tool or walked around (Appendix~\ref{app:measures}).
 \emph{Decision:} $D\in\{\text{top},\text{bottom}\}$, the flag the agent
-walks into. On lakes and rocky maps one flag pays nothing, so a wrong $D$
-shows in the return; on balanced maps both pay, so $D$ is a free choice the
-return cannot see.
+walks into at the end of the episode. On lakes and rocky maps only one flag
+gives the terminal reward, so a wrong decision is visible in the return. On
+balanced maps both flags give the reward, so the decision does not change the
+return: a corrupted belief can move $D$ without any drop in reward.
 A steering intervention $\mathcal{I}$ edits the hidden state $\mathbf{h}_t$ to
 change the behavior, for instance to suppress \textsc{mine} so that the
 agent walks around mountains instead. Ideally the intervention $\mathcal{I}$ leaves the belief,
