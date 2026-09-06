@@ -40,11 +40,15 @@ walks into at the end of the episode. On lakes and rocky maps only one flag
 gives the terminal reward, so a wrong decision is visible in the return. On
 balanced maps both flags give the reward, so the decision does not change the
 return: a corrupted belief can move $D$ without any drop in reward.
-A steering intervention $\mathcal{I}$ edits the hidden state $\mathbf{h}_t$ to
-change the behavior, for instance to suppress \textsc{mine} so that the
-agent walks around mountains instead. Ideally the intervention $\mathcal{I}$ leaves the belief,
-and hence the final decision $D$, untouched. We measure \emph{belief corruption} as the change
-in $\hat b$ and in the final decision $D$ that $\mathcal{I}$ causes.
+A steering intervention edits the hidden state $\mathbf{h}_t$ to change the
+behavior, for instance to suppress \textsc{mine} so that the agent walks
+around mountains instead. The ideal intervention is selective: it changes
+only the behavior it targets and leaves every other capability of the agent
+as it was. For this task that means the belief, and hence the final decision
+$D$, must be the same as in the unsteered episode on the same map: the agent
+walks around the mountain and still goes to the flag it would have chosen. We
+measure \emph{belief corruption} as the change in $\hat b$ and in $D$ between
+the steered and the unsteered episode.
 
 \paragraph{Model.}
 \label{sec:model}
